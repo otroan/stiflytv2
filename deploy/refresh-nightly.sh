@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Nightly check of every imported source, run from cron:
+#   30 4 * * * $HOME/stiflytv2/deploy/refresh-nightly.sh
+# Appends to var/log/refresh.log. Exits with the status of `stiflyt2 refresh`:
+# 1 when a delivery was refused or a source could not be checked.
+cd "$(dirname "$0")/.." || exit 1
+mkdir -p var/log
+exec >> var/log/refresh.log 2>&1
+echo "== $(date -u +%FT%TZ)"
+# A run still going from the night before is left to finish.
+flock -n var/log/refresh.lock .venv/bin/stiflyt2 refresh
+status=$?
+echo "exit $status"
+# A night that went wrong is kept with the feedback, and the page says so to whoever works in it.
+# (A delivery refused or a source that could not be checked is also in the check log, per source.)
+if [ $status -gt 1 ]; then
+    .venv/bin/stiflyt2 feedback failed "nightly check of the sources" "stiflyt2 refresh ended with status $status: see var/log/refresh.log"
+fi
+# Stretches that are new or were moved during the day get their heights. Asked once per line.
+.venv/bin/stiflyt2 height fill || .venv/bin/stiflyt2 feedback failed "nightly heights" "stiflyt2 height fill did not get every stretch: see var/log/refresh.log"
+exit $status

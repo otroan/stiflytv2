@@ -1,0 +1,2104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stiflyt v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link rel="stylesheet" href="/static/profile.css">
+<script src="/static/basemap.js"></script>
+<script src="/static/profile.js"></script>
+<style>
+  :root {
+    --ink: #16242e; --muted: #5a6872; --line: #dfe4e8; --wash: #f1f4f6;
+    --trail: #d81b60; --path: #1565c0; --road: #8d5524; --osm: #5f7d1e; --heritage: #7b1fa2; --parcel: #455a64;
+    --selected: #ffd600; --together: #00796b; --apart: #e65100; --meeting: #37474f;
+    --sign: #7a1e2c;  /* what is yours: the colour of a trail sign plate */
+    --water: #0277bd; --ice: #00838f;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+    --tight: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; font: 15px/1.4 var(--body); color: var(--ink); }
+  #side { width: 348px; flex: none; display: flex; flex-direction: column; background: #fff;
+          border-right: 1px solid var(--line); overflow: hidden; }
+  #mapwrap { flex: 1; min-width: 0; position: relative; }
+  #map { position: absolute; inset: 0; }
+  #undo { position: absolute; top: 12px; left: 12px; z-index: 2; max-width: 42%; text-align: left; font: inherit; cursor: pointer;
+          background: #fff; color: var(--ink); border: 1.5px solid var(--sign); border-radius: 4px; padding: 7px 12px;
+          box-shadow: 0 1px 4px #0003; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #undo strong { color: var(--sign); margin-right: 6px; }
+  #mode { position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
+          background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
+  #mode button { margin-left: 10px; }
+  #undo:hover, #undo:focus-visible { background: var(--wash); }
+  #undo:disabled { opacity: 0.6; cursor: wait; }
+  #hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
+          background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
+  header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  h1 { font: 600 20px/1.1 var(--tight); margin: 0 0 10px; }
+  h2 { font: 600 15px/1.3 var(--body); margin: 0 0 6px; }
+  h2.next { margin-top: 14px; }
+  input[type=search], input[type=text], select { width: 100%; padding: 7px 9px; font: inherit; color: inherit;
+          border: 1px solid #b4bec6; border-radius: 4px; background: #fff; }
+  :focus-visible { outline: 2px solid var(--path); outline-offset: 1px; }
+  #scroll { flex: 1; overflow-y: auto; }
+  section { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .backbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 6px; margin: -12px -16px 10px;
+             padding: 8px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .backbar .grow { flex: 1; }
+  li.hit.last { box-shadow: inset 3px 0 0 var(--sign); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.hit { padding: 5px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  li.hit:hover, li.hit:focus-visible { background: var(--wash); }
+  li.hit.current { background: #fff6cc; }
+  .code { font: 600 15px var(--tight); min-width: 46px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .num { color: var(--muted); font: 500 14px var(--tight); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  label.layer { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .swatch { width: 22px; height: 0; border-top: 3px solid; flex: none; }
+  .swatch.dash { border-top-style: dashed; }
+  .swatch.box { height: 12px; border: 2px solid; opacity: .8; }
+  .swatch.dot { width: 10px; height: 10px; border: 0; border-radius: 50%; margin: 0 6px; }
+  .swatch.ring { width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%; margin: 0 5px; box-shadow: 0 0 0 1px #0004; }
+  .zoomnote { color: var(--muted); font: 13px var(--tight); margin-left: auto; white-space: nowrap; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 6px 0; }
+  dt { color: var(--muted); } dd { margin: 0; }
+  .bar { height: 8px; border-radius: 4px; background: #e3e8ee; overflow: hidden; margin-top: 3px; }
+  .bar > i { display: block; height: 100%; background: var(--path); }
+  .empty { color: var(--muted); padding: 4px 0; }
+  .error { color: #a3231b; font-weight: 500; }
+  .tag { font: 500 13px var(--tight); padding: 0 7px; border-radius: 9px; background: #fde8d8; color: #a23b00; white-space: nowrap; }
+  .tag.ok { background: #dcefeb; color: #00574d; }
+  .tag.yours { background: var(--sign); color: #fff; }
+  .tag.none { background: #e6eaed; color: #44525c; }
+  .filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+  .filter button { font: 500 13px var(--tight); padding: 3px 9px; border-radius: 12px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+  .filter button[aria-pressed=true] { background: var(--ink); border-color: var(--ink); color: #fff; }
+  #routelist { max-height: 46vh; overflow: auto; margin: 0 -6px; padding: 0 6px; }
+  details { margin-top: 8px; } summary { cursor: pointer; font-weight: 600; padding: 3px 0; }
+  /* The place being edited is shown as the sign that would name it. */
+  .plate { background: var(--sign); color: #fff; padding: 11px 14px 12px 30px; margin: 0 -4px 10px -16px;
+           clip-path: polygon(18px 0, 100% 0, 100% 100%, 18px 100%, 0 50%); }
+  .plate .name { font: 600 24px/1.1 var(--tight); overflow-wrap: anywhere; }
+  .plate .kind { font-size: 13px; opacity: .88; margin-top: 2px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  button.btn { font: 500 14px var(--body); color: var(--ink); background: #fff; border: 1px solid #b4bec6;
+               border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  button.btn:hover { background: var(--wash); }
+  button.btn.main { background: var(--sign); border-color: var(--sign); color: #fff; }
+  button.btn.main:hover { background: #631723; }
+  button.btn.quiet { border-color: transparent; color: var(--muted); padding: 4px 4px; text-decoration: underline; }
+  li.point { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 0; border-top: 1px solid var(--line); }
+  li.point .routes { font: 500 14px var(--tight); }
+  ol.log { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  ol.log li { display: grid; grid-template-columns: 86px 1fr; gap: 8px; padding: 2px 0; color: var(--muted); }
+  ol.log li span:last-child { color: var(--ink); }
+  footer { padding: 9px 16px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+  /* The areas side by side: a sheet over the map, since a table of twelve columns does not fit the side. */
+  #report { position: absolute; inset: 0; z-index: 4; background: #fff; overflow: auto; padding: 22px 28px 40px; }
+  #report header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 0; border: 0; margin-bottom: 4px; }
+  #report h2 { font: 600 24px/1.15 var(--tight); margin: 0; }
+  #report select { width: auto; max-width: 26em; }
+  #report p { margin: 4px 0 16px; max-width: 46em; color: var(--muted); }
+  #report table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #report th, #report td { padding: 5px 12px; text-align: right; white-space: nowrap; }
+  #report thead th { font: 500 13px/1.25 var(--tight); color: var(--muted); vertical-align: bottom; position: sticky; top: -22px; background: #fff; }
+  #report thead tr:first-child th { font: 600 14px var(--tight); color: var(--ink); text-align: left; border-bottom: 2px solid var(--ink); }
+  #report tbody th { text-align: left; font: 600 15px var(--tight); }
+  #report tbody tr { border-top: 1px solid var(--line); cursor: pointer; }
+  #report tbody tr:hover, #report tbody tr:focus-visible { background: var(--wash); outline: none; }
+  #report td.first, #report th.first { border-left: 1px solid var(--line); padding-left: 16px; }
+  #report td.strong { font-weight: 600; }
+  #report td.none { color: #a9b3ba; }
+  #report tfoot td, #report tfoot th { border-top: 2px solid var(--ink); font-weight: 600; text-align: right; }
+  #report tfoot th { text-align: left; font: 600 15px var(--tight); }
+  #tell textarea { width: 100%; font: inherit; color: var(--ink); padding: 6px 8px; border: 1px solid var(--line);
+                   border-radius: 6px; resize: vertical; margin-top: 6px; }
+  .maplibregl-popup-content { font: 14px/1.4 var(--body); max-width: 300px; padding: 10px 28px 10px 12px; border-radius: 4px; }
+  .pop h3 { margin: 8px 0 2px; font: 600 13px var(--body); color: var(--muted); }
+  .pop h3:first-child { margin-top: 0; }
+  .pop a, button.link { color: var(--path); background: none; border: 0; padding: 0; font: inherit;
+          cursor: pointer; text-decoration: underline; }
+  button.clear { float: right; }
+  @media (max-width: 760px) {
+    body { flex-direction: column-reverse; }
+    #side { width: 100%; max-height: 48vh; border-right: 0; border-top: 1px solid var(--line); }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div id="side">
+  <header>
+    <h1>Stiflyt v2</h1>
+    <input id="q" type="search" placeholder="Search place or route (e.g. Arentzbu, bre18)" autocomplete="off">
+  </header>
+  <div id="scroll">
+    <section id="results" hidden></section>
+    <section id="place" hidden></section>
+    <section id="selected" hidden></section>
+    <section id="bylist">
+      <h2>Routes by area</h2>
+      <select id="who" aria-label="Whose routes to show"><option value="">Everybody's routes</option></select>
+      <select id="area" style="margin-top:6px"><option value="">Choose an area prefix…</option></select>
+      <div style="margin-top:6px"><button class="link" id="openreport">Every area side by side</button></div>
+      <ul id="arearoutes"></ul>
+    </section>
+    <section>
+      <details id="legend"><summary>Layers, and what the colours mean</summary>
+      <div id="layers"></div>
+      <div class="sub" style="margin-top:8px">The base map (grey, colour, OpenStreetMap) is chosen with the layers button at the top right of the map.</div>
+    </details>
+    </section>
+  </div>
+  <footer><div id="editing"></div><div id="others" role="status"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Signs and operations</a></div><div id="status">Loading…</div></footer>
+</div>
+<div id="mapwrap"><div id="map"></div>
+  <section id="report" hidden aria-labelledby="reporttitle"></section><div id="hint" hidden role="status"></div>
+  <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
+  <div id="mode" hidden role="status"></div></div>
+
+<script>
+"use strict";
+const API = new URL("api/v1/", location.href).href;
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const C = { trail: css("--trail"), path: css("--path"), road: css("--road"), heritage: css("--heritage"),
+            parcel: css("--parcel"), selected: css("--selected"), together: css("--together"),
+            apart: css("--apart"), meeting: css("--meeting"), sign: css("--sign"), osm: css("--osm"),
+            water: css("--water"), ice: css("--ice") };
+const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const GONE = "#7a8691", IN_USE = ["!=", ["get", "discontinued"], true];    // a discontinued route is drawn apart
+function go(center, zoom) {
+  const to = { center, zoom: Math.max(map.getZoom(), zoom) };
+  if (calm) map.jumpTo(to); else map.flyTo(to);
+}
+
+// Text from the sources is always inserted as text, never as HTML.
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
+  }
+  for (const child of children) if (child !== null && child !== undefined) node.append(child);
+  return node;
+}
+const THROUGH = { "X-Stiflyt-Through": "viewer" };
+async function get(path, params = {}) {
+  const url = new URL(path, API);
+  for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined) url.searchParams.set(k, v);
+  const r = await fetch(url, { headers: THROUGH });
+  if (r.status === 401) signIn();
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+// Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
+let leaving = false;
+function signIn() { if (!leaving) { leaving = true; location.href = new URL(`auth/login?next=${encodeURIComponent(location.pathname)}`, API).href; } }
+// A fault in this page is told to the server, where what the tool refuses is kept too. Each fault
+// once, and not what the server has itself answered or a lost connection.
+const toldFaults = new Set();
+function tellFault(message, trace) {
+  try {
+    message = String(message || "a fault in the page").slice(0, 2000);
+    if (!EDITOR || toldFaults.size >= 10 || toldFaults.has(message)
+        || /^[45]\d\d |Failed to fetch|NetworkError|Load failed/.test(message)) return;
+    toldFaults.add(message);
+    send("POST", "feedback", { kind: "failed", what: "page", message, trace: trace ? String(trace).slice(0, 8000) : null,
+                               context: whereNow() }).catch(() => {});
+  } catch {}
+}
+window.addEventListener("error", e => tellFault(e.message, e.error && e.error.stack));
+window.addEventListener("unhandledrejection", e => tellFault(e.reason && e.reason.message || e.reason, e.reason && e.reason.stack));
+const km = v => `${v.toLocaleString("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
+
+const vector = (layer, minzoom) => ({
+  type: "vector", minzoom, maxzoom: 15, tiles: [`${API}tiles/${layer}/{z}/{x}/{y}.mvt`],
+  attribution: layer === "heritage" ? "© Riksantikvaren" : layer === "osm" ? "© OpenStreetMap contributors" : "© Kartverket",
+});
+const width = (a, b) => ["interpolate", ["linear"], ["zoom"], 8, a, 15, b];
+
+const map = new maplibregl.Map({
+  container: "map", hash: true, center: [7.5, 61.7], zoom: 9, maxZoom: 18,
+  style: {
+    version: 8,
+    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    sources: {
+      ...baseSources(),
+      trails: vector("trails", 7), paths: vector("paths", 11), roads: vector("roads", 11), osm: vector("osm", 11), info_points: vector("info_points", 10),
+      heritage: vector("heritage", 12), parcels: vector("parcels", 13),
+      anchors: vector("anchors", 8), meetings: vector("meetings", 11), end_links: vector("end_links", 12),
+      selected: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      owned: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      ownedroutes: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      findings: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      draft: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      held: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      corners: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+    },
+    layers: [
+      ...baseLayers(),
+      { id: "parcels", type: "line", source: "parcels", "source-layer": "parcels",
+        paint: { "line-color": C.parcel, "line-width": 0.8, "line-opacity": 0.7 } },
+      { id: "heritage-fill", type: "fill", source: "heritage", "source-layer": "heritage",
+        filter: ["!=", ["get", "kind"], "sikringssone"],
+        paint: { "fill-color": C.heritage, "fill-opacity": 0.3 } },
+      { id: "heritage-line", type: "line", source: "heritage", "source-layer": "heritage",
+        filter: ["!=", ["get", "kind"], "sikringssone"],
+        paint: { "line-color": C.heritage, "line-width": 1.2 } },
+      { id: "heritage-zone", type: "line", source: "heritage", "source-layer": "heritage",
+        filter: ["==", ["get", "kind"], "sikringssone"],
+        paint: { "line-color": C.heritage, "line-width": 1, "line-dasharray": [2, 2] } },
+      { id: "selected-halo", type: "line", source: "selected",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": C.selected, "line-width": width(9, 16), "line-opacity": 0.75 } },
+      // The route is a wide translucent band and the mapped path a thin line on
+      // top of it, so that where the two coincide both can still be seen.
+      { id: "trails-water", type: "line", source: "trails", "source-layer": "trails",
+        filter: ["==", ["get", "water"], true],
+        paint: { "line-color": C.water, "line-width": width(1.5, 3), "line-opacity": 0.8, "line-dasharray": [0.6, 1.6] } },
+      { id: "trails-unmarked", type: "line", source: "trails", "source-layer": "trails",
+        filter: ["all", ["!=", ["get", "marked"], true], ["!=", ["get", "water"], true]],
+        paint: { "line-color": C.trail, "line-width": width(1.5, 5), "line-opacity": 0.7,
+                 "line-dasharray": [2, 1.5] } },
+      { id: "trails-marked", type: "line", source: "trails", "source-layer": "trails",
+        filter: ["==", ["get", "marked"], true], layout: { "line-cap": "round" },
+        paint: { "line-color": C.trail, "line-width": width(1.5, 5), "line-opacity": 0.7 } },
+      // OpenStreetMap, to compare with: off until switched on. Not something the routes are laid on.
+      { id: "osm-roads", type: "line", source: "osm", "source-layer": "osm", filter: ["!=", ["get", "on_foot"], true],
+        layout: { "line-cap": "round", visibility: "none" },
+        paint: { "line-color": C.osm, "line-width": width(0.8, 1.8), "line-opacity": 0.75, "line-dasharray": [3, 1] } },
+      { id: "osm-paths", type: "line", source: "osm", "source-layer": "osm", filter: ["==", ["get", "on_foot"], true],
+        layout: { "line-cap": "round", visibility: "none" },
+        paint: { "line-color": C.osm, "line-width": width(1, 2.2) } },
+      { id: "roads", type: "line", source: "roads", "source-layer": "roads",
+        layout: { "line-cap": "round" },
+        paint: { "line-color": C.road, "line-width": width(0.8, 1.8), "line-dasharray": [3, 1] } },
+      { id: "paths", type: "line", source: "paths", "source-layer": "paths",
+        layout: { "line-cap": "round" },
+        paint: { "line-color": ["match", ["get", "kind"], "traktorveg", C.road, C.path],
+                 "line-width": width(0.8, 1.8) } },
+      { id: "info_points", type: "circle", source: "info_points", "source-layer": "info_points",
+        paint: { "circle-radius": 3.5, "circle-color": "#ffffff", "circle-stroke-color": C.trail,
+                 "circle-stroke-width": 1.5 } },
+      // Where routes end: a line from each end to the anchor it belongs to.
+      { id: "end_links", type: "line", source: "end_links", "source-layer": "end_links",
+        paint: { "line-color": C.apart, "line-width": 1.6 } },
+      { id: "meetings", type: "circle", source: "meetings", "source-layer": "meetings",
+        paint: { "circle-radius": ["case", ["==", ["get", "kind"], "junction"], 3.5, 4.5],
+                 "circle-color": ["case", [">", ["get", "spots"], 1], C.apart,
+                                  ["==", ["get", "kind"], "junction"], C.meeting, "#ffffff"],
+                 "circle-stroke-color": ["case", ["==", ["get", "kind"], "junction"], "#ffffff", C.meeting],
+                 "circle-stroke-width": 1.5 } },
+      { id: "anchors", type: "circle", source: "anchors", "source-layer": "anchors",
+        paint: { "circle-radius": ["interpolate", ["linear"], ["get", "routes"], 1, 5, 10, 10],
+                 "circle-color": ["case", [">", ["get", "spots"], 1], C.apart, C.together],
+                 "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } },
+      { id: "anchor-names", type: "symbol", source: "anchors", "source-layer": "anchors", minzoom: 10,
+        layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12,
+                  "text-offset": [0, 1.1], "text-anchor": "top", "text-max-width": 9, "text-optional": true },
+        paint: { "text-color": "#12222c", "text-halo-color": "#ffffff", "text-halo-width": 1.6 } },
+      // Your routes: solid where marked, dashed where not; crossings in their own colours.
+      // A route that is discontinued and kept: there, and plainly not one to walk.
+      { id: "yours-discontinued", type: "line", source: "ownedroutes", filter: ["==", ["get", "discontinued"], true],
+        paint: { "line-color": GONE, "line-width": width(1.4, 2.6), "line-dasharray": [0.8, 2.2] } },
+      { id: "yours-unmarked", type: "line", source: "ownedroutes",
+        filter: ["all", IN_USE, ["!", ["in", ["get", "kind"], ["literal", ["water", "glacier"]]]], ["!=", ["get", "marked"], true]],
+        paint: { "line-color": C.sign, "line-width": width(1.6, 3.2), "line-dasharray": [2, 1.5] } },
+      { id: "yours-marked", type: "line", source: "ownedroutes",
+        filter: ["all", IN_USE, ["!", ["in", ["get", "kind"], ["literal", ["water", "glacier"]]]], ["==", ["get", "marked"], true]],
+        layout: { "line-cap": "round" }, paint: { "line-color": C.sign, "line-width": width(1.6, 3.2) } },
+      { id: "yours-water", type: "line", source: "ownedroutes", filter: ["all", IN_USE, ["==", ["get", "kind"], "water"]],
+        paint: { "line-color": C.water, "line-width": width(2, 3.5), "line-dasharray": [0.6, 1.6] } },
+      { id: "yours-glacier", type: "line", source: "ownedroutes", filter: ["all", IN_USE, ["==", ["get", "kind"], "glacier"]],
+        paint: { "line-color": C.ice, "line-width": width(2, 3.5), "line-dasharray": [3, 1.2] } },
+      // The open route's nodes: where one stretch stops and the next begins.
+      // A line being drawn by hand.
+      { id: "draft-line", type: "line", source: "draft", filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": C.sign, "line-width": 3, "line-dasharray": [0.5, 1.5] } },
+      { id: "draft-points", type: "circle", source: "draft", filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": 4, "circle-color": C.sign, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
+      // What is yours: places, their access points and the connectors between them.
+      { id: "owned-connectors", type: "line", source: "owned", filter: ["==", ["get", "type"], "connector"],
+        paint: { "line-color": C.sign, "line-width": 1, "line-opacity": 0.5, "line-dasharray": [1, 2.5] } },    // a link, not a route: drawn lightly
+      { id: "owned-access", type: "circle", source: "owned", filter: ["==", ["get", "type"], "access"],
+        paint: { "circle-radius": 4.5, "circle-color": "#ffffff",
+                 "circle-stroke-color": C.sign, "circle-stroke-width": 2 } },
+      { id: "owned-places", type: "circle", source: "owned", filter: ["==", ["get", "type"], "place"],
+        paint: { "circle-radius": ["case", ["get", "reviewed"], 8, 6.5],
+                 "circle-color": ["case", ["get", "reviewed"], C.sign, [">", ["get", "access_points"], 1], C.apart, "#ffffff"],
+                 "circle-stroke-color": ["case", ["get", "reviewed"], "#ffffff", C.sign], "circle-stroke-width": 2.5 } },
+      { id: "owned-names", type: "symbol", source: "owned", filter: ["==", ["get", "type"], "place"],
+        layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 13,
+                  "text-offset": [0, 1.1], "text-anchor": "top", "text-max-width": 9, "text-optional": true },
+        paint: { "text-color": C.sign, "text-halo-color": "#ffffff", "text-halo-width": 2 } },
+      // Arrival points of places, lit up while an end of a route is dragged: let go on one and the route ends there.
+      { id: "glue", type: "circle", source: "owned", filter: ["in", ["get", "type"], ["literal", ["place", "access"]]],
+        layout: { visibility: "none" },
+        paint: { "circle-radius": 13, "circle-opacity": 0, "circle-stroke-color": C.sign, "circle-stroke-width": 2, "circle-stroke-opacity": 0.7 } },
+      // The open route's nodes, where one stretch stops and the next begins: the handles to drag.
+      // Drawn above the place markers, so that an end at a hut can be seen and taken hold of.
+      { id: "selected-nodes", type: "circle", source: "selected", filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": ["case", ["get", "end"], 6.5, 2.5], "circle-color": "#ffffff", "circle-stroke-color": C.sign,
+                 "circle-stroke-width": ["case", ["get", "end"], 2.5, 1.2] } },
+      // The corners of a stretch of the open route drawn by hand (over a glacier, through the terrain), to take hold of.
+      { id: "selected-corners", type: "circle", source: "corners",
+        paint: { "circle-radius": 3.5, "circle-color": "#ffffff", "circle-stroke-color": GONE, "circle-stroke-width": 1.5 } },
+      // What the pointer has hold of, or would take hold of: the line as it is being pulled, and its handle.
+      { id: "held-line", type: "line", source: "held", filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": C.sign, "line-width": width(2.6, 4.2) } },
+      { id: "held-handle", type: "circle", source: "held", filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": ["match", ["get", "state"], "join", 11, "snap", 9, "held", 8, 7],
+                 "circle-color": ["match", ["get", "state"], "join", C.sign, "snap", C.sign, "#ffffff"],
+                 "circle-stroke-color": ["match", ["get", "state"], "join", "#ffffff", "snap", "#ffffff", C.sign],
+                 "circle-stroke-width": 3 } },
+      // Where the chosen area's network is not joined: a ring to look inside. Smaller for plain ends.
+      { id: "findings", type: "circle", source: "findings",
+        paint: { "circle-radius": ["case", ["==", ["get", "problem"], "end"], 7, 11], "circle-opacity": 0,
+                 "circle-stroke-color": C.apart, "circle-stroke-width": ["case", ["==", ["get", "problem"], "end"], 2, 3.5] } },
+    ],
+  },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+map.addControl(new BaseControl(), "top-right");
+map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+
+// Layer switches, with the legend as their labels.
+const GROUPS = [
+  { name: "Your route, marked", ids: ["yours-marked", "yours-unmarked", "yours-water", "yours-glacier"], swatch: "", color: C.sign, from: 0 },
+  { name: "Your route, not marked", ids: [], swatch: "dash", color: C.sign, from: 0 },
+  { name: "Crossing over water", ids: [], swatch: "dash", color: C.water, from: 0 },
+  { name: "Crossing over glacier", ids: [], swatch: "dash", color: C.ice, from: 0 },
+  { name: "Your route, discontinued", ids: ["yours-discontinued"], swatch: "dash", color: GONE, from: 0 },
+  { name: "Place of yours, reviewed", ids: ["owned-connectors", "owned-access", "owned-places", "owned-names"], swatch: "ring", color: C.sign, from: 0 },
+  { name: "Place of yours, not reviewed yet", ids: [], swatch: "ring", color: "#ffffff", stroke: C.sign, from: 0 },
+  { name: "Place of yours, routes arrive at several spots", ids: [], swatch: "ring", color: C.apart, stroke: C.sign, from: 0 },
+  { name: "Network finding in the chosen area", ids: ["findings"], swatch: "ring", color: "#ffffff", stroke: C.apart, from: 0 },
+  { name: "Turrutebasen, marked", ids: ["trails-marked"], swatch: "", color: C.trail, from: 7 },
+  { name: "Turrutebasen, not marked", ids: ["trails-unmarked"], swatch: "dash", color: C.trail, from: 7 },
+  { name: "Turrutebasen, over water", ids: ["trails-water"], swatch: "dash", color: C.water, from: 10 },
+  { name: "Mapped path (FKB)", ids: ["paths"], swatch: "", color: C.path, from: 11 },
+  { name: "Mapped tractor road (FKB)", ids: [], swatch: "", color: C.road, from: 11 },
+  { name: "Road centre line (NVDB)", ids: ["roads"], swatch: "dash", color: C.road, from: 11 },
+  { name: "OpenStreetMap, path or track", ids: ["osm-paths"], swatch: "", color: C.osm, from: 11, off: true },
+  { name: "OpenStreetMap, road", ids: ["osm-roads"], swatch: "dash", color: C.osm, from: 11, off: true },
+  { name: "Hut or parking that is not a place of yours yet", ids: ["anchors", "anchor-names"], swatch: "ring", color: C.together, from: 8 },
+  { name: "Same, routes end at several spots", ids: [], swatch: "ring", color: C.apart, from: 8 },
+  { name: "Junction or dead end", ids: ["meetings"], swatch: "ring", color: C.meeting, from: 11 },
+  { name: "Route end to its anchor", ids: ["end_links"], swatch: "", color: C.apart, from: 12 },
+  { name: "Route info point", ids: ["info_points"], swatch: "dot", color: C.trail, from: 10, off: true },
+  { name: "Heritage site", ids: ["heritage-fill", "heritage-line", "heritage-zone"], swatch: "box", color: C.heritage, from: 12 },
+  { name: "Property parcel", ids: ["parcels"], swatch: "box", color: C.parcel, from: 13, off: true },
+];
+const layersBox = document.getElementById("layers");
+for (const g of GROUPS) {
+  const sw = el("span", { class: `swatch ${g.swatch}` });
+  if (g.swatch === "dot" || g.swatch === "ring") sw.style.background = g.color; else sw.style.borderColor = g.color;
+  if (g.stroke) sw.style.borderColor = g.stroke;
+  const box = g.ids.length ? el("input", { type: "checkbox", checked: !g.off, onchange: e => {
+    for (const id of g.ids) map.setLayoutProperty(id, "visibility", e.target.checked ? "visible" : "none");
+  } }) : el("span", { style: "width:13px;margin:0 3px 0 4px" });
+  layersBox.append(el("label", { class: "layer" }, box, sw, g.name, el("span", { class: "zoomnote" }, g.from ? `zoom ${g.from}+` : "")));
+}
+map.on("load", () => {
+  for (const g of GROUPS) if (g.off) for (const id of g.ids) map.setLayoutProperty(id, "visibility", "none");
+});
+
+// One row in any route list.
+function routeRow(r) {
+  return el("li", { class: "hit", tabindex: 0, "data-route": r.id, onclick: () => selectRoute(r.id),
+                    onkeydown: e => { if (e.key === "Enter") selectRoute(r.id); } },
+    el("span", { class: "code" }, r.label),
+    el("span", { class: "grow", title: `${r.name || ""}, ${r.maintainer}` }, r.name || el("span", { class: "sub" }, r.maintainer || "no name")),
+    shapeTag(r), el("span", { class: "num" }, km(r.length_km)));
+}
+// Responsibility belongs to the stretch, so a route can have several maintainers.
+function whoMaintains(list) {
+  if (!list || !list.length) return ["not stated"];
+  if (list.length === 1) return [list[0].name];
+  return list.map(m => el("div", {}, m.name, el("span", { class: "sub" }, `, ${km(m.length_m / 1000)}`)));
+}
+function shapeText(sh) {
+  if (!sh || !sh.shape) return null;
+  return { line: "one line", loop: "loop", branched: `${sh.ends} ends`, pieces: `${sh.pieces} pieces` }[sh.shape];
+}
+function shapeTag(r) {
+  return r.shape && r.shape !== "line" ? el("span", { class: "tag" }, shapeText(r)) : null;
+}
+function spotsText(a) {
+  if (a.ends === 1) return a.spread_m > 1 ? `one route end, ${a.spread_m} m away` : "one route end";
+  return a.spots === 1 ? `${a.ends} route ends at one spot` + (a.spread_m > 1 ? `, ${a.spread_m} m away` : "")
+                       : `${a.ends} route ends at ${a.spots} spots, up to ${a.spread_m} m away`;
+}
+const KIND = { hut: "Hut", parking: "Parking", junction: "Junction", "dead end": "Dead end" };
+function anchorRow(a) {
+  return el("li", { class: "hit", tabindex: 0, onclick: () => showAnchor(a), onkeydown: e => { if (e.key === "Enter") showAnchor(a); } },
+    el("span", { class: "grow", title: spotsText(a) }, a.name || KIND[a.kind], " ", el("span", { class: "sub" }, KIND[a.kind].toLowerCase())),
+    el("span", { class: a.spots > 1 ? "tag" : "tag ok" }, a.spots > 1 ? `${a.spots} spots` : "one spot"));
+}
+function showAnchor(a) {
+  go([a.lon, a.lat], 14.5);
+  openAnchor(a.id, [a.lon, a.lat]);
+}
+async function openAnchor(id, lngLat, finding) {
+  const body = el("div", { class: "pop" }, "Loading…");
+  new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(lngLat).setDOMContent(body).addTo(map);
+  try {
+    const a = await get(`anchors/${encodeURIComponent(id)}`);
+    const spots = new Map();
+    for (const e of a.route_ends) spots.set(e.spot, [...(spots.get(e.spot) || []), e]);
+    // A hut or parking place has its own name. A junction or dead end has only the nearest place name, so it is asked for.
+    const nameInput = el("input", { type: "text", value: a.name || "", maxlength: 120, "aria-label": "Name of the place", placeholder: "Name of the place" });
+    const make = async e => {
+      e.preventDefault();
+      const button = e.target.querySelector("button"); button.disabled = true;
+      try { await adoptAnchor(a.id, nameInput.value.trim()); } catch (err) { body.append(el("div", { class: "error" }, `Not made a place: ${err.message}`)); button.disabled = false; }
+    };
+    body.replaceChildren(el("h3", {}, KIND[a.kind]),
+      finding ? el("div", { style: "margin-bottom:5px" }, `${finding.label}: ${finding.text}`) : "",
+      el("div", {}, el("strong", {}, a.name || "No name"),
+        a.named ? "" : el("span", { class: "sub" }, " (nearest place name)")),
+      el("div", { class: "sub" }, spotsText(a)),
+      ...[...spots.values()].map(list => el("div", { style: "margin-top:5px" },
+        el("span", { class: "sub" }, `${list[0].offset_m} m: `),
+        ...list.flatMap((e, i) => [i ? ", " : "", el("button", { class: "link", title: e.name || "", onclick: () => selectRoute(e.route_id) }, e.label)]))),
+      a.place_id ? el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => openPlace(a.place_id) }, "Open your place"))
+        : EDITOR ? el("form", { onsubmit: make, style: "margin-top:8px" },
+            a.named ? "" : el("label", { class: "sub" }, "Called", nameInput),
+            el("div", { class: "actions" }, el("button", { class: "btn main" }, "Make this a place"))) : "");
+  } catch (err) { body.replaceChildren(el("div", { class: "error" }, `Could not load: ${err.message}`)); }
+}
+
+// Search: places and routes together, as you type.
+const results = document.getElementById("results");
+let searchTimer, searchSeq = 0, marker;
+document.getElementById("q").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  const text = e.target.value.trim();
+  if (text.length < 2) { results.hidden = true; return; }
+  searchTimer = setTimeout(() => search(text), 250);
+});
+async function search(text) {
+  const seq = ++searchSeq, c = map.getCenter();
+  try {
+    const [places, routes] = await Promise.all([
+      get("placenames", { q: text, lon: c.lng.toFixed(5), lat: c.lat.toFixed(5), limit: 8 }),
+      get("routes", { q: text, limit: 8 }),
+    ]);
+    if (seq !== searchSeq) return;  // a newer search has been started
+    results.replaceChildren();
+    results.hidden = false;
+    if (routes.length) results.append(el("h2", {}, "Routes"), el("ul", {}, ...routes.map(routeRow)));
+    if (places.length) results.append(el("h2", { class: routes.length ? "next" : null }, "Place names"),
+      el("ul", {}, ...places.map(p => el("li", { class: "hit", tabindex: 0, onclick: () => showPlace(p),
+          onkeydown: e => { if (e.key === "Enter") showPlace(p); } },
+        el("span", { class: "grow" }, p.name, " ", el("span", { class: "sub" }, p.type || "")),
+        el("span", { class: "num" }, p.municipality || "")))));
+    if (!routes.length && !places.length) results.append(el("div", { class: "empty" }, `Nothing found for “${text}”.`));
+  } catch (err) {
+    results.hidden = false;
+    results.replaceChildren(el("div", { class: "error" }, `Search failed: ${err.message}`));
+  }
+}
+function showPlace(p) {
+  if (marker) marker.remove();
+  marker = new maplibregl.Marker({ color: C.selected }).setLngLat([p.lon, p.lat]).addTo(map);
+  go([p.lon, p.lat], 13);
+}
+
+// Area list.
+const areaSelect = document.getElementById("area"), areaRoutes = document.getElementById("arearoutes");
+// Whose routes: everybody's, or what one maintainer looks after. The choice narrows the list of areas and
+// the report of every area side by side, and is remembered in this browser.
+const whoSelect = document.getElementById("who"), reportBox = document.getElementById("report");
+let everyArea = [], sideBySide = null;      // sideBySide: { maintainer, areas, all } as last fetched
+const WHOSE = "stiflyt2.maintainer";
+function listAreas() {
+  const chosen = areaSelect.value, mine = sideBySide && sideBySide.maintainer ? new Map(sideBySide.areas.map(a => [a.area, a.turrutebasen])) : null;
+  areaSelect.replaceChildren(el("option", { value: "" }, "Choose an area prefix…"),
+    ...everyArea.filter(a => !mine || mine.has(a.prefix) || a.prefix === chosen).map(a => {
+      const t = mine && mine.get(a.prefix);
+      return el("option", { value: a.prefix }, t ? `${a.prefix}  (${t.routes} routes, ${Math.round(t.ground_m / 1000).toLocaleString("en")} km of ground)`
+                                                 : `${a.prefix}  (${a.routes} routes, ${a.km.toLocaleString("en")} km)`); }));
+  areaSelect.value = chosen;
+}
+async function chooseWho(name) {
+  localStorage.setItem(WHOSE, name);
+  for (const s of document.querySelectorAll("select.who, #who")) s.value = name;
+  try { sideBySide = await get("report", name ? { maintainer: name } : {}); } catch { sideBySide = null; }
+  listAreas();
+  if (!reportBox.hidden) showReport();
+}
+function closeReport() { reportBox.hidden = true; document.getElementById("openreport").focus(); }
+function showReport() {
+  reportBox.hidden = false;
+  if (!sideBySide) { reportBox.replaceChildren(el("p", {}, "Working it out…")); return; }
+  const k = m => m ? (m / 1000).toLocaleString("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "–";
+  const n = v => v ? v.toLocaleString("en") : "–";
+  const cell = (text, more = "") => el("td", { class: (text === "–" ? "none " : "") + more }, text);
+  const cells = r => { const t = r.turrutebasen, y = r.yours; return [
+    cell(n(t.routes), "first"), cell(k(t.ground_m)), cell(k(t.marked_m)),
+    cell(n(y.routes), "first"), cell(n(y.done)), cell(k(y.ground_m)), cell(k(y.marked_m), "strong"), cell(k(y.unmarked_m)), cell(k(y.unknown_m)), cell(k(y.glacier_m)), cell(k(y.water_m))]; };
+  const open = a => { areaSelect.value = a; if (areaSelect.value !== a) { listAreas(); areaSelect.value = a; } areaSelect.dispatchEvent(new Event("change")); closeReport(); };
+  const who = el("select", { class: "who", "aria-label": "Whose routes to show", onchange: e => chooseWho(e.target.value) },
+    ...[...whoSelect.options].map(o => el("option", { value: o.value, selected: o.value === whoSelect.value }, o.textContent)));
+  const whom = sideBySide.maintainer;
+  reportBox.replaceChildren(
+    el("header", {}, el("h2", { id: "reporttitle" }, "Every area side by side"), who,
+      el("button", { class: "btn", onclick: closeReport, title: "Escape does the same" }, "Back to the map")),
+    el("p", {}, "Kilometres of ground that routes cover. A stretch that several routes share is counted once in an area, and once in the sum where routes of two areas share it. ",
+      whom ? `Only the ground ${whom} is said to maintain, in the areas where that is any. ` : "",
+      "Ours is the routes in use: discontinued ones are left out. Choose an area to open it."),
+    el("table", {},
+      el("thead", {},
+        el("tr", {}, el("th", {}, ""), el("th", { colspan: 3, class: "first" }, "In Turrutebasen"), el("th", { colspan: 8, class: "first" }, "Ours, in use")),
+        el("tr", {}, el("th", { style: "text-align:left" }, "Area"),
+          el("th", { class: "first" }, "routes"), el("th", {}, "ground"), el("th", {}, "marked"),
+          el("th", { class: "first" }, "routes"), el("th", {}, "done"), el("th", {}, "ground"), el("th", {}, "marked"), el("th", {}, "not marked"), el("th", {}, "not said"), el("th", {}, "glacier"), el("th", {}, "water"))),
+      el("tbody", {}, ...sideBySide.areas.map(r => el("tr", { tabindex: 0, title: `Open ${r.area}`, onclick: () => open(r.area), onkeydown: e => { if (e.key === "Enter") open(r.area); } },
+        el("th", { scope: "row" }, r.area), ...cells(r)))),
+      el("tfoot", {}, el("tr", {}, el("th", { scope: "row" }, sideBySide.areas.length === 1 ? "" : `All ${sideBySide.areas.length}`), ...cells(sideBySide.all)))),
+    sideBySide.areas.length ? "" : el("p", {}, whom ? `${whom} is not said to maintain anything.` : "No routes are loaded."));
+}
+document.getElementById("openreport").addEventListener("click", showReport);
+whoSelect.addEventListener("change", e => chooseWho(e.target.value));
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !reportBox.hidden) { e.stopImmediatePropagation(); closeReport(); } }, true);
+Promise.all([get("areas"), get("maintainers")]).then(([areas, who]) => {
+  everyArea = areas;
+  const km = m => `${Math.round(m.metres / 1000).toLocaleString("en")} km in ${m.areas} ${m.areas === 1 ? "area" : "areas"}`;
+  whoSelect.append(...who.maintainers.map(m => el("option", { value: m.name }, `Only ${m.name} (${km(m)})`)));
+  const remembered = localStorage.getItem(WHOSE), names = who.maintainers.map(m => m.name);
+  const start = remembered !== null && (remembered === "" || names.includes(remembered)) ? remembered : names.includes(who.home) ? who.home : "";
+  listAreas();
+  chooseWho(start);
+}).catch(() => {});
+const PROBLEMS = { shape: "Not one line", network: "Not joined in the network", geometry: "Far from any mapped path or road",
+                   name: "Without a name", place: "Places with several arrival spots", code: "Temporary codes", end: "Ends at no place" };
+let findingPopup = null;
+function showFinding(f, move = true) {
+  if (findingPopup) findingPopup.remove();
+  const settle = async accepted => {
+    try {
+      if (accepted) await send("DELETE", `findings/accepted?key=${encodeURIComponent(f.key)}`);
+      else await send("POST", "findings/accepted", { key: f.key, kind: f.kind || "", label: f.label, text: f.text });
+      findingPopup.remove(); loadArea(true);
+    } catch (err) { alert(`Not saved: ${err.message}`); }
+  };
+  findingPopup = new maplibregl.Popup({ maxWidth: "300px" }).setLngLat([f.lon, f.lat])
+    .setDOMContent(el("div", { class: "pop" }, el("h3", {}, f.label), el("div", {}, f.text),
+      EDITOR && f.key ? el("div", { class: "actions" }, f.accepted
+        ? el("button", { class: "btn", onclick: () => settle(true) }, "List it as a finding again")
+        : el("button", { class: "btn", title: "It is not listed as something to do any more", onclick: () => settle(false) }, "This is right as it is")) : "")).addTo(map);
+  // A part that stands apart as a whole has no spot to go to: all of it is shown.
+  if (move && f.bbox) map.fitBounds([[f.bbox[0], f.bbox[1]], [f.bbox[2], f.bbox[3]]], { padding: 90, maxZoom: 15, animate: !calm });
+  else if (move) go([f.lon, f.lat], 15.5);
+}
+areaSelect.addEventListener("change", () => loadArea(false));
+// After a change to a route or place the area's numbers and to-do list are stale: work them out again, a moment later.
+let areaTimer = null, areaSeq = 0, areaFilter = "all";
+let mappedSeen = null;    // the area's routes compared with the mapped paths: { area, found }. Kept, since it takes a while.
+function refreshArea() {
+  if (!areaSelect.value) return;
+  clearTimeout(areaTimer);
+  areaTimer = setTimeout(() => loadArea(true), 1200);
+}
+async function loadArea(quiet) {
+  const seq = ++areaSeq;
+  const folded = s => s.textContent.replace(/\(\d+\).*/, "").trim();
+  const wasOpen = quiet ? new Set([...areaRoutes.querySelectorAll("details[open] > summary")].map(folded)) : null;
+  if (!quiet) {
+    areaRoutes.replaceChildren();
+    whenStyled(() => map.getSource("findings").setData({ type: "FeatureCollection", features: [] }));
+  }
+  if (!areaSelect.value) return;
+  if (!quiet) areaRoutes.append(el("li", { class: "empty" }, "Working out where the area stands…"));
+  try {
+    const area = areaSelect.value;
+    const [anchors, report] = await Promise.all([get("anchors", { area }), get(`areas/${area}/report`)]);
+    if (areaSelect.value !== area || seq !== areaSeq) return;
+    const reload = () => loadArea(false);
+    const open = i => i.about === "network" ? showFinding(i) : i.about === "route" ? openOwnedRoute(i.id) : i.about === "place" ? openPlace(i.id) : selectRoute(i.id);
+    const R = report.routes, L = report.length, N = report.network, items = report.items;
+    whenStyled(() => map.getSource("findings").setData({ type: "FeatureCollection", features: items.filter(i => i.about === "network" && !i.whole).map(i => (
+      { type: "Feature", geometry: { type: "Point", coordinates: [i.lon, i.lat] }, properties: { label: i.label, text: i.text, problem: i.problem, key: i.key, kind: i.kind } })) }));
+    const facts = R.yours ? el("dl", {},
+      el("dt", {}, "Yours"), el("dd", {}, `${R.yours} of ${R.candidates} routes, ${R.reviewed} done`),
+      el("dt", {}, "On foot"), el("dd", {}, `${km(L.routes_on_foot_m / 1000)} of route over ${km(L.on_foot_m / 1000)} of ground`),
+      L.water_m ? el("dt", {}, "Over water") : "", L.water_m ? el("dd", {}, km(L.water_m / 1000)) : "",
+      L.glacier_m ? el("dt", {}, "Over glacier") : "", L.glacier_m ? el("dd", {}, km(L.glacier_m / 1000)) : "",
+      el("dt", {}, "Not marked"), el("dd", {}, (L.unmarked_m ? km(L.unmarked_m / 1000) : "none") + (L.marking_unknown_m ? `, ${km(L.marking_unknown_m / 1000)} not known` : "")),
+      el("dt", {}, "Maintained by"), el("dd", {}, ...report.maintainers.filter(m => m.metres >= 50).flatMap((m, i) => [i ? el("br") : "", `${m.name}, ${km(m.metres / 1000).replace(" ", "\u00a0")}`])),
+      el("dt", {}, "Places"), el("dd", {}, `${report.places.places}, ${report.places.reviewed} reviewed`),
+      el("dt", {}, "Network"), el("dd", {}, N.parts === 1 ? "Hangs together as one" : `In ${N.parts} parts that are not joined; the largest holds ${Math.round(N.largest_share * 100)} % of the length`))
+      : el("div", { class: "sub" }, "None of this area's routes are yours yet.");
+
+    // Every route of the area in one list, with where it stands. This is what a person works from.
+    const statusOf = r => r.discontinued ? "disc" : r.withdrawn ? "gone" : r.kind === "candidate" ? "new" : r.done ? "done" : r.problems.length ? "work" : "check";
+    const STATUS = { work: ["Needs work", "tag"], check: ["To check", "tag ok"], done: ["Done", "tag yours"], "new": ["Not yours yet", "tag none"], gone: ["Withdrawn", "tag none"], disc: ["Discontinued", "tag none"] };
+    const all = report.all, counts = { all: all.length, work: 0, check: 0, done: 0, "new": 0, gone: 0, disc: 0 };
+    for (const r of all) counts[statusOf(r)] += 1;
+    if (areaFilter !== "all" && !counts[areaFilter]) areaFilter = "all";
+    const openRow = r => r.kind === "yours" ? openOwnedRoute(r.id, true) : selectRoute(r.id);
+    const list = el("ul", { id: "routelist" });
+    const showRows = () => list.replaceChildren(...all.filter(r => areaFilter === "all" || statusOf(r) === areaFilter).map(r => {
+      const [word, cls] = STATUS[statusOf(r)], more = r.problems.length > 1 ? `, and ${r.problems.length - 1} more` : "";
+      return el("li", { class: "hit" + (String(r.id) === String(lastOpen) && document.getElementById("bylist").hidden === false ? " last" : ""), "data-route": r.id, tabindex: 0,
+          title: [r.name, r.unpublished && `Not published: ${r.unpublished}`, ...r.problems].filter(Boolean).join("\n"), onclick: () => openRow(r), onkeydown: k => { if (k.key === "Enter") openRow(r); } },
+        el("span", { class: "code" }, r.code),
+        el("span", { class: "grow" }, r.name || "", r.problems.length && (!r.done || r.discontinued) ? el("span", { class: "sub" }, `${r.name ? " " : ""}${r.problems[0]}${more}`) : ""),
+        r.unpublished ? el("span", { class: "tag none", title: `Not published: ${r.unpublished}` }, "Not published") : "",
+        el("span", { class: cls }, word));
+    }));
+    const filter = el("div", { class: "filter", role: "group", "aria-label": "Which routes to list" },
+      ...[["all", "All"], ["work", "Need work"], ["check", "To check"], ["done", "Done"], ["new", "Not yours yet"], ["disc", "Discontinued"], ["gone", "Withdrawn"]].filter(([k]) => k === "all" || counts[k]).map(([k, word]) =>
+        el("button", { "aria-pressed": String(areaFilter === k), onclick: e => { areaFilter = k; for (const b of filter.children) b.setAttribute("aria-pressed", String(b === e.currentTarget)); showRows(); } }, `${word} ${counts[k]}`)));
+    showRows();
+    // What map data is loaded for the area, source by source: paths and roads to lay routes on, OpenStreetMap to compare with.
+    const M = report.map_data, towns = M.roads.municipalities, lacking = towns.filter(m => !m.loaded);
+    const day = t => t ? new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
+    const cover = v => v.share >= 0.999 ? "the whole area" : v.share <= 0.001 ? "nothing yet" : `${Math.round(v.share * 100)} % of the area`;
+    const state = (complete, none) => el("span", { class: complete ? "tag ok" : none ? "tag none" : "tag" }, complete ? "loaded" : none ? "not loaded" : "in part");
+    const whole = M.paths.share >= 0.999 && M.osm.share >= 0.999 && towns.length && !lacking.length;
+    const mapData = el("div", { style: "padding-top:8px" },
+      el("dl", { style: "grid-template-columns:auto auto 1fr;align-items:baseline;margin:0" },
+        el("dt", {}, "Paths"), state(M.paths.share >= 0.999, M.paths.share <= 0.001),
+        el("dd", { class: "sub" }, `FKB, Kartverket: ${cover(M.paths)}` + (M.paths.checked ? `, checked ${day(M.paths.checked)}` : "")),
+        el("dt", {}, "Roads"), state(towns.length && !lacking.length, lacking.length === towns.length),
+        el("dd", { class: "sub", title: towns.map(m => `${m.name}: ${m.loaded ? "loaded" : "not loaded"}`).join("\n") },
+          `NVDB, Kartverket: ${towns.length - lacking.length} of ${towns.length} municipalities` + (lacking.length && lacking.length < towns.length ? `, not ${lacking.map(m => m.name).join(", ")}` : "")
+          + (M.roads.checked ? `, checked ${day(M.roads.checked)}` : "")),
+        el("dt", {}, "OpenStreetMap"), state(M.osm.share >= 0.999, M.osm.share <= 0.001),
+        el("dd", { class: "sub" }, `${cover(M.osm)}` + (M.osm.checked ? `, checked ${day(M.osm.checked)}` : "") + ". To compare with only")),
+      whole ? "" : el("div", { class: "sub", style: "margin-top:4px" }, "Routes can only be laid on paths and roads that are loaded. On the server, ",
+        el("code", {}, `stiflyt2 import area ${area}`), " fetches what is lacking."));
+    const routesBox = el("li", {}, mapData,
+      el("div", { class: "sub", style: "padding-top:8px" }, counts.done === all.length ? "Every route here is done." : `${counts.done} of ${all.length} routes are done. Open one to change it on the map; say “Done” when it is right.`),
+      filter, list,
+      EDITOR ? el("div", { class: "actions" },
+        el("button", { class: "btn", title: "Click where it starts and where it goes: it is laid along the shortest way over your stretches and Turrutebasen's", onclick: () => startRouting() }, "New route between points"),
+        R.clean_candidates ? el("button", { class: "btn main", onclick: async e => {
+          e.target.disabled = true; e.target.textContent = "Making them yours…";
+          try { await send("POST", `areas/${area}/routes`); await refreshOwned(); refreshEditing(); reload(); }
+          catch (err) { e.target.replaceWith(el("div", { class: "error" }, `Not made: ${err.message}`)); }
+        } }, R.clean_candidates === 1 ? "Make the clean line yours" : `Make the ${R.clean_candidates} clean lines yours`) : "") : "");
+    // What is not about one route: where the network is not joined, and ends at no place.
+    const row = i => el("li", { class: "hit", tabindex: 0, onclick: () => open(i), onkeydown: k => { if (k.key === "Enter") open(i); } },
+      el("span", { class: "code" }, i.label), el("span", { class: "grow", title: i.text }, i.text));
+    const loose = items.filter(i => i.about === "network"), spots = items.filter(i => i.about === "place");
+    const findings = loose.length || report.accepted.length ? el("li", {}, el("details", {},
+      el("summary", {}, `Findings in the network (${loose.length})`),
+      el("div", { class: "sub" }, "Spots where the network is not joined, and ends at no place: each is an orange ring on the map. A route that stands apart from the rest as a whole has no ring. Click one to see it, or to say that it is right as it is."),
+      el("ul", {}, ...loose.map(row)),
+      report.accepted.length ? el("details", {}, el("summary", { style: "font-weight:500" }, `Looked at and right as they are (${report.accepted.length})`),
+        el("ul", {}, ...report.accepted.map(i => el("li", { class: "hit", tabindex: 0, onclick: () => showFinding({ ...i, accepted: true }), onkeydown: k => { if (k.key === "Enter") showFinding({ ...i, accepted: true }); } },
+          el("span", { class: "code" }, i.label), el("span", { class: "grow", title: i.text }, i.text))))) : "")) : "";
+    // Repairs simple enough to approve at a glance, each tried out by the server before it is offered.
+    const KINDS = { loop: "A few metres that go nowhere", double: "Two stretches between the same two junctions", twig: "Short extra ends", gap: "Pieces lying close",
+                    reach: "One stretch short of where the routes meet", arrival: "Ends beside a place, not yet one of its arrival points",
+                    passed: "Arrival points of a place that routes only pass",
+                    place: "Ends and glacier edges where something has a name, and no place yet", snap: "Stretches along a road or track" };
+    // Every route against the mapped paths and roads. Worked out when the fold is opened: it takes a while.
+    const beside = el("div", {});
+    const afterLaying = async note => {
+      await refreshOwned(); refreshEditing();
+      if (openRoute) await reloadOpen(note); else loadArea(true);
+    };
+    const showMapped = found => {
+      const share = found.was_m ? Math.round(100 * found.beside_m / found.was_m) : 0;
+      const open = found.routes.filter(r => !r.done);
+      const row = r => el("li", { class: "hit", tabindex: 0, title: "Open the route: its panel shows the line it would be", onclick: () => openOwnedRoute(r.id),
+          onkeydown: k => { if (k.key === "Enter") openOwnedRoute(r.id); } },
+        el("span", { class: "code" }, r.code),
+        el("span", { class: "grow", style: "white-space:normal" },
+          `${Math.round(100 * r.beside_m / r.was_m)} % beside a mapped line. ${km(r.was_m / 1000)} becomes ${km(r.length_m / 1000)}; ${r.stretches === 1 ? "one stretch" : `${r.stretches} stretches`}, ${Math.round(r.moves_m)} m at most`,
+          r.done ? el("span", { class: "tag yours", style: "margin-left:6px" }, "done") : ""),
+        EDITOR ? el("button", { class: "btn quiet", onclick: async e => {
+          e.stopPropagation(); e.target.disabled = true; e.target.textContent = "Doing it…";
+          try {
+            const now = await get(`owned/routes/${r.id}`);
+            const did = await send("POST", `owned/routes/${r.id}/mapped`, { version: now.version });
+            mappedSeen.found.routes = mappedSeen.found.routes.filter(x => x.id !== r.id);
+            await afterLaying(`${r.code} laid on the mapped paths and roads beside it: ${km(did.length_m / 1000)}, from ${km(did.was_m / 1000)}.`);
+          } catch (err) { e.target.replaceWith(el("span", { class: "error" }, `Not done: ${err.message}`)); }
+        } }, "Lay it on them") : "");
+      beside.replaceChildren(
+        el("div", { class: "sub" }, `${share} % of the ${km(found.was_m / 1000)} of route here has a mapped path or road beside it. `,
+          found.routes.length ? `${found.routes.length} of ${found.compared} routes would change if laid on them. Where nothing is mapped beside a route, its line stays.`
+                              : "Every route lies on them wherever they run beside it."),
+        el("div", { class: "actions" },
+          EDITOR && open.length > 1 ? el("button", { class: "btn main", title: "One action, which Undo takes back. Stretches of routes you have said are done are left as they are.", onclick: async e => {
+            e.target.disabled = true; e.target.textContent = "Laying them… this takes a while";
+            try {
+              const did = await send("POST", `areas/${area}/mapped`);
+              mappedSeen = null;
+              await afterLaying(`${did.routes} routes laid on the mapped paths and roads beside them: ${km(did.length_m / 1000)}, from ${km(did.was_m / 1000)}.`);
+              if (!openRoute) alert(`${did.routes} routes laid on the mapped paths and roads beside them: ${km(did.length_m / 1000)}, from ${km(did.was_m / 1000)}.` + (did.left_done ? ` ${did.left_done} routes that are done were left as they are.` : ""));
+            } catch (err) { e.target.replaceWith(el("span", { class: "error" }, `Not done: ${err.message}`)); }
+          } }, `Lay all ${open.length} that are not done on them`) : "",
+          el("button", { class: "btn", onclick: () => compareMapped() }, "Compare again")),
+        el("ul", {}, ...found.routes.map(row)));
+    };
+    const compareMapped = async () => {
+      beside.replaceChildren(el("div", { class: "sub" }, "Comparing every route here with the mapped paths and roads. This takes up to half a minute…"));
+      try { const found = await get(`areas/${area}/mapped`); mappedSeen = { area, found }; if (seq === areaSeq) showMapped(found); }
+      catch (err) { beside.replaceChildren(el("div", { class: "error" }, `Could not compare: ${err.message}`)); }
+    };
+    const againstMapped = el("li", {}, el("details", { ontoggle: e => {
+        if (!e.target.open || beside.hasChildNodes()) return;
+        if (mappedSeen && mappedSeen.area === area) showMapped(mappedSeen.found); else compareMapped();
+      } }, el("summary", {}, "Against the mapped paths"), beside));
+    const proposed = el("li", {});
+    const approve = async (list, button) => {
+      button.disabled = true; button.textContent = "Doing it…";
+      try {
+        const r = await send("POST", "proposals/approve", { actions: list.map(p => p.action) });
+        whenStyled(() => map.getSource("draft").setData({ type: "FeatureCollection", features: [] }));
+        closePopups();
+        await refreshOwned(); refreshEditing();
+        if (openRoute) await reloadOpen(`${r.done} proposed ${r.done === 1 ? "repair" : "repairs"} carried out.`); else loadArea(true);
+        if (r.failed.length) alert(`${r.failed.length} could not be carried out: ${r.failed[0].why}`);
+      } catch (err) { button.replaceWith(el("span", { class: "error" }, `Not done: ${err.message}`)); }
+    };
+    const look = p => {
+      whenStyled(() => map.getSource("draft").setData({ type: "FeatureCollection", features: p.geometry ? [{ type: "Feature", properties: {}, geometry: p.geometry }] : [] }));
+      showFinding({ lon: p.lon, lat: p.lat, label: p.label, text: p.text });
+    };
+    get(`areas/${area}/proposals`).then(found => {
+      if (seq !== areaSeq) return;
+      const was = wasOpen || new Set();
+      if (!found.length) { proposed.replaceChildren(); return; }
+      proposed.replaceChildren(el("details", { open: was.has("Proposed repairs") },
+        el("summary", {}, `Proposed repairs (${found.length})`),
+        el("div", { class: "sub" }, found.length ? "Each has been tried and leaves the route as one line, or the stretch on the mapped road. Look at one by clicking it; approve it, or open the route and do it your way."
+          : "Nothing simple enough to propose. What is left is in the to-do list."),
+        ...Object.keys(KINDS).map(kind => {
+          const of = found.filter(p => p.kind === kind);
+          return of.length ? el("details", { open: was.has(KINDS[kind]) },
+            el("summary", { style: "font-weight:500" }, `${KINDS[kind]} (${of.length})`),
+            EDITOR && of.length > 1 ? el("div", { class: "actions" }, el("button", { class: "btn main", onclick: e => approve(of, e.target) }, `Approve all ${of.length}`)) : "",
+            el("ul", {}, ...of.map(p => el("li", { class: "hit", tabindex: 0, title: p.text, onclick: () => look(p), onkeydown: k => { if (k.key === "Enter") look(p); } },
+              el("span", { class: "grow", style: "white-space:normal" }, p.text),
+              EDITOR ? el("button", { class: "btn quiet", onclick: e => { e.stopPropagation(); approve([p], e.target); } }, "Approve") : "")))) : "";
+        })));
+    }).catch(err => { proposed.replaceChildren(el("div", { class: "error" }, `Could not work out proposals: ${err.message}`)); });
+    // The odd things: where to look, not what is wrong. A click shows the spot; the code opens the route.
+    const odd = el("li", {});
+    get(`areas/${area}/checks`).then(found => {
+      if (seq !== areaSeq || !found.checks.length) return;
+      const spot = c => { if (c.lon !== null) showFinding({ lon: c.lon, lat: c.lat, label: c.routes.map(r => r.code).join(" and "), text: c.text }); };
+      odd.replaceChildren(el("details", { open: (wasOpen || new Set()).has("Odd things to look at") },
+        el("summary", {}, `Odd things to look at (${found.checks.length})`),
+        el("div", { class: "sub" }, "Found by counting what is otherwise only seen on the map: one line under two numbers, a route of a few metres, a number that looks misspelt, a maintainer that is none, a line that goes out and back, ice that is not said to be ice. None is certainly wrong."),
+        el("ul", {}, ...found.checks.map(c => el("li", { class: "hit", tabindex: 0, title: c.text, onclick: () => spot(c), onkeydown: k => { if (k.key === "Enter") spot(c); } },
+          el("span", { class: "grow", style: "white-space:normal" }, c.text),
+          ...c.routes.map(r => el("button", { class: "btn quiet", title: r.yours ? "Open the route" : "Open it as Turrutebasen has it",
+            onclick: e => { e.stopPropagation(); if (r.yours) openOwnedRoute(r.id); else selectRoute(r.id); } }, r.code)))))));
+    }).catch(err => { odd.replaceChildren(el("div", { class: "error" }, `Could not look for odd things: ${err.message}`)); });
+    // What differs from Turrutebasen, to hand to Kartverket. Worked out after the rest is shown.
+    const kartverket = el("li", {});
+    get("corrections", { area }).then(found => {
+      const file = srid => new URL(`corrections.geojson?area=${area}&srid=${srid}`, API).href;
+      kartverket.replaceChildren(el("details", {},
+        el("summary", {}, `For Kartverket (${found.length})`),
+        el("div", { class: "sub" }, found.length ? "What your changes mean for Turrutebasen, by its own segment ids. As a file: " : "Nothing of yours differs from Turrutebasen yet.",
+          found.length ? el("a", { href: file(4326), download: "" }, "GeoJSON") : "", found.length ? " or " : "",
+          found.length ? el("a", { href: file(25833), download: "" }, "GeoJSON in UTM 33") : "", found.length ? "." : ""),
+        el("ul", {}, ...found.map(c => el("li", { class: "hit", tabindex: 0, title: `${c.lokalid || ""} ${c.text}`,
+            onclick: () => { if (c.lon) showFinding({ lon: c.lon, lat: c.lat, label: c.lokalid ? `Segment ${c.lokalid}` : c.rutenummer.join(", "), text: c.text }); },
+            onkeydown: k => { if (k.key === "Enter" && c.lon) showFinding({ lon: c.lon, lat: c.lat, label: c.lokalid ? `Segment ${c.lokalid}` : c.rutenummer.join(", "), text: c.text }); } },
+          el("span", { class: "code" }, c.rutenummer[0] || ""), el("span", { class: "grow" }, c.text))))));
+    }).catch(err => { kartverket.replaceChildren(el("div", { class: "error" }, `Could not work out the corrections: ${err.message}`)); });
+    const apart = anchors.filter(a => a.spots > 1).length;
+    areaRoutes.replaceChildren(routesBox, proposed, odd, againstMapped, findings,
+      el("li", {}, el("details", {}, el("summary", {}, `Places (${report.places.places})`),
+        el("div", { class: "sub" }, `${report.places.reviewed} reviewed.` + (spots.length ? ` At ${spots.length} of them routes arrive at several spots: check which belong.` : "")),
+        el("ul", {}, ...spots.map(row)),
+        anchors.length ? el("details", {}, el("summary", { style: "font-weight:500" }, `Huts and parking in Turrutebasen (${anchors.length})`, apart ? el("span", { class: "sub" }, `  ${apart} with routes ending apart`) : ""),
+          el("ul", {}, ...anchors.map(anchorRow))) : "")),
+      kartverket,
+      el("li", {}, el("details", {}, el("summary", {}, "For UT.no"),
+        el("div", { class: "sub" }, "Your routes of the area as they are now: one line per route with its name, who maintains it and what has changed from Turrutebasen. As a file: ",
+          el("a", { href: new URL(`routes.geojson?area=${area}`, API).href, download: "" }, "all routes"), " or ",
+          el("a", { href: new URL(`routes.geojson?area=${area}&changed=true`, API).href, download: "" }, "only what there is to act on"), ".",
+          counts.disc ? ` ${counts.disc === 1 ? "The route that is discontinued is" : `The ${counts.disc} routes that are discontinued are`} in both, marked as discontinued with since when and why, for whoever still shows ${counts.disc === 1 ? "it" : "them"} to take ${counts.disc === 1 ? "it" : "them"} out. ` : "",
+          counts.disc ? el("a", { href: new URL(`routes.geojson?area=${area}&discontinued=false`, API).href, download: "" }, "Only the routes in use") : "", counts.disc ? "." : ""))),
+      el("li", {}, el("details", {}, el("summary", {}, "Numbers for the area"), facts)));
+    if (wasOpen) for (const d of areaRoutes.querySelectorAll("details")) d.open = wasOpen.has(folded(d.querySelector("summary")));
+  } catch (err) {
+    if (!quiet) areaRoutes.replaceChildren(el("li", { class: "error" }, `Could not load the area: ${err.message}`));
+  }
+}
+
+// The selected route: drawn with a halo, described in the panel.
+const selected = document.getElementById("selected");
+async function selectRoute(id) {
+  openRoute = null;
+  asideList(id);          // before the panel is shown: showing it moves the list
+  selected.hidden = false;
+  selected.replaceChildren(el("div", { class: "empty" }, "Loading route…"));
+  let r;
+  try { r = await get(`routes/${encodeURIComponent(id)}`); }
+  catch (err) { selected.replaceChildren(el("div", { class: "error" }, `Could not load the route: ${err.message}`)); return; }
+  whenStyled(() => {
+    map.getSource("selected").setData({ type: "Feature", properties: {}, geometry: r.geometry });
+    map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm });
+  });
+  for (const li of document.querySelectorAll("li.hit")) li.classList.toggle("current", li.dataset.route === id);
+
+  const facts = el("dl", {},
+    el("dt", {}, "Maintained by"), el("dd", {}, ...whoMaintains(r.maintainers)),
+    el("dt", {}, "Length"), el("dd", {}, km(r.length_m / 1000)),
+    el("dt", {}, "Segments"), el("dd", {}, `${r.segment_count}` + (r.unmarked_segments ? `, ${r.unmarked_segments} not marked` : "")));
+  if (r.water_m) facts.append(el("dt", {}, "Over water"), el("dd", {}, `${km(r.water_m / 1000)} of it, as Turrutebasen records it`));
+  if (r.grading) facts.append(el("dt", {}, "Grading"), el("dd", {}, r.grading));
+  if (r.names && r.names.length > 1) facts.append(el("dt", {}, "Also named"), el("dd", {}, r.names.filter(n => n !== r.name).join("; ")));
+
+  let paths;
+  if (r.near_path_share === null) {
+    paths = el("div", { class: "sub" }, "No mapped paths are loaded around this route.");
+  } else {
+    const pct = Math.round(r.near_path_share * 100);
+    paths = el("div", {}, `${pct} % lies within 20 m of a mapped path`,
+      el("div", { class: "bar", role: "img", "aria-label": `${pct} percent` }, el("i", { style: `width:${pct}%` })));
+  }
+
+  const heritage = r.heritage.length
+    ? el("ul", {}, ...r.heritage.slice(0, 12).map(h => el("li", { class: "sub" },
+        safeLink(h.url, h.name || h.id), `, ${h.distance_m} m`)))
+    : el("div", { class: "sub" }, "None within 50 m.");
+  const parcels = r.parcels.length
+    ? el("div", { class: "sub" }, `${r.parcels.length} parcels: ` + r.parcels.slice(0, 8).map(p => p.matrikkel).join(", ") + (r.parcels.length > 8 ? " …" : ""))
+    : el("div", { class: "sub" }, "No parcels are loaded here.");
+
+  const shapeLine = !r.shape ? null : el("div", {},
+    { line: "One line with two ends.", loop: "A closed loop with no ends.",
+      branched: `One piece with ${r.shape.ends} ends: it has spurs or forks.`,
+      pieces: `In ${r.shape.pieces} separate pieces, with ${r.shape.ends} ends.` }[r.shape.shape]);
+  const ends = el("ul", {}, ...r.ends.map(a => el("li", { class: "hit", tabindex: 0, onclick: () => showAnchor(a),
+      onkeydown: e => { if (e.key === "Enter") showAnchor(a); } },
+    el("span", { class: "grow" }, a.name || KIND[a.kind], " ", el("span", { class: "sub" }, a.named ? KIND[a.kind].toLowerCase() : `near, ${KIND[a.kind].toLowerCase()}`)),
+    el("span", { class: "num" }, `${a.offset_m} m`))));
+
+  const codeBox = el("input", { type: "text", value: r.label, "aria-label": "Code for your route", maxlength: 40, style: "width:9em" });
+  const yours = r.owned_route_id
+    ? el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => openOwnedRoute(r.owned_route_id) }, "Open your route"))
+    : EDITOR ? el("form", { class: "actions", onsubmit: async e => {
+        e.preventDefault();
+        try { await makeRouteYours(r.id, codeBox.value); }
+        catch (err) { selected.append(el("div", { class: "error", role: "alert" }, `Not made yours: ${err.message}`)); }
+      } }, codeBox, el("button", { class: "btn main" }, "Make this route yours"),
+      r.label !== r.code ? el("div", { class: "sub" }, "The code is yours to choose. Left as it is, it is kept as a temporary code.") : "") : "";
+
+  selected.replaceChildren(
+    backBar(r.label),
+    el("h2", {}, "Route candidate"),
+    el("div", {}, el("strong", {}, r.label), " ", r.name || ""),
+    r.label !== r.code ? el("div", { class: "sub" }, `Turrutebasen calls this ${r.code}, a code it also uses for other routes.`) : "",
+    facts, yours,
+    el("h2", { class: "next" }, "Starts and ends at"), shapeLine || "", ends,
+    el("h2", { class: "next" }, "Mapped paths"), paths,
+    el("h2", { class: "next" }, `Heritage sites (${r.heritage.length})`), heritage,
+    el("h2", { class: "next" }, "Property"), parcels);
+  selected.scrollIntoView({ block: "nearest" });
+  remember("route", id);
+}
+// The panel does not wait for the map: the map may still be fetching tiles.
+function whenStyled(draw) {
+  if (map.getSource("selected")) draw(); else map.once("styledata", () => whenStyled(draw));
+}
+// The selected route is part of the address, so a view can be linked to.
+function remember(key, value) {
+  const url = new URL(location.href);
+  if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+  history.replaceState(null, "", url);
+}
+let would = false;     // lines a change would give are being shown
+
+function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
+  for (const child of children) if (child !== null && child !== undefined) node.append(child);
+  return node;
+}
+// The side shows the list or one route. Opening a route puts the list aside and remembers where it stood;
+// leaving the route brings it back there, with the row that was open marked.
+let listAt = null, lastOpen = null;
+function asideList(id) {
+  const list = document.getElementById("bylist"), scroll = document.getElementById("scroll");
+  if (!list.hidden) { listAt = scroll.scrollTop; list.hidden = true; }
+  lastOpen = id;
+  scroll.scrollTop = 0;
+}
+function backBar(label) {
+  const rows = [...document.querySelectorAll("#routelist li.hit")], at = rows.findIndex(li => li.dataset.route === String(lastOpen));
+  const step = by => el("button", { class: "btn", disabled: at < 0 || !rows[at + by], title: by < 0 ? "The route before this one in the list" : "The next route in the list",
+    "aria-label": by < 0 ? "Previous route in the list" : "Next route in the list", onclick: () => rows[at + by].click() }, by < 0 ? "‹" : "›");
+  return el("div", { class: "backbar" },
+    el("button", { class: "btn", title: "Back to the list of routes. Escape does the same.", onclick: clearRoute }, "‹ All routes"),
+    el("span", { class: "grow sub" }, label || ""), step(-1), step(1));
+}
+function clearRoute() {
+  const list = document.getElementById("bylist");
+  if (list.hidden) {
+    list.hidden = false;
+    for (const li of document.querySelectorAll("#routelist li.hit")) li.classList.toggle("last", li.dataset.route === String(lastOpen));
+    requestAnimationFrame(() => { if (listAt !== null) document.getElementById("scroll").scrollTop = listAt; });
+  }
+  openRoute = null;
+  leaveProfile();
+  if (would) showWould(null);
+  if (fixing) setFixing(false);
+  map.getCanvas().style.cursor = "";
+  map.getSource("held").setData({ type: "FeatureCollection", features: [] });
+  map.getSource("selected").setData({ type: "FeatureCollection", features: [] });
+  selected.hidden = true;
+  remember("route", null);
+  showCorners();
+  for (const li of document.querySelectorAll("li.hit.current")) li.classList.remove("current");
+}
+function safeLink(url, text) {
+  return typeof url === "string" && url.startsWith("https://")
+    ? el("a", { href: url, target: "_blank", rel: "noopener" }, text) : document.createTextNode(text);
+}
+
+// Click the map: what is here?
+const CLICKABLE = ["anchors", "meetings", "trails-marked", "trails-unmarked", "trails-water", "paths", "roads", "osm-paths", "osm-roads", "info_points", "heritage-fill", "parcels"];
+map.on("click", e => {
+  if (routing) {
+    // A click on a marker means that spot exactly; near a junction means the junction, as wide as 14 pixels are now.
+    const spot = map.queryRenderedFeatures(around(e.point, 8), { layers: ["owned-places", "owned-access", "selected-nodes"] })[0];
+    routing.points.push(spot ? spot.geometry.coordinates.slice(0, 2) : [e.lngLat.lng, e.lngLat.lat]);
+    routing.reach = Math.max(routing.reach || 0, Math.min(500, Math.max(15, 14 * 78271.517 * Math.cos(e.lngLat.lat * Math.PI / 180) / 2 ** map.getZoom())));
+    routing.way = null; showRouting(); planRouting(); return;
+  }
+  if (draft) { draft.points.push([e.lngLat.lng, e.lngLat.lat]); showDraft(); return; }
+  if (pick) { const done = pick; endPick(); done(e.lngLat, e.point); return; }
+  const box = [[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]];
+  // A marker wins over the ring around it and the line through it: the line can be clicked anywhere else.
+  const finding = map.queryRenderedFeatures(box, { layers: ["findings"] })[0];
+  const mine = map.queryRenderedFeatures(box, { layers: ["owned-places", "owned-access"] })[0];
+  if (mine) { openPlace(mine.properties.type === "place" ? mine.properties.id : mine.properties.place_id); return; }
+  const anchor = map.queryRenderedFeatures(box, { layers: ["anchors", "meetings"] })[0];
+  if (anchor) { openAnchor(anchor.properties.id, anchor.geometry.coordinates, finding && finding.properties); return; }
+  if (finding) { showFinding({ ...finding.properties, lon: finding.geometry.coordinates[0], lat: finding.geometry.coordinates[1] }, false); return; }
+  const legs = map.queryRenderedFeatures(box, { layers: YOURS });
+  if (openRoute && legs.length) { stretchPopup(legs.find(f => inOpenRoute(f)) || legs[0], e.lngLat); return; }
+  if (legs.length) {
+    const sharing = JSON.parse(legs[0].properties.routes || "[]");
+    if (sharing.length < 2) { openOwnedRoute(legs[0].properties.route_id); return; }
+    const popup = new maplibregl.Popup({ maxWidth: "280px" }).setLngLat(e.lngLat).setDOMContent(el("div", { class: "pop" },
+      el("h3", {}, `${sharing.length} of your routes run here`), el("div", { class: "sub" }, "Which one do you want to open?"),
+      el("div", { class: "actions" }, ...sharing.map(r => el("button", { class: "btn", onclick: () => { popup.remove(); openOwnedRoute(r.id); } }, r.code))))).addTo(map);
+    return;
+  }
+  const seen = new Set(), body = el("div", { class: "pop" });
+  for (const f of map.queryRenderedFeatures(box, { layers: CLICKABLE })) {
+    const key = `${f.layer.source}/${f.properties.kind || ""}/${f.properties.id}`;
+    if (seen.has(key) || seen.size >= 8) continue;
+    seen.add(key);
+    const p = f.properties;
+    if (f.layer.source === "trails" && !p.id) {
+      body.append(el("h3", {}, "Turrutebasen"), el("div", {}, "Zoom in to see which routes use this trail."));
+    } else if (f.layer.source === "trails") {
+      const routes = el("div", { class: "sub" }, "Loading routes…");
+      body.append(el("h3", {}, p.water ? "Turrutebasen segment, over water" : p.marked ? "Turrutebasen segment" : "Turrutebasen segment, not marked"),
+        el("div", {}, `${p.length_m} m`), routes,
+        el("div", { class: "sub" }, `Source: Turrutebasen, Kartverket, segment ${p.id}.`));
+      get("routes", { segment: p.id }).then(list => {
+        routes.replaceChildren(...list.flatMap((r, i) => [i ? ", " : "",
+          el("button", { class: "link", onclick: () => selectRoute(r.id) }, r.label)]));
+        if (!list.length) routes.textContent = "No route uses this segment.";
+      }).catch(() => { routes.textContent = p.codes || ""; });
+      if (openRoute) body.append(el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => carryOn({ segment_id: p.id }) }, `Carry ${openRoute.code} on along this`)));
+    } else if (f.layer.source === "paths") {
+      body.append(el("h3", {}, p.kind === "traktorveg" ? "Mapped tractor road" : "Mapped path"), el("div", {}, `${p.length_m} m (${p.kind})`),
+        el("div", { class: "sub" }, "Source: FKB Traktorveg og sti, from Kartverket's open WFS. CC BY 4.0. Routes can be laid on it."));
+    } else if (f.layer.source === "roads") {
+      const owner = { E: "European road", R: "national road", F: "county road", K: "municipal road", P: "private road", S: "forest road" }[p.category];
+      body.append(el("h3", {}, p.name || "Road"), el("div", {}, [p.kind, owner, `${p.length_m} m`].filter(Boolean).join(", ")),
+        el("div", { class: "sub" }, `Source: NVDB Vegnett Pluss, Kartverket, link ${p.id}. CC BY 4.0. Routes can be laid on it.`));
+    } else if (f.layer.source === "osm") {
+      body.append(el("h3", {}, "OpenStreetMap"), el("div", {}, [p.name, p.kind, p.sac_scale && `difficulty ${p.sac_scale}`, p.visibility && `visibility ${p.visibility}`, p.surface].filter(Boolean).join(", ")),
+        el("div", { class: "sub" }, `${p.length_m} m. `, el("a", { href: `https://www.openstreetmap.org/way/${encodeURIComponent(p.id)}`, target: "_blank", rel: "noopener" }, `way ${p.id}`),
+          "."), el("div", { class: "sub" }, "Source: OpenStreetMap contributors. ODbL: to compare with, its line cannot be taken over."));
+    } else if (f.layer.source === "info_points") {
+      body.append(el("h3", {}, "Route info point"), el("div", {}, p.info || "No description"), el("div", { class: "sub" }, p.maintainer || ""));
+    } else if (f.layer.source === "heritage") {
+      body.append(el("h3", {}, "Heritage site"), el("div", {}, safeLink(p.url, p.name || p.id)),
+        el("div", { class: "sub" }, [p.category, p.protection].filter(Boolean).join(", ")));
+    } else if (f.layer.source === "parcels") {
+      body.append(el("h3", {}, "Property parcel"), el("div", {}, p.matrikkel || p.id), el("div", { class: "sub" }, `Municipality ${p.municipality_no}`));
+    }
+  }
+  if (seen.size) new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(e.lngLat).setDOMContent(body).addTo(map);
+});
+for (const id of [...CLICKABLE, "owned-places", "owned-access", "yours-marked", "yours-unmarked", "yours-water", "yours-glacier", "yours-discontinued"]) {
+  map.on("mouseenter", id, () => { if (!pick) map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", id, () => { if (!pick) map.getCanvas().style.cursor = ""; });
+}
+
+// ---- Your places (ADR-002): adopt a proposed anchor, then edit the place. ----
+const placeBox = document.getElementById("place"), hintBox = document.getElementById("hint");
+let EDITOR = null, pick = null, adopted = [], building = null;
+// While a place is open, a small diamond marks its reference point (the building).
+function markBuilding(place) {
+  if (building) { building.remove(); building = null; }
+  if (!place) return;
+  const mark = el("div", { title: "Reference point: the building", style: `width:11px;height:11px;transform:rotate(45deg);background:#fff;border:2px solid ${C.sign}` });
+  building = new maplibregl.Marker({ element: el("div", {}, mark) }).setLngLat([place.lon, place.lat]).addTo(map);
+}
+function closePlace() { placeBox.hidden = true; markBuilding(null); }
+
+async function send(method, path, body, more) {
+  const r = await fetch(new URL(path, API), { method, headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...THROUGH, ...(more || {}) },
+                                              body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) signIn();
+  if (!r.ok) {
+    let message = `${r.status} ${r.statusText}`;
+    try { const d = (await r.json()).detail; message = typeof d === "string" ? d : JSON.stringify(d); } catch {}
+    throw new Error(message);
+  }
+  seenSeq = null;     // a change of your own: what the page shows is brought up to date by whoever made it
+  return r.status === 204 ? null : r.json();
+}
+// The revision of a stretch as this map has it. Sent with a change to its line, so that a change
+// somebody else made in the meantime is not written over unseen.
+const asSeen = edge => { const f = ownedLines.features.find(f => f.properties.edge_id === edge);
+  return f && f.properties.rev ? { "X-Stiflyt-Seen-Rev": String(f.properties.rev) } : {}; };
+// ---- Others at work: every few seconds the page asks whether anything has been changed, by anyone. ----
+let seenSeq = null;
+const othersBox = document.getElementById("others");
+async function lookForChanges() {
+  if (document.hidden || drag || draft || routing || settling || pick) return;
+  let latest;
+  try { latest = await get("latest"); } catch { return; }
+  if (!latest) return;
+  if (seenSeq === null) { seenSeq = latest.seq; return; }
+  if (latest.seq === seenSeq) return;
+  seenSeq = latest.seq;
+  const who = latest.author + (latest.through === "mcp" ? " (through an assistant)" : latest.through === "api" ? " (through a script)" : "");
+  await refreshOwned(); refreshUndo(); refreshArea();
+  othersBox.textContent = `${who} changed something at ${new Date(latest.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}. The map shows it as it is now.`;
+  if (!openRoute) return;
+  try {
+    const now = await get(`owned/routes/${openRoute.id}`);
+    const typing = document.activeElement && selected.contains(document.activeElement) && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+    if (!typing && (now.version !== openRoute.version || now.length.on_foot_m !== openRoute.length.on_foot_m))
+      renderOwnedRoute(now, null, `${who} changed this route just now. This is how it is.`);
+  } catch { clearRoute(); othersBox.textContent = `${who} took away the route you had open.`; }
+}
+setInterval(lookForChanges, 8000);
+// What runs by itself at night, and has not: said to whoever works here, since nothing else tells anyone.
+async function lookAtNight() {
+  try { const h = await get("health"); document.getElementById("nightly").replaceChildren(...(EDITOR ? h.warnings : []).map(w => el("div", {}, w))); } catch {}
+}
+setInterval(lookAtNight, 30 * 60 * 1000);
+// The map shows what is yours on top, and hides the proposals it was made from.
+let ownedLines = { features: [] };
+async function refreshOwned() {
+  const data = await get("places.geojson");
+  adopted = data.features.filter(f => f.properties.type === "place" && f.properties.adopted_from).map(f => f.properties.adopted_from);
+  const lines = ownedLines = await get("owned/routes.geojson");
+  whenStyled(() => {
+    map.getSource("ownedroutes").setData(lines);
+    map.getSource("owned").setData(data);
+    const fresh = ["!", ["in", ["get", "id"], ["literal", adopted]]];
+    for (const id of ["anchors", "anchor-names", "meetings"]) map.setFilter(id, fresh);
+    map.setFilter("end_links", ["!", ["in", ["get", "anchor_id"], ["literal", adopted]]]);
+  });
+}
+// ---- Undo: your own latest change made here in the map, whatever it was. What others have done, or an
+// assistant acting for you, is not what this takes back. The server keeps what every change replaced. ----
+const undoButton = document.getElementById("undo");
+let undoNext = null;
+async function refreshUndo() {
+  try { undoNext = EDITOR ? await get("undo") : null; } catch { undoNext = null; }
+  undoButton.hidden = !undoNext;
+  if (undoNext) undoButton.replaceChildren(el("strong", {}, "Undo"), undoNext.what);
+}
+async function undoLast() {
+  if (!undoNext || undoButton.disabled) return;
+  undoButton.disabled = true;
+  try {
+    const r = await send("POST", "undo", { txid: undoNext.txid });
+    closePopups();
+    await refreshOwned();
+    if (openRoute) {
+      try { renderOwnedRoute(await get(`owned/routes/${openRoute.id}`), null, `Taken back: ${r.undone}.`); }
+      catch { clearRoute(); }      // the route itself was what was taken back
+    }
+    if (!placeBox.hidden) closePlace();
+    refreshArea();
+  } catch (err) { alert(`Could not undo: ${err.message}`); }
+  undoButton.disabled = false;
+  refreshEditing();
+}
+undoButton.addEventListener("click", undoLast);
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); undoLast(); }
+});
+async function refreshEditing() {
+  const footer = document.getElementById("editing");
+  try {
+    const e = await get("editing");
+    EDITOR = e.editor;
+    const out = e.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
+    if (!EDITOR) { footer.replaceChildren(e.sign_in ? `Signed in as ${e.reader}, to look. Changing routes needs the editor role. ` : "Read-only: no editor is set on the server.", out); return; }
+    if (!tellBox.hasChildNodes()) { renderTell(); lookAtNight(); }
+    const c = e.changeset;
+    footer.replaceChildren((e.sign_in ? `Signed in as ${EDITOR}. Your changes are recorded under that name` : `Changes are recorded as ${EDITOR}`) + (c ? ` in “${c.title}” (${c.changes} so far). ` : ". "),
+      c ? el("button", { class: "link", onclick: async () => { await send("POST", "changeset/close"); refreshEditing(); } }, "Close this changeset") : "", c && out ? " " : "", out);
+  } catch { footer.textContent = ""; }
+  refreshUndo();
+}
+// What is wrong or missing, in the person's own words. Kept on the server with where they were looking.
+const tellBox = document.getElementById("tell");
+function whereNow() {
+  try {
+    const c = map.getCenter();
+    return { area: areaSelect.value || null, route: openRoute ? openRoute.code : null, fixing_the_line: fixing,
+             centre: [Number(c.lng.toFixed(5)), Number(c.lat.toFixed(5))], zoom: Number(map.getZoom().toFixed(1)) };
+  } catch { return {}; }
+}
+function renderTell(open = false, said = null, problem = null) {
+  if (!open) {
+    tellBox.replaceChildren(said ? `${said} ` : "",
+      el("button", { class: "link", onclick: () => renderTell(true) }, said ? "Say something more" : "Something wrong or missing here?"));
+    return;
+  }
+  const text = el("textarea", { rows: 4, maxlength: 2000, required: true, "aria-label": "What is wrong or missing",
+    placeholder: "What did you want to do, and what happened instead?" });
+  tellBox.replaceChildren(el("form", { onsubmit: async e => {
+      e.preventDefault();
+      const message = text.value.trim();
+      if (!message) return;
+      try {
+        await send("POST", "feedback", { message, context: whereNow(),
+          ...(openRoute ? { about_type: "route", about_id: openRoute.id } : {}) });
+        renderTell(false, "Kept for whoever looks after the tool.");
+      } catch (err) { renderTell(true, null, err.message); tellBox.querySelector("textarea").value = message; }
+    } },
+    text,
+    el("div", { style: "margin-top:4px" }, openRoute ? `${openRoute.code} and this part of the map are noted with it.` : "This part of the map is noted with it."),
+    problem ? el("div", { class: "error", role: "alert" }, `That was not kept: ${problem}`) : "",
+    el("div", { class: "actions" }, el("button", { class: "btn main", type: "submit" }, "Send"),
+      el("button", { class: "btn quiet", type: "button", onclick: () => renderTell() }, "Cancel"))));
+  text.focus();
+}
+function startPick(hint, done) {
+  pick = done;
+  hintBox.textContent = `${hint} Press Esc to cancel.`;
+  hintBox.hidden = false;
+  map.getCanvas().style.cursor = "crosshair";
+}
+function endPick() { pick = null; hintBox.hidden = true; map.getCanvas().style.cursor = ""; }
+// Drawing a stretch by hand: each click adds a point between the stretch's two ends.
+let draft = null;
+function startDraw(edgeId, done) {
+  const whole = ownedLines.features.find(f => f.properties.edge_id === edgeId);
+  if (!whole) return;
+  const c = whole.geometry.coordinates;
+  draft = { edge: edgeId, ends: [c[0], c[c.length - 1]], points: [], done, follow: true, seq: 0, note: el("span", {}) };
+  hintBox.replaceChildren("Click a few points where the stretch should go, from either end. ", draft.note,
+    el("div", { style: "margin-top:6px;display:flex;gap:6px;align-items:center" }, el("button", { class: "btn", onclick: finishDraw }, "Save line"),
+      el("button", { class: "btn", onclick: () => { draft.points.pop(); showDraft(); } }, "Undo point"),
+      el("button", { class: "btn", onclick: endDraw }, "Cancel"),
+      el("label", { style: "margin-left:6px" }, el("input", { type: "checkbox", checked: true, onchange: e => { draft.follow = e.target.checked; showDraft(); } }), " Follow mapped paths and roads")));
+  hintBox.hidden = false;
+  map.getCanvas().style.cursor = "crosshair";
+  showDraft();
+}
+function showDraft() {
+  let [from, to] = draft.ends;
+  const pts = draft.points, far = (p, q) => { const a = map.project(p), b = map.project(q); return Math.hypot(a.x - b.x, a.y - b.y); };
+  // Drawn from whichever end the points start nearest, as the server will read them.
+  if (pts.length && far(pts[0], from) + far(pts[pts.length - 1], to) > far(pts[0], to) + far(pts[pts.length - 1], from)) [from, to] = [to, from];
+  const show = line => map.getSource("draft").setData({ type: "FeatureCollection", features: [
+    { type: "Feature", properties: {}, geometry: line },
+    ...pts.map(p => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: p } }))] });
+  show({ type: "LineString", coordinates: [from, ...pts, to] });
+  draft.note.textContent = "";
+  if (!draft.follow) return;
+  // The server lays the line along the mapped paths between the points; show what it would save.
+  const seq = ++draft.seq;
+  send("PUT", `owned/stretches/${draft.edge}/line`, { points: pts, follow: true, dry_run: true }).then(r => {
+    if (!draft || draft.seq !== seq || !draft.follow) return;
+    show(r.geometry);
+    draft.note.textContent = `${r.length_m} m, from ${r.was_m} m now. ` + (r.followed === r.parts ? "It follows mapped paths or roads all the way."
+      : r.followed ? `${r.followed} of its ${r.parts} parts follow a mapped path or road; the rest is straight.` : "No mapped path or road joins these points, so it is straight.");
+  }).catch(() => {});
+}
+function endDraw() {
+  draft = null; hintBox.hidden = true; map.getCanvas().style.cursor = "";
+  map.getSource("draft").setData({ type: "FeatureCollection", features: [] });
+}
+function finishDraw() { const d = draft; endDraw(); d.done(d.points, d.follow); }
+document.addEventListener("keydown", e => {
+  const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName);
+  if (e.key === "Escape" && !pick && !routing && !draft && !typing && !selected.hidden) {
+    if (document.querySelector(".maplibregl-popup")) closePopups(); else if (fixing) setFixing(false); else clearRoute();
+    return;
+  }
+  if (e.key === "Escape" && pick) endPick();
+  if (e.key === "Escape" && routing) endRouting();
+  if (!draft || typing) return;
+  if (e.key === "Escape") endDraw();
+  else if (e.key === "Enter") { e.preventDefault(); finishDraw(); }
+  else if (e.key === "Backspace") { draft.points.pop(); showDraft(); }
+});
+
+// A place made, renamed or withdrawn changes what routes are called: the open route and the list follow.
+function afterPlaceChange() { if (openRoute) reloadOpen(); else refreshArea(); }
+async function adoptAnchor(anchorId, name) {
+  const place = await send("POST", "places", { anchor_id: anchorId, name: name || null });
+  for (const popup of document.querySelectorAll(".maplibregl-popup")) popup.remove();
+  await refreshOwned();
+  renderPlace(place);
+  refreshEditing();
+  afterPlaceChange();
+}
+async function openPlace(id) {
+  placeBox.hidden = false;
+  placeBox.replaceChildren(el("div", { class: "empty" }, "Loading place…"));
+  try { renderPlace(await get(`places/${id}`)); }
+  catch (err) { placeBox.replaceChildren(el("div", { class: "error" }, `Could not load the place: ${err.message}`)); }
+}
+const EVENT = {
+  "place.adopted": () => "Made a place from the proposal",
+  "place.renamed": p => `Renamed from “${p.from}” to “${p.to}”`,
+  "place.kind_changed": p => `Kind changed from ${p.from} to ${p.to}`,
+  "place.moved": p => `Building mark moved ${p.metres} m`,
+  "place.primary_changed": () => "Another access point made primary",
+  "place.access_point_added": () => "Access point added",
+  "place.access_point_removed": () => "Access point taken out of the place",
+  "place.retired": () => "Place withdrawn",
+  "place.reviewed": () => "Reviewed and found right",
+};
+function renderPlace(place, problem) {
+  placeBox.hidden = false;
+  markBuilding(place);
+  const main = place.access_points.find(p => p.is_primary);
+  const can = Boolean(EDITOR);
+  // Every change goes to the server, then the panel and the map are redrawn from its answer.
+  const change = async request => {
+    try { const next = await request(); await refreshOwned(); refreshEditing(); if (next) renderPlace(next); afterPlaceChange(); return next; }
+    catch (err) { renderPlace(place, err.message); }
+  };
+  const patch = fields => change(() => send("PATCH", `places/${place.id}`, { version: place.version, ...fields }));
+
+  const nameInput = el("input", { type: "text", value: place.name, "aria-label": "Name of the place", maxlength: 120 });
+  const rename = el("form", { hidden: true, class: "actions", onsubmit: e => { e.preventDefault(); patch({ name: nameInput.value }); } },
+    nameInput, el("button", { class: "btn main" }, "Save name"),
+    el("button", { class: "btn", type: "button", onclick: () => { rename.hidden = true; } }, "Cancel"));
+  const kind = el("select", { "aria-label": "Kind of place", style: "width:auto", onchange: e => patch({ kind: e.target.value }) },
+    ...["hut", "parking", "glacier_edge", "other"].map(k => el("option", { value: k, selected: k === place.kind }, { hut: "Hut", parking: "Parking", glacier_edge: "Edge of a glacier", other: "Other place" }[k])));
+
+  const points = el("ul", {}, ...place.access_points.map(p => el("li", { class: "point" },
+    el("div", {}, p.is_primary ? el("span", { class: "tag yours" }, "Primary") : "", p.is_primary ? " " : "",
+      el("span", { class: "routes" }, p.routes.length ? p.routes.join(", ") : "No route ends here yet")),
+    el("span", { class: "num" }, p.is_primary ? "" : `${p.from_primary_m} m away`),
+    el("div", { class: "actions", style: "grid-column:1/-1;margin:0" },
+      el("button", { class: "btn quiet", onclick: () => go([p.lon, p.lat], 16) }, "Show"),
+      can && !p.is_primary ? el("button", { class: "btn quiet", onclick: () => patch({ primary_node_id: p.id }) }, "Make primary") : "",
+      can && !p.is_primary ? el("button", { class: "btn quiet", onclick: () => change(() => send("DELETE", `places/${place.id}/access-points/${p.id}`)) }, "Take out of place") : ""))));
+  const total = place.connectors.reduce((sum, c) => sum + c.length_m, 0);
+
+  placeBox.replaceChildren(
+    el("div", { class: "plate" }, el("div", { class: "name" }, place.name),
+      el("div", { class: "kind" }, `${{ hut: "Hut", parking: "Parking", glacier_edge: "Edge of a glacier", other: "Place" }[place.kind]}, ${place.reviewed ? "reviewed" : "made automatically, not reviewed yet"}`)),
+    problem ? el("div", { class: "error", role: "alert" }, `That change was not saved: ${problem}`) : "",
+    can && !place.reviewed ? el("div", { class: "actions" },
+      el("button", { class: "btn main", onclick: () => change(() => send("POST", `places/${place.id}/review`, { version: place.version })) }, "Mark as reviewed"),
+      el("span", { class: "sub", style: "align-self:center" }, "if it is right as it is")) : "",
+    can ? el("div", { class: "actions" },
+      el("button", { class: "btn", onclick: () => { rename.hidden = false; nameInput.focus(); nameInput.select(); } }, "Rename"), kind,
+      el("button", { class: "btn", onclick: () => startPick("Click where the building is.",
+        at => patch({ lon: at.lng, lat: at.lat })) }, "Move the building mark")) : "",
+    main ? el("div", { class: "sub" }, main.from_reference_m > 2
+      ? `The building (the diamond on the map) is ${main.from_reference_m} m from where the routes arrive.`
+      : "The building is where the routes arrive.") : "",
+    rename,
+    el("h2", { class: "next" }, `Access points (${place.access_points.length})`),
+    el("div", { class: "sub" }, place.access_points.length > 1
+      ? "Where routes arrive on the ground. The place is drawn at the primary one, and distances to the place are measured to it."
+      : "Where routes arrive on the ground. The place is drawn here."),
+    points,
+    can ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => startPick("Click where the new access point is.",
+      at => change(() => send("POST", `places/${place.id}/access-points`, { lon: at.lng, lat: at.lat }))) }, "Add access point")) : "",
+    el("div", { class: "sub" }, place.connectors.length
+      ? `${place.connectors.length} connector${place.connectors.length > 1 ? "s" : ""}, ${total} m in all, join them to the primary one as straight lines.`
+      : "One access point, so no connectors are needed."),
+    el("h2", { class: "next" }, "History"),
+    el("ol", { class: "log" }, ...place.history.map(e => el("li", {},
+      el("span", {}, new Date(e.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
+      el("span", {}, (EVENT[e.type] || (() => e.type))(e.payload), el("span", { class: "sub" }, `, ${e.author}`))))),
+    el("div", { class: "actions", style: "margin-top:12px" },
+      el("button", { class: "btn", onclick: () => go(main ? [main.lon, main.lat] : [place.lon, place.lat], 15.5) }, "Show on map"),
+      el("button", { class: "btn", onclick: closePlace }, "Close"),
+      can ? el("button", { class: "btn quiet", onclick: async () => {
+        if (!confirm(`Withdraw ${place.name}? Its access points and connectors go with it, and the proposal comes back.`)) return;
+        try { await send("DELETE", `places/${place.id}`); closePlace(); await refreshOwned(); refreshEditing(); afterPlaceChange(); }
+        catch (err) { renderPlace(place, err.message); }
+      } }, "Withdraw place") : ""));
+  placeBox.scrollIntoView({ block: "nearest" });
+}
+refreshEditing();
+refreshOwned().catch(() => {});
+
+// ---- Your routes (ADR-003): make a candidate yours, add parts, join them with crossings. ----
+const ROUTE_EVENT = {
+  "route.made": p => p.candidate ? `Made yours from ${p.candidate}, ${p.legs} legs`
+    : `Laid out between ${(p.laid_out_between || []).map(s => typeof s === "string" ? s : "a junction").join(" and ")}, ${p.legs} stretches`,
+  "route.laid_out_again": p => `Laid out again: ${p.to_legs} stretches, ${p.kept} of them as before`,
+  "route.end_moved": p => (p.round_trip ? "Closed as a round trip" : p.joined ? "Its pieces joined by moving an end" : `An end moved${typeof p.to === "string" ? ` to ${p.to}` : ""}`) + `: ${p.added} stretches added, ${p.dropped} left out` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : ""),
+  "route.sent_via": p => `Sent by way of ${typeof p.via === "string" ? p.via : "another spot"}: ${p.added} stretches in place of ${p.dropped}` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : ""),
+  "route.joined_into": p => `Taken into ${p.into}`,
+  "undone": p => `Taken back: ${p.what}`,
+  "route.piece_added": p => `Part ${p.candidate} added`,
+  "route.crossing_added": p => `Joined ${{ water: "over water", glacier: "over a glacier", connector: "on foot", other: "by a crossing" }[p.kind]}, ${p.metres} m`,
+  "route.leg_removed": () => "A stretch taken out",
+  "route.stretch_added": p => `Carried on along a stretch of ${p.metres} m`,
+  "route.code_changed": p => `Code changed from ${p.from} to ${p.to}`,
+  "route.renamed": p => p.to ? `Named “${p.to}”` : "Named after its end places again",
+  "route.retired": () => "Route withdrawn",
+  "route.described": p => p.taken_from === "ut.no" ? "Description taken from UT.no" : p.to ? (p.from ? "Description changed" : "Description written") : "Description taken away",
+  "route.on_utno": p => p.to ? "Its page on UT.no noted" : "Its page on UT.no forgotten",
+  "route.discontinued": p => `Said to be discontinued since ${p.since}: ${p.why}`,
+  "route.unpublished": p => `Said not to be published: ${p.why}`,
+  "route.published": () => "Published after all",
+  "route.taken_up_again": () => "Said to be in use again",
+  "route.reviewed": () => "Said to be done",
+  "route.reopened": () => "Not done after all",
+  "route.laid_beside": p => `Laid on the mapped paths and roads beside it: ${p.stretches} stretch${p.stretches === 1 ? "" : "es"}, ${p.to_m} m from ${p.from_m} m`,
+  "route.maintainers_changed": p => `Maintained by ${(p.to || []).join("; ") || "nobody stated"}` + (p.as ? `, as ${p.as}` : ""),
+  "route.grading_changed": p => `Grading ${p.to || "taken away"}`,
+  "route.stretch_maintainers": p => p.to ? `One stretch maintained by ${p.to.join("; ")}` : "One stretch back to what the route says",
+};
+// What a stretch is, and whether it is marked and signed. The stretch is shared between routes.
+function stretchForm(st, at, done) {
+  const pickOf = (options, value) => el("select", {}, ...options.map(([v, text]) => el("option", { value: v, selected: String(value) === v }, text)));
+  const yesNo = [["true", "Yes"], ["false", "No"], ["null", "Not known"]];
+  const kind = pickOf([["trail", "Path"], ["tractor_road", "Tractor road"], ["road", "Road"], ["off_trail", "No path, in terrain"],
+                       ["glacier", "Glacier"], ["water", "Water"], ["connector", "Short link"], ["other", "Other"]], st.kind);
+  const marked = pickOf(yesNo, st.marked === undefined ? null : st.marked), signed = pickOf(yesNo, st.signed === undefined ? null : st.signed);
+  kind.addEventListener("change", () => {  // what follows from the kind alone
+    if (kind.value === "glacier") { marked.value = "false"; signed.value = "true"; }
+    if (kind.value === "water") marked.value = "false";
+  });
+  const popup = new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(at);
+  const problem = el("div", { class: "error" });
+  const row = (label, control) => el("label", { style: "display:grid;grid-template-columns:5.5em 1fr;gap:8px;align-items:center;margin:4px 0" }, label, control);
+  popup.setDOMContent(el("form", { class: "pop", onsubmit: async e => {
+      e.preventDefault();
+      try {
+        await send("PATCH", `owned/stretches/${st.edge_id}`, { kind: kind.value, marked: JSON.parse(marked.value), signed: JSON.parse(signed.value) }, asSeen(st.edge_id));
+        popup.remove(); done();
+      } catch (err) { problem.textContent = `Not saved: ${err.message}`; }
+    } },
+    el("h3", {}, st.codes ? `Stretch of ${st.codes}` : "Stretch"),
+    row("It is", kind), row("Marked", marked), row("Signed", signed), problem,
+    el("div", { class: "actions" }, el("button", { class: "btn main" }, "Save stretch")))).addTo(map);
+}
+// ---- Changing the open route by hand: drag a white dot, drag the line, or click a stretch. ----
+const YOURS = ["yours-marked", "yours-unmarked", "yours-water", "yours-glacier", "yours-discontinued"];
+let openRoute = null;     // the route in the panel, while it can be changed
+let fixing = false;       // false: a drag changes which stretches the route uses. true: it changes the line itself
+const modeBox = document.getElementById("mode");
+function setFixing(on) {
+  fixing = Boolean(on) && Boolean(openRoute);
+  modeBox.hidden = !fixing;
+  if (fixing) modeBox.replaceChildren("You are fixing the line itself. It is shared: a change shows on every route that uses it.",
+    el("button", { class: "btn", onclick: () => setFixing(false) }, "Back to the route"));
+  // In route mode the two ends are the handles; fixing the line, every junction is.
+  whenStyled(() => {
+    map.setPaintProperty("selected-nodes", "circle-radius", fixing ? 4.5 : ["case", ["get", "end"], 6.5, 2.5]);
+    map.setPaintProperty("selected-nodes", "circle-stroke-width", fixing ? 2 : ["case", ["get", "end"], 2.5, 1.2]);
+  });
+  showCorners();
+  if (openRoute) renderOwnedRoute(openRoute);
+}
+let drag = null;
+const inOpenRoute = f => openRoute && f.properties.codes.split(", ").includes(openRoute.code);
+const reachMetres = (lat, pixels = 12) => Math.min(50, pixels * 78271.517 * Math.cos(lat * Math.PI / 180) / 2 ** map.getZoom());
+const around = (point, r = 6) => [[point.x - r, point.y - r], [point.x + r, point.y + r]];
+const closePopups = () => { for (const popup of document.querySelectorAll(".maplibregl-popup")) popup.remove(); };
+// After a change: fetch what is yours again and show the route as it now is, with a line saying what happened.
+async function reloadOpen(note, problem) {
+  const id = openRoute && openRoute.id;
+  if (!id) return;
+  try { await refreshOwned(); refreshEditing(); renderOwnedRoute(await get(`owned/routes/${id}`), problem, note); showCorners(); }
+  catch (err) { renderOwnedRoute(openRoute, err.message); }
+  refreshArea();
+}
+async function attempt(action) {
+  try { await reloadOpen(await action()); }
+  catch (err) { await reloadOpen(null, err.message); }
+}
+function carryOn(along) {
+  closePopups();
+  attempt(async () => { await send("POST", `owned/routes/${openRoute.id}/stretches`, { version: openRoute.version, ...along }); return `${openRoute.code} now carries on along that stretch.`; });
+}
+// Withdrawing a route: it is no route of yours any more. Its stretches stay for the routes that share them.
+async function withdrawRoute(route) {
+  if (!confirm(`Withdraw ${route.code}? It is then no route of yours. Its stretches stay for other routes. Where other routes of yours run over all of it, Kartverket is asked to take the number ${route.code} off; otherwise it is left as a candidate.`)) return;
+  try { await send("DELETE", `owned/routes/${route.id}`); clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
+  catch (err) { renderOwnedRoute(route, err.message); }
+}
+// A click on a stretch: what it is, and what can be done with it.
+function stretchPopup(f, at) {
+  const st = f.properties, mine = inOpenRoute(f), route = openRoute;
+  const what = { trail: "Path", tractor_road: "Tractor road", road: "Road", off_trail: "No path, in terrain", glacier: "Glacier", water: "Water", connector: "Short link", other: "Other" }[st.kind] || st.kind;
+  const facts = [what, st.marked === true ? "marked" : st.marked === false ? "not marked" : "marking not known", st.signed === true ? "signed" : st.signed === false ? "not signed" : ""].filter(Boolean).join(", ");
+  const act = (label, run, main) => el("button", { class: main ? "btn main" : "btn", onclick: () => { popup.remove(); run(); } }, label);
+  const popup = new maplibregl.Popup({ maxWidth: "300px" }).setLngLat(at).setDOMContent(el("div", { class: "pop" },
+    el("h3", {}, `Stretch of ${st.codes}`), el("div", {}, facts),
+    mine ? el("div", { class: "sub", style: "margin:4px 0" }, fixing ? "Drag the line to pull it onto a path or road nearby." : `Drag the line to send ${route.code} another way.`) : "",
+    mine && JSON.parse(st.routes || "[]").length > 1 ? el("div", { class: "sub", style: "margin:4px 0" }, "Shared with ",
+      ...JSON.parse(st.routes).filter(r => r.id !== route.id).flatMap((r, i) => [i ? ", " : "", el("button", { class: "link", onclick: () => { popup.remove(); openOwnedRoute(r.id); } }, r.code)]),
+      ": a change to the line shows on them too.") : "",
+    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" }, ...(mine && fixing ? [
+      act("Lay all of it on the path between its ends", () => attempt(async () => {
+        const r = await send("POST", `owned/stretches/${st.edge_id}/snap`, { dry_run: false }, asSeen(st.edge_id));
+        return `Laid on the mapped path or road: ${r.length_m} m, from ${r.was_m} m.`;
+      })),
+      act("Lay it on the path where one runs beside it", () => attempt(async () => {
+        const r = await send("POST", `owned/stretches/${st.edge_id}/beside`, { dry_run: false }, asSeen(st.edge_id));
+        return r.changes ? `Laid on the mapped path or road for ${km(r.followed_m / 1000)} of it: ${r.length_m} m, from ${r.was_m} m. The rest lies as it did.`
+                         : "No mapped path or road runs beside it for long enough to follow, where it does not lie on one already.";
+      })),
+      act("Divide it here", () => attempt(async () => {
+        await send("POST", `owned/stretches/${st.edge_id}/split`, { lon: at.lng, lat: at.lat }, asSeen(st.edge_id));
+        return "Divided: there is a junction where you clicked, and each part can now be changed on its own.";
+      })),
+      act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
+      act("Draw it by hand", () => startDraw(st.edge_id, (points, follow) => attempt(async () => {
+        const r = await send("PUT", `owned/stretches/${st.edge_id}/line`, { points, follow }, asSeen(st.edge_id));
+        return `Drawn: ${r.length_m} m, from ${r.was_m} m.`;
+      }))),
+    ] : mine ? [
+      route.length.legs === 1
+        ? act(`Withdraw ${route.code}: this is its only stretch`, () => withdrawRoute(route))
+        : act(`Take it out of ${route.code}`, () => attempt(async () => {
+            await send("DELETE", `owned/routes/${route.id}/legs/${st.edge_id}?version=${route.version}`);
+            return `Taken out of ${route.code}. The stretch stays for other routes.`;
+          })),
+      act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
+      act("Someone else maintains it here", () => maintainerForm(st, at)),
+      act("Fix the line itself", () => setFixing(true)),
+    ] : [
+      act(`Carry ${route.code} on along this`, () => carryOn({ edge_id: st.edge_id }), true),
+      act(`Open ${st.codes.split(", ")[0]} instead`, () => openOwnedRoute(st.route_id)),
+    ])))).addTo(map);
+}
+// ---- A route laid out between points: click where it starts, then where it goes. ----
+// The server finds the shortest way over your stretches and Turrutebasen's; more points steer it.
+let routing = null;   // { points, again: the route being laid out again or null, way, code, seq }
+function startRouting(again) {
+  if (pick) endPick();
+  closePopups();
+  routing = { points: [], again: again || null, way: null, code: "", seq: 0 };
+  map.getCanvas().style.cursor = "crosshair";
+  showRouting();
+}
+function endRouting() {
+  routing = null;
+  hintBox.hidden = true;
+  map.getCanvas().style.cursor = "";
+  map.getSource("draft").setData({ type: "FeatureCollection", features: [] });
+}
+function showRouting(problem) {
+  const r = routing, n = r.points.length, way = r.way;
+  const code = el("input", { type: "text", placeholder: "Code, e.g. jot48b", "aria-label": "Code of the new route", maxlength: 40, value: r.code,
+    style: "width:10.5em;color:#12222c", oninput: e => { r.code = e.target.value; } });
+  hintBox.replaceChildren(
+    n === 0 ? (r.again ? `Click where ${r.again.code} starts.` : "Click where the route starts: a hut, a junction or an end.")
+      : n === 1 ? "Now click where it goes. More clicks steer it: a click on a mapped path or road where no stretch runs takes it along there, and a click where nothing is mapped (a glacier, open ground) takes it straight there."
+      : way ? `${km(way.length_m / 1000)} over ${way.stretches} ${way.stretches === 1 ? "stretch" : "stretches"}` + (way.new ? `, ${way.new} of them new from Turrutebasen` : "")
+          + (way.mapped_m ? `, ${km(way.mapped_m / 1000)} of it new along mapped paths and roads where no stretch runs` : "")
+          + (way.straight_m ? `, ${km(way.straight_m / 1000)} of it straight from point to point where nothing is mapped` : "")
+          + (way.divided ? `. ${way.divided === 1 ? "A stretch is" : `${way.divided} stretches are`} divided where you clicked beside ${way.divided === 1 ? "it" : "them"}` : "") + ". Click on to carry it further."
+      : problem ? "" : "Finding the way…",
+    problem ? el("div", {}, `No way yet: ${problem}`) : "",
+    el("div", { style: "margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap" },
+      way && !r.again ? code : "",
+      way ? el("button", { class: "btn", onclick: saveRouting }, r.again ? `Lay ${r.again.code} out like this` : "Make this route") : "",
+      n ? el("button", { class: "btn", onclick: () => { r.points.pop(); r.way = null; showRouting(); planRouting(); } }, "Undo point") : "",
+      el("button", { class: "btn", onclick: endRouting }, "Cancel")));
+  hintBox.hidden = false;
+  const stops = way ? way.stops.map(s => [s.lon, s.lat]) : r.points;
+  map.getSource("draft").setData({ type: "FeatureCollection", features: [
+    ...(way ? [{ type: "Feature", properties: {}, geometry: way.geometry }] : []),
+    ...stops.map(c => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } }))] });
+}
+async function planRouting() {
+  const r = routing, seq = ++r.seq;
+  if (r.points.length < 2) return;
+  try {
+    const way = await send("POST", "owned/routes/plan", { points: r.points, reach_m: r.reach });
+    if (routing === r && r.seq === seq) { r.way = way; showRouting(); }
+  } catch (err) { if (routing === r && r.seq === seq) showRouting(err.message); }
+}
+async function saveRouting() {
+  const r = routing;
+  try {
+    const route = r.again ? await send("POST", `owned/routes/${r.again.id}/between`, { points: r.points, version: r.again.version, reach_m: r.reach })
+      : await send("POST", "owned/routes/between", { points: r.points, code: r.code, reach_m: r.reach });
+    endRouting();
+    await refreshOwned(); refreshEditing();
+    renderOwnedRoute(route, null, (r.again ? "Laid out again between the points you clicked." : "Made. Below you can name it and say who maintains it.")
+      + (r.way && r.way.straight_m ? " Where it goes straight through the terrain it is a stretch with no path: click it to say what it is (a glacier, not marked)." : ""));
+    refreshArea();
+  } catch (err) { showRouting(err.message); }
+}
+// Who maintains one stretch of the open route, where that is not who maintains the route.
+function maintainerForm(st, at) {
+  const route = openRoute, own = (route.exceptions || []).find(x => x.edge_id === st.edge_id);
+  const input = el("input", { type: "text", value: (own ? own.maintainers : route.maintained_by || []).join("; "), maxlength: 400, "aria-label": "Who maintains this stretch" });
+  const popup = new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(at);
+  const save = maintainers => { popup.remove(); attempt(async () => {
+    await send("PATCH", `owned/routes/${route.id}/legs/${st.edge_id}`, { version: route.version, maintainers });
+    return maintainers ? `This stretch of ${route.code} is maintained by ${maintainers.join("; ")}.` : `This stretch follows what ${route.code} says again.`; }); };
+  popup.setDOMContent(el("form", { class: "pop", onsubmit: e => { e.preventDefault(); save(input.value.split(";").map(m => m.trim()).filter(Boolean)); } },
+    el("h3", {}, `Who maintains this stretch of ${route.code}`),
+    el("div", { class: "sub" }, `The route as a whole says ${(route.maintained_by || []).join("; ") || "nothing"}. Several are separated by a semicolon.`), input,
+    el("div", { class: "actions" }, el("button", { class: "btn main" }, "Save for this stretch"),
+      own ? el("button", { class: "btn", type: "button", onclick: () => save(null) }, "As the rest of the route") : ""))).addTo(map);
+}
+// Dragging. A white dot is a junction or an end; the line is a stretch. What is dragged is
+// shown moving: the stretches themselves follow the pointer, and the rest of the route fades.
+const hold = features => map.getSource("held").setData({ type: "FeatureCollection", features });
+const point = (c, state) => ({ type: "Feature", properties: { state }, geometry: { type: "Point", coordinates: c } });
+function showWould(geometry) {      // the lines a change would give, or null to take them away again
+  if (!geometry && !would) return;
+  would = Boolean(geometry);
+  whenStyled(() => { hold(geometry ? geometry.geometries.map(g => ({ type: "Feature", properties: {}, geometry: g })) : []); fade(would); });
+}
+const fade = on => { for (const id of [...YOURS, "selected-halo"]) map.setPaintProperty(id, "line-opacity", on ? 0.3 : id === "selected-halo" ? 0.75 : 1); };
+map.on("mousedown", e => {
+  if (!openRoute || pick || draft || routing || settling || e.originalEvent.button !== 0) return;
+  // Of the dots under the pointer: in route mode an end, which is the only handle there; else the nearest.
+  const dots = map.queryRenderedFeatures(around(e.point, 9), { layers: ["selected-nodes"] });
+  const off = f => { const p = map.project(f.geometry.coordinates); return Math.hypot(p.x - e.point.x, p.y - e.point.y); };
+  const node = (!fixing && dots.find(f => f.properties.end)) || dots.sort((a, b) => off(a) - off(b))[0];
+  const line = !node && map.queryRenderedFeatures(around(e.point, fixing ? 9 : 6), { layers: YOURS }).find(inOpenRoute);
+  if (!node && !line) return;
+  if (!fixing && node && !node.properties.end) return;    // in route mode only the two ends are handles
+  e.preventDefault();   // the map stays put while something of the route is dragged
+  drag = { from: e.point, grab: e.lngLat, moved: false };
+  hintBox.style.pointerEvents = "none";     // what is dragged can be let go under the hint, too
+  if (!fixing) {
+    // Route mode: an end is moved, or the route is sent another way. No line is changed.
+    if (node) { drag.end = node.properties.id; drag.at = node.geometry.coordinates; map.setLayoutProperty("glue", "visibility", "visible"); }
+    else if (FREE.includes(line.properties.kind)) {
+      // Drawn by hand where there is no path: there is no other way to send it, so its own line is pulled.
+      drag.edge = line.properties.edge_id; drag.free = true;
+      drag.coords = ownedLines.features.find(f => f.properties.edge_id === drag.edge).geometry.coordinates;
+    }
+    else { drag.via = line.properties.edge_id; drag.coords = ownedLines.features.find(f => f.properties.edge_id === drag.via).geometry.coordinates; }
+  } else if (node) {
+    drag.node = node.properties.id;
+    // The stretches that meet at the dot, each with the end that moves.
+    const at = node.geometry.coordinates, same = (p, q) => Math.abs(p[0] - q[0]) < 2e-6 && Math.abs(p[1] - q[1]) < 1e-6;
+    drag.lines = ownedLines.features.flatMap(f => { const c = f.geometry.coordinates;
+      return same(c[0], at) || same(c[c.length - 1], at) ? [{ coords: c, first: same(c[0], at), last: same(c[c.length - 1], at) }] : []; });
+  } else {
+    drag.edge = line.properties.edge_id;
+    drag.free = FREE.includes(line.properties.kind);
+    drag.coords = ownedLines.features.find(f => f.properties.edge_id === drag.edge).geometry.coordinates;
+  }
+});
+// The stretch as it would lie with the grabbed spot pulled to the pointer: only the line near the grab bends.
+const FREE = ["glacier", "water", "off_trail"];     // drawn by hand where there is no path: a line of straights
+const CORNER_PX = 12;
+function stretched(coords, grab, to) {
+  // Like a rubber band: grabbed at a corner, the corner moves (and goes away when let go on its neighbour);
+  // grabbed between two corners, a new one is made there.
+  const px = coords.map(c => map.project(c)), g = map.project(grab), t = map.project(to), d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  let corner = 0;
+  for (let i = 1; i < px.length; i++) if (d(px[i], g) < d(px[corner], g)) corner = i;
+  if (corner > 0 && corner < px.length - 1 && d(px[corner], g) <= CORNER_PX) {
+    if (Math.min(d(t, px[corner - 1]), d(t, px[corner + 1])) <= CORNER_PX) return [...coords.slice(0, corner), ...coords.slice(corner + 1)];
+    return [...coords.slice(0, corner), to, ...coords.slice(corner + 1)];
+  }
+  let part = 0, best = Infinity;
+  for (let i = 0; i < px.length - 1; i++) {
+    const a = px[i], b = px[i + 1], long = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+    const u = long ? Math.max(0, Math.min(1, ((g.x - a.x) * (b.x - a.x) + (g.y - a.y) * (b.y - a.y)) / long)) : 0;
+    const off = Math.hypot(g.x - (a.x + u * (b.x - a.x)), g.y - (a.y + u * (b.y - a.y)));
+    if (off < best) { best = off; part = i; }
+  }
+  return [...coords.slice(0, part + 1), to, ...coords.slice(part + 1)];
+}
+const metresFor = (lat, pixels) => pixels * 78271.517 * Math.cos(lat * Math.PI / 180) / 2 ** map.getZoom();
+function showCorners() {
+  const lines = openRoute ? ownedLines.features.filter(f => FREE.includes(f.properties.kind) && inOpenRoute(f)) : [];
+  whenStyled(() => map.getSource("corners").setData({ type: "FeatureCollection",
+    features: lines.flatMap(f => f.geometry.coordinates.slice(1, -1).map(c => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } }))) }));
+}
+function pulled(coords, grab, to) {
+  const px = coords.map(c => map.project(c)), g = map.project(grab), t = map.project(to);
+  let nearest = 0, along = [0];
+  for (let i = 1; i < px.length; i++) along.push(along[i - 1] + Math.hypot(px[i].x - px[i - 1].x, px[i].y - px[i - 1].y));
+  for (let i = 1; i < px.length; i++) if (Math.hypot(px[i].x - g.x, px[i].y - g.y) < Math.hypot(px[nearest].x - g.x, px[nearest].y - g.y)) nearest = i;
+  const reach = Math.max(3 * Math.hypot(t.x - g.x, t.y - g.y), 40);
+  const before = coords.filter((c, i) => along[i] < along[nearest] - reach), after = coords.filter((c, i) => along[i] > along[nearest] + reach);
+  return [before.length ? null : coords[0], ...before, to, ...after, after.length ? null : coords[coords.length - 1]].filter(Boolean);
+}
+map.on("mousemove", e => {
+  if (!drag) {
+    if (settling) return;       // what was let go is still on its way
+    if (openRoute && !pick && !draft && !routing) {
+      // Show what the pointer would take hold of: a handle on the dot or on the line under it.
+      const found = map.queryRenderedFeatures(around(e.point, 9), { layers: ["selected-nodes"] })[0];
+      const node = found && (fixing || found.properties.end) ? found : null;
+      const line = !found && map.queryRenderedFeatures(around(e.point, fixing ? 9 : 6), { layers: YOURS }).find(inOpenRoute);
+      map.getCanvas().style.cursor = node ? "move" : line ? "grab" : "";
+      let at = [e.lngLat.lng, e.lngLat.lat];
+      if (line && FREE.includes(line.properties.kind)) {      // a corner under the pointer is what is taken hold of
+        const all = ownedLines.features.find(f => f.properties.edge_id === line.properties.edge_id).geometry.coordinates;
+        const near = all.slice(1, -1).find(c => { const q = map.project(c); return Math.hypot(q.x - e.point.x, q.y - e.point.y) <= CORNER_PX; });
+        if (near) at = near;
+      }
+      hold(node ? [point(node.geometry.coordinates, "over")] : line ? [point(at, "over")] : []);
+    }
+    return;
+  }
+  if (!drag.moved && Math.hypot(e.point.x - drag.from.x, e.point.y - drag.from.y) < 4) return;
+  if (!drag.moved) fade(true);
+  drag.moved = true;
+  map.getCanvas().style.cursor = "grabbing";
+  const to = [e.lngLat.lng, e.lngLat.lat];
+  // What letting go here would do: join another junction, land on a path or road, or just move.
+  if (drag.end || drag.via) {
+    // Route mode. What is shown is where the route is asked to go; the way there is found when you let go.
+    const place = map.queryRenderedFeatures(around(e.point, 12), { layers: ["owned-places", "owned-access"] })[0];
+    const lines = drag.end ? [[drag.at, to]] : [pulled(drag.coords, [drag.grab.lng, drag.grab.lat], to)];
+    hold([...lines.map(c => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: c } })), point(to, place ? "join" : "held")]);
+    // Over the route's own other end: let go there, and it comes back to its start as a round trip.
+    const other = drag.end && openRoute.pieces === 1 && openRoute.ends.find(n => n.id !== drag.end);
+    const home = other && (p => Math.hypot(p.x - e.point.x, p.y - e.point.y) <= 14)(map.project([other.lon, other.lat]));
+    hintBox.textContent = home ? `Let go to make ${openRoute.code} a round trip: it comes back here, where it starts, another way than it went. Nothing of it is cut.`
+      : drag.end ? (place ? `Let go to end ${openRoute.code} at this arrival point.` : `Let go to end ${openRoute.code} here. It follows the stretches that lead here, or the mapped paths and roads where none does; dropped on itself it is cut back.`)
+      : `Let go to send ${openRoute.code} by way of this spot. No line is moved.`;
+    hintBox.hidden = false;
+    return;
+  }
+  const onto = drag.node && map.queryRenderedFeatures(around(e.point, 10), { layers: ["selected-nodes", "owned-access", "owned-places"] }).some(f => f.properties.id !== drag.node);
+  const state = onto ? "join" : map.queryRenderedFeatures(around(e.point, 10), { layers: ["paths", "roads"] }).length ? "snap" : "held";
+  const lines = drag.node ? drag.lines.map(l => l.coords.map((c, i) => (i === 0 && l.first) || (i === l.coords.length - 1 && l.last) ? to : c))
+    : [(drag.free ? stretched : pulled)(drag.coords, [drag.grab.lng, drag.grab.lat], to)];
+  hold([...lines.map(c => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: c } })), point(to, drag.free ? "held" : state)]);
+  hintBox.textContent = drag.free ? "Let go to put this point of the line here. It is drawn straight from corner to corner; let a corner go on the one next to it to take it away."
+    : state === "join" ? "Let go to join it to the junction here."
+    : state === "snap" ? `Let go to put ${drag.node ? "it" : "the line"} on the mapped path or road here.`
+    : drag.node ? "Let go to move the junction here." : "Let go to pull the line here.";
+  hintBox.hidden = false;
+});
+// Letting go. What was dragged stays drawn where it was let go until the change has come back from the
+// server and is drawn: otherwise the line jumps back to where it was, and then on to where it is.
+let settling = false;
+function endDrag(keep) {
+  const d = drag;
+  drag = null;
+  hintBox.style.pointerEvents = "";
+  map.setLayoutProperty("glue", "visibility", "none");
+  if (keep && d && d.moved) {
+    settling = true;
+    map.getCanvas().style.cursor = "progress";
+    hintBox.hidden = true;
+    return d;
+  }
+  map.getCanvas().style.cursor = "";
+  hold([]);
+  if (d && d.moved) { fade(false); hintBox.hidden = true; }
+  return d;
+}
+function settled() {
+  // The answer is in and has been given to the map. Once the map has drawn it, what was held is let go.
+  let done = false;
+  const letGo = () => { if (done) return; done = true; settling = false; if (!drag) { hold([]); fade(false); map.getCanvas().style.cursor = ""; } };
+  map.once("idle", letGo);
+  map.triggerRepaint();
+  setTimeout(letGo, 2500);
+}
+map.on("mouseup", e => {
+  const d = endDrag(true);
+  if (!d || !d.moved) return;   // not moved: it was a click
+  const to = e.lngLat;
+  if (d.end || d.via) {
+    const route = openRoute, plural = n => `${n} ${n === 1 ? "stretch" : "stretches"}`;
+    attempt(async () => {
+      // A drop on a marker means that spot exactly; near a junction means the junction, as wide as 14 pixels are now.
+      const spot = map.queryRenderedFeatures(around(e.point, 12), { layers: ["owned-places", "owned-access"] })[0];
+      const at = spot ? { lng: spot.geometry.coordinates[0], lat: spot.geometry.coordinates[1] } : to;
+      const body = { version: route.version, lon: at.lng, lat: at.lat, reach_m: Math.min(500, Math.max(10, reachMetres(at.lat, 14))) };
+      if (d.end) {
+        const t = (await send("POST", `owned/routes/${route.id}/end`, { ...body, end: d.end })).told, where = t.stops[t.stops.length - 1].place;
+        if (t.round_trip) return `${route.code} is a round trip now: it comes back to ${where || "where it starts"}`
+          + (t.mapped_m ? `, the last ${km(t.mapped_m / 1000)} along the mapped paths and roads, as ${plural(t.added)} of yours that are new. Say what they are (marked, signed) by clicking them.` : t.added ? `, carried on along ${plural(t.added)}.` : ".")
+          + " Nothing of it was cut. To change it, take a stretch out of it: that opens it again.";
+        if (t.joined) return `The pieces of ${route.code} are joined: it is one line now` + (t.added ? `, carried on along ${plural(t.added)}` : "") + (t.mapped_m ? `, ${km(t.mapped_m / 1000)} of it new along mapped paths and roads` : "") + ".";
+        if (t.mapped_m) return `${route.code} now ends ${where ? `at ${where}` : "where you let go"}. No stretch led there, so it was carried on ${km(t.mapped_m / 1000)} along the mapped paths and roads, as ${plural(t.added)} of yours that are new. Say what they are (marked, signed) by clicking them.`;
+        return `${route.code} now ends ${where ? `at ${where}` : "where you let go"}` + (t.added ? `, carried on along ${plural(t.added)}` : "")
+          + (t.dropped ? `${t.added ? "; " : ", cut back by "}${plural(t.dropped)}${t.added ? " left out" : ""}` : "") + (t.new ? `. ${plural(t.new)} came new from Turrutebasen` : "")
+          + (t.divided ? ". A stretch was divided where it now ends" : "") + ". No line was moved.";
+      }
+      const t = (await send("POST", `owned/routes/${route.id}/via`, { ...body, edge_id: d.via })).told;
+      if (t.mapped_m) return `${route.code} now goes by way of ${t.stops[1].place || "the spot you chose"}. No stretch led there, so it follows the mapped paths and roads for ${km(t.mapped_m / 1000)}, as ${plural(t.added)} of yours that are new, in place of ${plural(t.dropped)}. It leaves and rejoins its old line where that way does. Say what the new stretches are (marked, signed) by clicking them.`;
+      return `${route.code} now goes by way of ${t.stops[1].place || "the spot you chose"}: ${plural(t.added)} in place of ${plural(t.dropped)}. No line was moved.`;
+    }).finally(settled);
+    return;
+  }
+  if (d.edge) {
+    attempt(async () => {
+      const r = await send("POST", `owned/stretches/${d.edge}/bend`, { grab: [d.grab.lng, d.grab.lat], drop: [to.lng, to.lat],
+        corner_m: Math.max(1, Math.min(1000, metresFor(to.lat, CORNER_PX))) }, asSeen(d.edge));
+      if (d.free) return `The line now goes by the point you let go at: ${km(r.length_m / 1000)}, from ${km(r.was_m / 1000)}.`;
+      return r.followed ? `Pulled ${Math.round(r.pulled_m)} m: it follows the mapped path or road there.` : `Pulled ${Math.round(r.pulled_m)} m. No mapped path or road at that spot, so it runs straight to it.`;
+    }).finally(settled);
+    return;
+  }
+  attempt(async () => {
+    const where = { lon: to.lng, lat: to.lat, snap_m: reachMetres(to.lat) };
+    const would = await send("POST", `owned/nodes/${d.node}/move`, { ...where, dry_run: true });
+    const lost = (would.drops || []).map(d => `The ${d.metres} m stretch between them goes away` + (d.routes ? `, also from ${d.routes}` : "") + ".").join(" ");
+    if (would.outcome === "join" && !confirm(`Join this junction to ${would.place ? `the arrival point of ${would.place}` : "the junction it was dropped on"}? The two become one. ${lost}`)) return "Left where it was.";
+    const r = await send("POST", `owned/nodes/${d.node}/move`, where);
+    if (r.outcome === "join") return would.place ? `Joined to the arrival point of ${would.place}.` : "The two junctions are now one.";
+    return `Moved ${Math.round(r.moved_m)} m` + (r.outcome === "snap" ? ", onto the mapped path or road." : ".");
+  }).finally(settled);
+});
+window.addEventListener("mouseup", () => { if (drag) endDrag(); });   // released outside the map: nothing happens
+
+async function makeRouteYours(candidateId, code) {
+  const route = await send("POST", "owned/routes", { candidate_id: candidateId, code: code || null });
+  await refreshOwned();
+  refreshEditing();
+  renderOwnedRoute(route);
+}
+async function openOwnedRoute(id, show) {
+  asideList(id);          // before the panel is shown: showing it moves the list
+  selected.hidden = false;
+  if (show) get(`owned/routes/${id}`).then(r => { if (r.bbox) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm }); }).catch(() => {});
+  selected.replaceChildren(el("div", { class: "empty" }, "Loading your route…"));
+  try { renderOwnedRoute(await get(`owned/routes/${id}`)); }
+  catch (err) { selected.replaceChildren(el("div", { class: "error" }, `Could not load the route: ${err.message}`)); }
+}
+function renderOwnedRoute(route, problem, note) {
+  selected.hidden = false;
+  openRoute = EDITOR ? route : null;
+  const can = Boolean(EDITOR), L = route.length;
+  const change = async request => {
+    try { const next = await request(); await refreshOwned(); refreshEditing(); if (next) renderOwnedRoute(next); refreshArea(); }
+    catch (err) { renderOwnedRoute(route, err.message); }
+  };
+  const patch = fields => change(() => send("PATCH", `owned/routes/${route.id}`, { version: route.version, ...fields }));
+  whenStyled(() => {
+    map.getSource("selected").setData({ type: "FeatureCollection", features: route.geometry ? [
+      { type: "Feature", properties: {}, geometry: route.geometry },
+      ...route.nodes.map(n => ({ type: "Feature", properties: { id: n.id, end: route.ends.some(e => e.id === n.id) }, geometry: { type: "Point", coordinates: [n.lon, n.lat] } }))] : [] });
+  });
+  remember("route", null);
+  showCorners();
+
+  const name = route.name || route.generated_name || (route.sources[0] && route.sources[0].name) || "";
+  // The grading a person has set; where nobody has, the one its length and climb give.
+  const GRADING = { G: "Green, easy", B: "Blue, medium", R: "Red, demanding", S: "Black, expert", I: "Not graded" };
+  const set = route.grading && route.grading !== "I", grade = set ? route.grading : route.grading_by_numbers || route.grading;
+  // How high it goes. The route says what is known; the profile comes after, and with it what was missing.
+  leaveProfile();
+  const climbing = el("dd", {}, ...climbs(route, route.height)), profile = el("div", { class: "profile" });
+  if (L.legs) get(`owned/routes/${route.id}/height`).then(h => {
+    if (!profile.isConnected) return;
+    climbing.replaceChildren(...climbs(route, h)); drawProfile(profile, route, h);
+  }).catch(err => { if (profile.isConnected && !route.height.known_m) climbing.replaceChildren(el("span", { class: "sub" }, `Could not get the heights: ${err.message}`)); });
+  const facts = el("dl", {},
+    el("dt", {}, "On foot"), el("dd", {}, km(L.on_foot_m / 1000)),
+    L.water_m ? el("dt", {}, "Over water") : "", L.water_m ? el("dd", {}, `${km(L.water_m / 1000)}, not counted as walking`) : "",
+    L.glacier_m ? el("dt", {}, "Over glacier") : "", L.glacier_m ? el("dd", {}, `${km(L.glacier_m / 1000)}, included in the walking distance`) : "",
+    el("dt", {}, "Not marked"), el("dd", {}, L.unmarked_m ? km(L.unmarked_m / 1000) : "none"),
+    L.legs ? el("dt", {}, "Climbs") : "", L.legs ? climbing : "",
+    el("dt", {}, "Maintained by"), el("dd", {}, ...whoMaintains(route.maintainers),
+      (route.exceptions || []).length ? el("div", { class: "sub" }, `The route says ${(route.maintained_by || []).join("; ") || "nothing"}; ${route.exceptions.length === 1 ? "one stretch says" : `${route.exceptions.length} stretches say`} otherwise.`) : ""),
+    grade ? el("dt", {}, "Grading") : "", grade ? el("dd", {}, GRADING[grade] || grade,
+      set ? "" : el("div", { class: "sub" }, "By its length and climb: nobody has set a grading. The ground can make it harder.")) : "",
+    route.utno_id ? el("dt", {}, "On UT.no") : "", route.utno_id ? el("dd", {}, el("a", { href: `https://ut.no/rutebeskrivelse/${route.utno_id}`, target: "_blank", rel: "noopener" }, "Its page there")) : "",
+    el("dt", {}, "Made from"), el("dd", {}, route.sources.map(s => s.label === s.code ? s.code : `${s.label} (Turrutebasen ${s.code})`).join(", ") || "laid out between points, from no Turrutebasen route"));
+
+  // Against the mapped paths and roads: worked out after the panel is shown.
+  const mapped = el("div", { class: "sub", style: "margin-top:8px" }, "Comparing with the mapped paths and roads…");
+  showWould(null);
+  get(`owned/routes/${route.id}/mapped`).then(m => {
+    if (!openRoute || openRoute.id !== route.id) return;
+    if (!m.was_m) { mapped.replaceChildren("Nothing of it is walked on a path."); return; }
+    const pct = Math.round(100 * m.beside_m / m.was_m), follows = Math.round(100 * m.followed_m / m.was_m);
+    const show = el("button", { class: "btn", "aria-pressed": "false", onclick: () => {
+      const on = show.getAttribute("aria-pressed") !== "true";
+      show.setAttribute("aria-pressed", String(on)); show.textContent = on ? "Hide it" : "Show it on the map";
+      showWould(on ? m.geometry : null);
+    } }, "Show it on the map");
+    mapped.className = ""; mapped.style.marginTop = "8px";
+    mapped.replaceChildren(
+      el("div", {}, `${pct} % has a mapped path or road beside it`,
+        el("div", { class: "bar", role: "img", "aria-label": `${pct} percent` }, el("i", { style: `width:${pct}%` }))),
+      m.stretches ? el("div", { class: "sub", style: "margin-top:4px" },
+          `Laid on them where they run beside it, it is ${km(m.length_m / 1000)}, against ${km(m.was_m / 1000)} now` +
+          (m.turrutebasen_m && m.turrutebasen_m !== m.was_m ? ` and ${km(m.turrutebasen_m / 1000)} in Turrutebasen` : m.turrutebasen_m ? ", which is what Turrutebasen has" : "") +
+          `. ${m.stretches === 1 ? "One stretch changes" : `${m.stretches} stretches change`}, by ${Math.round(m.moves_m)} m at most; where nothing is mapped beside it the line stays.`)
+        : el("div", { class: "sub", style: "margin-top:4px" }, pct ? "It lies on them wherever they run beside it." : "Nothing is mapped beside it."),
+      m.stretches ? el("div", { class: "actions" }, show,
+        can ? el("button", { class: "btn", title: "Changes the line itself, which every route on it shares. Undo takes it back.", onclick: () => attempt(async () => {
+          const done = await send("POST", `owned/routes/${route.id}/mapped`, { version: route.version });
+          return `Laid on the mapped paths and roads beside it: ${km(done.length_m / 1000)}, from ${km(done.was_m / 1000)}.`;
+        }) }, "Lay it on them") : "") : "");
+  }).catch(() => { mapped.replaceChildren(""); });
+
+  const twice = (route.doubles || []).flatMap(d => d.stretches.slice(1)).map(g => g.metres);
+  const shape = { line: "One connected line.", empty: "No legs.",
+                  doubled: twice.length ? `It runs along two stretches between the same two junctions (${Math.max(...twice)} m): one of them is one too many. Click one of the two on the map and take it out, or approve the proposed repair.`
+                                        : "It goes round a loop on its way: it has more stretches than one line has. Click a stretch of the loop and take it out.",
+                  loop: `A round trip: it starts and ends at ${route.round_trip && route.round_trip.place || "one junction, which is not a place yet"}.`,
+                  branched: `One piece with ${route.ends.length} ends: it has spurs or forks.`,
+                  pieces: `In ${route.pieces} pieces that are not joined.` }[route.shape];
+  const join = (gap, kind, label) => el("button", { class: "btn", onclick: () => change(() =>
+    send("POST", `owned/routes/${route.id}/crossings`, { version: route.version, from_node: gap.from_node, to_node: gap.to_node, kind })) }, label);
+  const gaps = route.gaps.map(gap => {
+    const a = route.ends.find(e => e.id === gap.from_node), b = route.ends.find(e => e.id === gap.to_node);
+    return el("li", { class: "point" },
+      el("div", {}, `A gap of ${gap.metres >= 1000 ? km(gap.metres / 1000) : `${gap.metres} m`} between two loose ends`),
+      el("button", { class: "btn quiet", onclick: () => { if (a && b) map.fitBounds([[Math.min(a.lon, b.lon), Math.min(a.lat, b.lat)], [Math.max(a.lon, b.lon), Math.max(a.lat, b.lat)]], { padding: 120, maxZoom: 15, animate: !calm }); } }, "Show"),
+      can ? el("div", { class: "actions", style: "grid-column:1/-1;margin:0" },
+        join(gap, "water", "Join over water"), join(gap, "glacier", "Join over glacier"), join(gap, "connector", "Join on foot")) : "");
+  });
+  // With more than two ends, each end hangs on a twig from the fork: taking a twig out removes that end.
+  const longest = Math.max(0, ...route.twigs.map(t => t.metres));
+  const twigOf = e => route.twigs.find(t => t.end === e.id && t.metres < longest);
+  const takeOut = t => change(async () => {
+    let now = route;
+    for (const edge of t.edges) now = await send("DELETE", `owned/routes/${route.id}/legs/${edge}?version=${now.version}`);
+    return now;
+  });
+  const metres = m => m >= 1000 ? km(m / 1000) : `${m} m`;
+  const ends = el("ul", {}, ...route.ends.map(e => el("li", { class: "hit", tabindex: 0, onclick: () => go([e.lon, e.lat], 16),
+      onkeydown: k => { if (k.key === "Enter") go([e.lon, e.lat], 16); } },
+    el("span", { class: "grow" }, e.place || el("span", { class: "sub" }, e.near ? `an end at no place yet. ${e.near} is what lies there` : "an end that is not at a place"),
+      twigOf(e) ? el("span", { class: "sub" }, `, ${metres(twigOf(e).metres)} from the fork`) : ""),
+    route.pieces > 1 ? el("span", { class: "num" }, `piece ${e.piece + 1}`) : "",
+    can && !e.place ? el("button", { class: e.near ? "btn" : "btn quiet", onclick: k => { k.stopPropagation();
+      const name = prompt("What is the place at this end called?", e.near || "");
+      if (name === null) return;
+      change(async () => { await send("POST", "places/at-junction", { node_id: e.id, name }); return get(`owned/routes/${route.id}`); });
+    } }, e.near ? `Make ${e.near} a place` : "Make a place here") : "",
+    can && twigOf(e) ? el("button", { class: "btn quiet", onclick: k => { k.stopPropagation(); takeOut(twigOf(e)); } }, "Take this end out") : "")));
+  const unnamed = route.name || route.generated_name ? "" : el("div", { class: "sub", style: "margin-top:4px" },
+    route.shape === "branched" ? `It gets its name from the places at its two ends, and it has ${route.ends.length} ends. Take the ends that do not belong out.`
+    : route.shape === "pieces" ? "It gets its name from the places at its two ends, once its pieces are joined."
+    : route.shape === "line" && route.ends.some(e => !e.place) ? (route.ends.some(e => !e.place && e.near)
+        ? `It gets its name from the places at its two ends, and an end is not at a place yet. “Make ${route.ends.find(e => !e.place && e.near).near} a place” above makes the place and names the route; or drag that end onto a place, or type a name.`
+        : "It gets its name from the places at its two ends, and an end is not at a place. Drag that end onto the place, make a place there (click the marker), or type a name.")
+    : route.shape === "line" ? "Both ends are at the same place, so it is not named after them. Type a name if it should have one."
+    : route.shape === "loop" ? "A round trip is not named after its ends. Type a name for it." : "");
+
+  // Other parts Turrutebasen files under the same code, which may belong to this route.
+  const more = el("div", {});
+  if (can && route.sources.length) {
+    get("routes", { q: route.sources[0].code, limit: 30 }).then(list => {
+      const mine = new Set(route.sources.map(s => s.candidate_id));
+      const others = list.filter(c => c.code === route.sources[0].code && !mine.has(c.id));
+      if (others.length) more.append(el("div", { class: "sub" }, "Other parts under the same Turrutebasen code. Add one if it belongs to this route."),
+        el("div", { class: "actions" }, ...others.slice(0, 8).map(c => el("button", { class: "btn", title: c.name || "", onclick: () => change(() =>
+          send("POST", `owned/routes/${route.id}/pieces`, { version: route.version, candidate_id: c.id })) }, `Add ${c.label}, ${km(c.length_km)}`))));
+    }).catch(() => {});
+  }
+
+  const hands = can ? el("div", {},
+    fixing ? el("div", { class: "sub" }, "You are fixing the line itself, which every route on it shares. Drag a white dot to move a junction: it lands on a path or road, ",
+        "and joins another junction it is dropped on. Drag the line to pull it onto a path or road. Click a stretch to lay it on the path, divide it or say what it is. ",
+        "A stretch drawn by hand, over a glacier or through the terrain, goes straight from corner to corner and is pulled like a rubber band: drag a corner, the small dots, to move it, or the line between two corners to make a new one.")
+      : route.shape === "loop" ? el("div", { class: "sub" }, "A round trip has no ends to drag, and is not sent another way as it is. Click a stretch and take it out: that opens the route, with an end at each side of where the stretch was. Change it then, and drag one end onto the other to close it again. ",
+        "None of this moves a line or changes another route. Undo, at the top of the map, takes the latest change back.")
+      : el("div", { class: "sub" }, "Drag an end, the large dots, to where the route should end: it follows the stretches that lead there, and is cut back if you let go on the route itself. Let go on its own other end and it becomes a round trip, coming back another way than it went. ",
+        "Drag the line to send the route another way. Click a stretch to take it out, or another line to carry the route on along it. ",
+        "None of this moves a line or changes another route. Undo, at the top of the map, takes the latest change back.",
+        route.length.glacier_m || ownedLines.features.some(f => FREE.includes(f.properties.kind) && f.properties.codes.split(", ").includes(route.code))
+          ? " A stretch drawn by hand, over a glacier or through the terrain, is the exception: it is pulled like a rubber band. Drag a corner, the small dots, to move it, or the line between two corners to make a new one." : ""),
+    note ? el("div", { style: "margin-top:6px" }, note) : "",
+    el("div", { class: "actions" },
+      fixing ? el("button", { class: "btn main", onclick: () => setFixing(false) }, "Back to the route")
+        : el("button", { class: "btn", title: "For when the line lies wrong on the map: move junctions, pull the line onto a path, divide a stretch", onclick: () => setFixing(true) }, "Fix the line itself"),
+      fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay it out again between points"))) : "";
+
+  const codeInput = el("input", { type: "text", value: route.code, "aria-label": "Code of the route", maxlength: 40, style: "width:9em" });
+  const nameInput = el("input", { type: "text", value: route.name || "", placeholder: route.generated_name || "Named after its end places", "aria-label": "Name of the route", maxlength: 160 });
+  const aboutInput = el("textarea", { rows: 6, maxlength: 12000, "aria-label": "Description of the route", placeholder: "What the route is like: where it goes, what it asks of the one who walks it",
+    style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, route.description || "");
+  const said = route.maintained_by || [], apart = route.exceptions || [];
+  const whoInput = el("input", { type: "text", value: said.join("; "), placeholder: "Who maintains it", "aria-label": "Who maintains the route", maxlength: 400 });
+  const everywhere = el("input", { type: "checkbox" });
+  const GRADES = [["", route.grading_by_numbers ? `None set: ${BY_NUMBERS[route.grading_by_numbers]} by its length and climb` : "No grading"], ["G", "G, green: easy"], ["B", "B, blue: medium"], ["R", "R, red: demanding"], ["S", "S, black: expert"], ["I", "I, not graded"]];
+  const gradeInput = el("select", { "aria-label": "Grading", style: "width:auto" }, ...GRADES.map(([v, t]) => el("option", { value: v, selected: (route.grading || "") === v }, t)));
+  const edit = el("form", { hidden: true, onsubmit: e => { e.preventDefault(); patch({ code: codeInput.value, name: nameInput.value,
+      maintainers: whoInput.value.split(";").map(m => m.trim()).filter(Boolean), everywhere: everywhere.checked, grading: gradeInput.value,
+      description: aboutInput.value }); } },
+    el("div", { class: "actions" }, codeInput, nameInput),
+    el("div", { class: "sub" }, "The code must be unique among your routes. Leave the name empty to name the route after the places at its ends."),
+    el("label", { class: "sub", style: "display:block;margin-top:8px" }, "Maintained by, for the whole route. Several are separated by a semicolon.", whoInput),
+    apart.length ? el("label", { class: "sub", style: "display:block;margin:4px 0" }, everywhere, ` Also on the ${apart.length === 1 ? "stretch" : `${apart.length} stretches`} that say otherwise now`) : "",
+    el("div", { class: "actions" }, gradeInput),
+    el("label", { class: "sub", style: "display:block;margin-top:8px" }, "Description", aboutInput),
+    el("div", { class: "actions" }, el("button", { class: "btn main" }, "Save"),
+      el("button", { class: "btn", type: "button", onclick: () => { edit.hidden = true; } }, "Cancel")));
+
+  // What UT.no says about the route, read from its page there. Which page that is, a person says once.
+  const utnoBox = el("div", {});
+  const askUtno = problem => {
+    const where = el("input", { type: "text", placeholder: "https://ut.no/rutebeskrivelse/…", "aria-label": "Address of the route's page on UT.no", maxlength: 300, required: true, style: "flex:1;min-width:12em" });
+    utnoBox.replaceChildren(el("form", { onsubmit: e => { e.preventDefault(); fromUtno(where.value); } },
+      el("div", { class: "sub" }, `Which page on UT.no is ${route.code}? Find the route there and paste the address of its page here. It is asked for once, and kept with the route.`),
+      problem ? el("div", { class: "error", role: "alert" }, problem) : "",
+      el("div", { class: "actions" }, where, el("button", { class: "btn main" }, "Fetch"),
+        el("button", { class: "btn", type: "button", onclick: () => utnoBox.replaceChildren() }, "Cancel"))));
+    where.focus();
+  };
+  async function fromUtno(address) {
+    utnoBox.replaceChildren(el("div", { class: "sub" }, "Reading the route's page on UT.no…"));
+    let u;
+    try { u = await get(`owned/routes/${route.id}/utno`, { address }); }
+    catch (err) { if (utnoBox.isConnected) askUtno(err.message); return; }
+    if (!utnoBox.isConnected) return;
+    const take = el("textarea", { rows: 10, maxlength: 12000, "aria-label": "The description to take",
+      style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, u.text);
+    const grading = [u.grading_there, u.grading_back].filter((g, i, all) => g && all.indexOf(g) === i).map(g => g.toLowerCase().replace(/_/g, " ")).join(" one way, ");
+    utnoBox.replaceChildren(
+      el("h2", { class: "next" }, "On UT.no"),
+      el("div", {}, u.code ? el("span", { class: "code" }, u.code) : "", u.code ? " " : "", u.name || "A route with no name", " ",
+        el("a", { href: u.address, target: "_blank", rel: "noopener" }, "Open the page")),
+      u.same_code ? "" : el("div", { class: "error", role: "alert" }, `UT.no has this as ${u.code || "a route with no code"}, and yours is ${route.code}. Make sure it is the same route before you take anything from it.`),
+      el("dl", {},
+        u.from || u.to ? el("dt", {}, "Between") : "", u.from || u.to ? el("dd", {}, [u.from, u.via, u.to].filter(Boolean).join(" – ")) : "",
+        u.length_m ? el("dt", {}, "Length") : "", u.length_m ? el("dd", {}, `${km(u.length_m / 1000)} there, ${km(L.on_foot_m / 1000)} on foot here`) : "",
+        grading ? el("dt", {}, "Grading") : "", grading ? el("dd", {}, `${grading}, in UT.no's words`) : "",
+        u.changed ? el("dt", {}, "Changed") : "", u.changed ? el("dd", {}, new Date(u.changed).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) + (u.public ? "" : ". Not shown to the public there.")) : ""),
+      u.notes ? el("p", { class: "sub", style: "white-space:pre-wrap" }, u.notes) : "",
+      u.text ? el("label", { class: "sub", style: "display:block;margin-top:6px" }, "The description, as it would be taken. Change it here first if you like.", take)
+        : el("div", { class: "sub" }, "UT.no has no description for it."),
+      u.text && route.description ? el("div", { class: "sub" }, "It takes the place of the description the route has now. Undo brings that one back.") : "",
+      el("div", { class: "actions" },
+        u.text ? el("button", { class: "btn main", onclick: () => patch({ description: take.value, utno_id: u.number }) }, "Take it as the description") : "",
+        route.utno_id !== u.number ? el("button", { class: "btn", title: "Keeps which page on UT.no is this route's, and takes nothing from it", onclick: () => patch({ utno_id: u.number }) }, "Only remember the page") : "",
+        el("button", { class: "btn", onclick: () => askUtno() }, "Another page"),
+        el("button", { class: "btn", onclick: () => utnoBox.replaceChildren() }, "Close")));
+    utnoBox.scrollIntoView({ block: "nearest" });
+  }
+
+  // Discontinued: given up in the terrain and kept here. Said with why and since when.
+  const D = route.discontinued, today = new Date().toISOString().slice(0, 10);
+  const whyInput = el("input", { type: "text", value: D ? D.why : "", placeholder: "Why, e.g. danger of rockfall", "aria-label": "Why the route is discontinued", maxlength: 400, required: true });
+  const sinceInput = el("input", { type: "date", value: D ? D.since : today, max: today, "aria-label": "Discontinued since", required: true });
+  const discForm = el("form", { hidden: true, class: "actions", style: "flex-direction:column;align-items:stretch", onsubmit: e => { e.preventDefault();
+      change(() => send("POST", `owned/routes/${route.id}/discontinued`, { version: route.version, why: whyInput.value, since: sinceInput.value })); } },
+    el("div", { class: "sub" }, `${route.code} stays a route of yours, with its line and its history. It is left out of the network checks, of new routes laid out, and of what is handed to UT.no`
+      + (route.sources.length ? "; Kartverket is asked to take its number off." : ".")),
+    whyInput, el("label", { class: "sub" }, "Since ", sinceInput),
+    el("div", { class: "actions" }, el("button", { class: "btn main" }, D ? "Save" : "It is discontinued"),
+      el("button", { class: "btn", type: "button", onclick: () => { discForm.hidden = true; } }, "Cancel")));
+
+  // Putting the route back: its own changes are taken back, however much has been done elsewhere since.
+  const backBox = el("div", {});
+  const goBack = (found, c) => {
+    const going = found.slice(0, c.with);
+    if (!confirm(`Take back ${going.length === 1 ? "this change" : `these ${going.length} changes`} to ${route.code}?\n\n${going.map(g => `• ${g.what}`).join("\n")}`)) return;
+    change(async () => { await send("POST", `owned/routes/${route.id}/back`, { txid: c.txid });
+      try { return await get(`owned/routes/${route.id}`); } catch { clearRoute(); return null; } });   // gone, if making it was taken back
+  };
+  async function showBack() {
+    backBox.replaceChildren(el("div", { class: "sub" }, "Looking at what has been changed…"));
+    try {
+      const found = await get(`owned/routes/${route.id}/changes`);
+      if (!found.length) { backBox.replaceChildren(el("div", { class: "sub" }, `Nothing that has been done to ${route.code} or its line can be taken back.`)); return; }
+      backBox.replaceChildren(
+        el("div", { class: "sub" }, `How far back? The change you choose and every later change to ${route.code} and its line are taken back. What was done to other routes in between stays.`),
+        el("ol", { class: "log" }, ...found.map(c => el("li", {},
+          el("span", {}, new Date(c.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
+          el("span", {}, c.what, el("span", { class: "sub" }, c.author ? `, ${c.author}. ` : ". "),
+            c.in_the_way ? el("span", { class: "sub" }, `Not from here: ${c.in_the_way} came after and touches the same stretches. That has to be taken back first, by whoever made it or from that route's own history.`)
+              : el("button", { class: "link", onclick: () => goBack(found, c) }, c.with === 1 ? "Take this back" : `Back to before this, ${c.with} changes`))))));
+    } catch (err) { backBox.replaceChildren(el("div", { class: "error" }, `Could not look: ${err.message}`)); }
+  }
+
+  // Not published: kept here and not handed on. Said with why.
+  const U = route.unpublished;
+  const unpublish = was => { const why = prompt(`Why is ${route.code} not to be published? It stays a route of yours, and is left out of what is handed to UT.no${route.sources.length ? "; Kartverket is asked to take its number off what Turrutebasen has of it" : ""}.`, was || "Kept for its history");
+    if (why && why.trim() && why.trim() !== was) change(() => send("POST", `owned/routes/${route.id}/unpublished`, { version: route.version, why: why.trim() })); };
+
+  selected.replaceChildren(
+    backBar(route.code),
+    el("h2", {}, "Your route"),
+    D ? el("div", { style: "margin-bottom:6px" }, el("span", { class: "tag none" }, "discontinued"),
+      el("span", { class: "sub" }, ` since ${new Date(D.since).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}: ${D.why.replace(/[.\s]+$/, "")}. Kept here, with its history. `),
+      can ? el("button", { class: "link", onclick: () => { discForm.hidden = false; whyInput.focus(); } }, "Change") : "", can ? " " : "",
+      can ? el("button", { class: "link", onclick: () => change(() => send("DELETE", `owned/routes/${route.id}/discontinued?version=${route.version}`)) }, "In use after all") : "") : "",
+    U ? el("div", { style: "margin-bottom:6px" }, el("span", { class: "tag none" }, "not published"),
+      el("span", { class: "sub" }, `: ${U.why.replace(/[.\s]+$/, "")}. Kept here, and left out of what is handed to UT.no${route.sources.length ? "; Kartverket is asked to take its number off" : ""}. `),
+      can ? el("button", { class: "link", onclick: () => unpublish(U.why) }, "Change") : "", can ? " " : "",
+      can ? el("button", { class: "link", onclick: () => change(() => send("DELETE", `owned/routes/${route.id}/unpublished?version=${route.version}`)) }, "Publish it after all") : "") : "",
+    el("div", {}, el("span", { class: "code", style: "font-size:19px" }, route.code), " ", name,
+      route.code_provisional ? el("div", {}, el("span", { class: "tag" }, "temporary code"), el("span", { class: "sub" }, " until a real one is assigned")) : "",
+      route.reviewed ? "" : el("div", { class: "sub" }, "Not done yet: nobody has said it is right.")),
+    route.reviewed ? el("div", {}, el("span", { class: "tag yours" }, "done"), el("span", { class: "sub" }, " You have said this route is right. "),
+      can ? el("button", { class: "link", onclick: () => change(() => send("POST", `owned/routes/${route.id}/review`, { version: route.version, done: false })) }, "Not done after all") : "") : "",
+    problem ? el("div", { class: "error", role: "alert" }, `That change was not saved: ${problem}`) : "",
+    route.description ? el("p", { style: "margin:8px 0;white-space:pre-wrap" }, route.description) : "",
+    facts, profile, mapped,
+    el("h2", { class: "next" }, "Shape"), el("div", {}, shape),
+    gaps.length ? el("ul", {}, ...gaps) : "", ends, unnamed, more,
+    can ? el("h2", { class: "next" }, "Change it on the map") : "", hands,
+    can ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, maintainer, grading or description"),
+      el("button", { class: "btn", title: "Reads what UT.no says about the route from its page there. Nothing is changed until you take it.", onclick: () => (route.utno_id ? fromUtno() : askUtno()) }, "Fetch the description from UT.no")) : "",
+    edit, utnoBox,
+    el("h2", { class: "next" }, "History"),
+    el("ol", { class: "log" }, ...route.history.map(e => el("li", {},
+      el("span", {}, new Date(e.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
+      el("span", {}, (ROUTE_EVENT[e.type] || (() => e.type))(e.payload), el("span", { class: "sub" }, `, ${e.author}`))))),
+    can ? el("div", { class: "actions" }, el("button", { class: "btn", title: "Take back the changes to this route and its line, as far back as you choose. What was done to other routes in between stays.", onclick: showBack }, "Put it back as it was…")) : "",
+    backBox,
+    el("div", { class: "actions", style: "margin-top:12px" },
+      can && !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, and closes it", onclick: async () => {
+        try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
+        catch (err) { renderOwnedRoute(route, err.message); }
+      } }, "Done with this route") : "",
+      el("button", { class: "btn", onclick: () => { if (route.bbox) map.fitBounds([[route.bbox[0], route.bbox[1]], [route.bbox[2], route.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm }); } }, "Show on map"),
+      el("button", { class: "btn", onclick: clearRoute }, can && !route.reviewed ? "Close, not done" : "Close"),
+      can && !D && route.length.legs ? el("button", { class: "btn quiet", title: "Given up in the terrain, and kept here with its history", onclick: () => { discForm.hidden = false; whyInput.focus(); } }, "It is discontinued") : "",
+      can && !U && route.length.legs ? el("button", { class: "btn quiet", title: "Kept here, and not shown to the public", onclick: () => unpublish(null) }, "It is not to be published") : "",
+      can ? el("button", { class: route.length.legs ? "btn quiet" : "btn main", onclick: () => withdrawRoute(route) }, "Withdraw route") : ""),
+    discForm);
+  selected.scrollIntoView({ block: "nearest" });
+}
+
+const asked = new URLSearchParams(location.search);
+if (asked.get("route")) selectRoute(asked.get("route"));
+// One of your routes, as the front page links to it. Who is editing is asked first, so that it opens to be changed.
+if (asked.get("yours")) refreshEditing().then(() => openOwnedRoute(asked.get("yours"), true));
+if (asked.get("q")) { document.getElementById("q").value = asked.get("q"); search(asked.get("q")); }
+
+get("status").then(rows => {
+  const newest = rows.map(r => r.built_at).sort().pop();
+  document.getElementById("status").textContent = rows.length
+    ? `Index built ${newest.slice(0, 16).replace("T", " ")} UTC.`
+    : "The index has not been built.";
+}).catch(err => { document.getElementById("status").textContent = `No contact with the API: ${err.message}`; });
+</script>
+</body>
+</html>

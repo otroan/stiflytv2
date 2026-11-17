@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stiflyt v2: how to use it</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap">
+<style>
+  :root { --ink: #16242e; --muted: #5a6872; --line: #dfe4e8; --wash: #f1f4f6; --sign: #7a1e2c; --path: #1565c0;
+          --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+          --tight: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 17px/1.55 var(--body); color: var(--ink); background: #fff; }
+  main { max-width: 39rem; margin: 0 auto; padding: 40px 22px 96px; }
+  .plate { display: inline-block; background: var(--sign); color: #fff; padding: 12px 22px 13px 36px; margin-left: -8px;
+           clip-path: polygon(18px 0, 100% 0, 100% 100%, 18px 100%, 0 50%); }
+  .plate h1 { font: 600 30px/1.1 var(--tight); margin: 0; }
+  .plate p { margin: 2px 0 0; font-size: 15px; opacity: .9; }
+  .lead { font-size: 19px; margin: 26px 0 8px; }
+  h2 { font: 600 22px/1.2 var(--tight); margin: 44px 0 6px; padding-top: 14px; border-top: 1px solid var(--line); }
+  p { margin: 10px 0; }
+  dl { margin: 12px 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+  dt { font: 500 15px/1.6 var(--tight); white-space: nowrap; }
+  dt span { display: inline-block; padding: 0 8px; border-radius: 3px; background: var(--wash); }
+  dt .yours { background: var(--sign); color: #fff; }
+  dd { margin: 0; }
+  .say { font-weight: 500; }
+  .quiet { color: var(--muted); font-size: 15px; }
+  a { color: var(--path); }
+  a:focus-visible { outline: 2px solid var(--path); outline-offset: 2px; }
+  @media (max-width: 30rem) { dl { grid-template-columns: 1fr; gap: 0; } dd { margin-bottom: 8px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="plate"><h1>Stiflyt v2</h1><p>How to use it</p></div>
+
+  <p class="lead">This is about the route editor, at <a href="/ruter">/ruter</a>. The <a href="/">front page</a> shows the areas and their routes, and has the signs.</p>
+  <p class="lead">This is where the routes are put right. What you see is our own copy of every route, laid
+  over Kartverket's Turrutebasen and the mapped paths and roads. What you change here is ours; nothing is
+  sent anywhere until someone hands it on.</p>
+  <p><a href="/ruter">Back to the map</a></p>
+
+  <h2>Finding a route</h2>
+  <p>Choose an area at the left (jot is Jotunheimen, bre Breheimen). Every route of the area is listed with
+  where it stands. Click one to open it; <span class="say">‹ All routes</span> or Escape takes you back.</p>
+  <dl>
+    <dt><span>Not yours yet</span></dt><dd>Turrutebasen has it, and nobody here has taken it in. Open it and make it yours to work on it.</dd>
+    <dt><span>Needs work</span></dt><dd>Something about it is asked: it is in pieces, an end is at no place, it has no name.</dd>
+    <dt><span>To check</span></dt><dd>Nothing is asked of it, and nobody has said it is right.</dd>
+    <dt><span class="yours">Done</span></dt><dd>Someone has looked at it and said it is right.</dd>
+    <dt><span>Discontinued</span></dt><dd>Given up in the terrain, and kept here for its history.</dd>
+    <dt><span>Not published</span></dt><dd>Kept here, and not shown to the public.</dd>
+  </dl>
+  <p>Above the areas you choose whose routes to see: everybody's, or only what one maintainer looks after.
+  <span class="say">Every area side by side</span> shows how many kilometres of ground the routes of each area
+  cover, and how much of it is marked, with a stretch that several routes share counted once.</p>
+  <p>Under the list, <span class="say">Odd things to look at</span> and <span class="say">Proposed repairs</span>
+  are where to start in an area you do not know: the first is what looks strange, the second is what can be
+  mended with one click.</p>
+
+  <h2>How high it goes</h2>
+  <p>An open route says what it climbs: metres up and down, walked from its first end to its last, and its
+  lowest and highest point. Under that is its profile, with snow and ice shaded and the places it passes
+  ticked off. Point at the profile and the spot shows on the map; click, and the map goes there. The heights
+  are Kartverket's. A line that has just been moved gets its heights when the route is next opened.</p>
+
+  <h2>Changing where a route goes</h2>
+  <p>With a route open, its line is yellow and its two ends are large dots.</p>
+  <dl>
+    <dt>Drag an end</dt><dd>to where the route should end. It follows the lines that lead there. Let go on the route itself and it is cut back to there.</dd>
+    <dt>Drag the line</dt><dd>to send the route another way, by the spot where you let go.</dd>
+    <dt>Click a stretch</dt><dd>to take it out of the route, or to say what it is: path, road, glacier, marked or not.</dd>
+    <dt>End on its own start</dt><dd>and the route becomes a round trip, coming back another way than it went.</dd>
+  </dl>
+  <p>None of this moves a line on the map, and none of it changes another route. Where no line of ours leads,
+  the route follows the mapped paths and roads, and that becomes new stretches of ours.</p>
+
+  <h2>Fixing the line itself</h2>
+  <p>When the line lies wrong on the map, choose <span class="say">Fix the line itself</span>. Now a drag moves
+  a junction or pulls the line onto a path. A stretch is shared: every route that runs there moves with it. Use
+  it when the ground is drawn wrong, not when a route should go another way.</p>
+
+  <h2>When you have got it wrong</h2>
+  <p><span class="say">Undo</span>, at the top of the map, takes back your own latest change made in the map,
+  and can be pressed again to go further back. It never takes back what someone else did.</p>
+  <p>If what you want gone lies further back, open the route and choose
+  <span class="say">Put it back as it was…</span> under its history. It lists the changes to that route; choose
+  how far back to go. What was done to other routes in between stays.</p>
+
+  <h2>Saying that a route is right</h2>
+  <p><span class="say">Done with this route</span> says that you have looked at it and it is right. Nothing
+  else sets that: a route that has been mended is not thereby finished. A route that is no longer walked is
+  said to be <span class="say">discontinued</span>, with why and since when, and kept. One that should not be
+  shown is said to be <span class="say">not published</span>.</p>
+
+  <h2>The description UT.no has</h2>
+  <p><span class="say">Fetch the description from UT.no</span> reads the route's page on UT.no and shows what
+  it says. The first time it asks which page that is: find the route on UT.no and paste the address of its
+  page. Nothing is changed until you choose <span class="say">Take it as the description</span>, and you can
+  change the text first. UT.no describes a route once for each direction; here the two become one text, each
+  under the way it is walked.</p>
+
+  <h2>Others are working too</h2>
+  <p>Your changes are recorded under your name. When someone else changes something, your map is brought up to
+  date within a few seconds, and the foot of the left side says who it was. If you had the route open, it is
+  shown as it is now.</p>
+  <p>If you change a stretch that someone has just changed, you are told so and nothing is written over: look
+  at it as it is, and do it again if it is still wanted.</p>
+
+  <h2>When it will not do what you want</h2>
+  <p>A refusal is a sentence that says why. Read it: it usually says what to do instead. If it does not, or
+  something looks wrong, choose <span class="say">Something wrong or missing here?</span> at the foot of the
+  left side and write what you wanted to do and what happened. The route you have open and the part of the map
+  you are looking at are noted with it. That is how the tool gets better.</p>
+
+  <h2>Who may do what</h2>
+  <p>A reader looks. An editor changes routes. If you are signed in to look and need to change, ask to be made
+  an editor.</p>
+  <p class="quiet">An assistant can act for you with a token of your own. What it changes is recorded under
+  your name as having come through an assistant, and your Undo does not take it back: the assistant does, or
+  you put the route back from its history.</p>
+</main>
+</body>
+</html>

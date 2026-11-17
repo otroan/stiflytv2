@@ -1,0 +1,14 @@
+/* A route's height profile, as profile.js draws it. The page gives the colours. */
+.profile { margin: 10px 0 2px; }
+.profile svg { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: pan-y; overflow: visible; }
+.profile .ground { fill: var(--wash); }
+.profile .onice { fill: var(--ice); opacity: .3; }
+.profile .ridge { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.profile .foot { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.profile .passed { stroke: var(--sign); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.profile .at { stroke: var(--sign); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.profile text { font: 500 11px var(--tight); fill: var(--muted); }
+.profile text.said { fill: var(--ink); font-size: 12px; }
+.profile .ends { display: flex; justify-content: space-between; gap: 12px; margin-right: 13.3%; }
+.profile .ends span:last-child { text-align: right; }
+.spot { width: 14px; height: 14px; border-radius: 50%; background: var(--sign); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--sign); }

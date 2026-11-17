@@ -1,0 +1,156 @@
+"""What UT.no says about a route: read from the route's own page there, one route at a time.
+
+UT.no has no API that is open to us (its GraphQL API wants a client that
+UT.no issues, and we have none). What it shows the public about a route is
+on the route's page, `https://ut.no/rutebeskrivelse/<number>`, and the page
+carries the same as data: code, name, the places at its ends, a description
+for each direction, grading, length. That is what is read here.
+
+One page is fetched when a person asks for one route, and no faster than
+one a second. Nothing here goes through routes on its own: there is no
+search by code without the API, so the person says which page is the
+route's, and the number is kept with the route. The text is DNT's; what is
+done with it is the person's to decide, and nothing is written here.
+"""
+from __future__ import annotations
+
+import json
+import re
+import threading
+import time
+from html.parser import HTMLParser
+
+import httpx
+
+from stiflyt2.config import settings
+from stiflyt2.domain.places import Invalid, NotFound
+
+HOSTS = ("ut.no", "www.ut.no")
+PAGE = "https://ut.no/rutebeskrivelse/{number}"
+MOST = 2_000_000        # bytes of a page that are read
+APART_S = 1.0           # at least this long between two pages fetched
+_ADDRESS = re.compile(r"^(?:https?://)?(?:www\.)?ut\.no/rutebeskrivelse/(\d{1,12})(?:[/?#].*)?$", re.IGNORECASE)
+_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
+_turn, _last = threading.Lock(), [0.0]
+
+
+class Unavailable(Exception):
+    """UT.no did not answer, or its page was not as it used to be."""
+
+
+def number(address: str | int) -> int:
+    """The number of a route on UT.no, from the address of its page there or from the number itself."""
+    said = str(address).strip()
+    found = _ADDRESS.match(said)
+    if found:
+        return int(found.group(1))
+    if said.isdigit() and len(said) <= 12:
+        return int(said)
+    raise Invalid("give the address of the route's page on UT.no, like https://ut.no/rutebeskrivelse/13394424, "
+                  "or the number in it")
+
+
+def address(route_number: int) -> str:
+    return PAGE.format(number=route_number)
+
+
+_BREAKS = {"p": "\n\n", "div": "\n\n", "ul": "\n\n", "ol": "\n\n", "h1": "\n\n", "h2": "\n\n", "h3": "\n\n",
+           "h4": "\n\n", "br": "\n", "li": "\n"}
+
+
+class _Words(HTMLParser):
+    """The words of a piece of HTML, one paragraph to a block, a list item to a line."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.link: str | None = None
+        self.shown = ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _BREAKS:
+            self.out.append(_BREAKS[tag])
+        if tag == "li":
+            self.out.append("- ")
+        if tag == "a":
+            self.link, self.shown = dict(attrs).get("href"), ""
+
+    def handle_endtag(self, tag):
+        if tag in _BREAKS and tag not in ("br", "li"):
+            self.out.append(_BREAKS[tag])
+        if tag == "a":       # where a link leads is said after its words, unless the words are the address
+            if self.link and self.link.startswith(("http://", "https://")) and self.link not in self.shown:
+                self.out.append(f" ({self.link})")
+            self.link = None
+
+    def handle_data(self, data):
+        self.out.append(re.sub(r"\s+", " ", data))
+        if self.link is not None:
+            self.shown += data
+
+
+def words(html: str | None) -> str:
+    """Text out of the HTML that UT.no keeps descriptions as."""
+    if not html:
+        return ""
+    reader = _Words()
+    reader.feed(html)
+    reader.close()
+    text = re.sub(r"[ \t]*\n[ \t]*", "\n", re.sub(r"[ \t]+", " ", "".join(reader.out)))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def client() -> httpx.Client:
+    return httpx.Client(headers={"User-Agent": settings.user_agent}, timeout=httpx.Timeout(20.0),
+                        follow_redirects=True, max_redirects=3)
+
+
+def fetch(route_number: int, http: httpx.Client | None = None) -> dict:
+    """What UT.no's page for a route says about it. Nothing is written."""
+    own = http is None
+    http = http or client()
+    with _turn:
+        wait = APART_S - (time.monotonic() - _last[0])
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            answer = http.get(address(route_number))
+        except httpx.HTTPError as e:
+            raise Unavailable(f"UT.no did not answer ({type(e).__name__})") from e
+        finally:
+            _last[0] = time.monotonic()
+            if own:
+                http.close()
+    if answer.status_code in (404, 410):
+        raise NotFound(f"UT.no has no route description with the number {route_number}")
+    if answer.status_code != 200 or answer.url.host not in HOSTS or len(answer.content) > MOST:
+        raise Unavailable(f"UT.no did not give the page (answered {answer.status_code})")
+    try:
+        route = json.loads(_DATA.search(answer.text).group(1))["props"]["pageProps"]["route"]
+        if route["__typename"] != "Route" or int(route["id"]) != route_number:
+            raise KeyError("another thing than the route asked for")
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        raise Unavailable("UT.no's page for the route is not put together as it used to be: "
+                          "the description could not be read out of it") from e
+
+    def said(key: str) -> str | None:
+        value = route.get(key)
+        return value.strip() or None if isinstance(value, str) else None
+
+    return {"number": route_number, "address": address(route_number), "code": said("code"), "name": said("name"),
+            "from": said("placeA"), "via": said("placeVia"), "to": said("placeB"),
+            "there": words(route.get("descriptionAb")), "back": words(route.get("descriptionBa")),
+            "notes": words(route.get("notes")),
+            "grading_there": said("gradingAb"), "grading_back": said("gradingBa"),
+            "length_m": route["distance"] if isinstance(route.get("distance"), int) else None,
+            "kind": said("type"), "public": route.get("status") == "PUBLIC",
+            "changed": (said("updatedAt") or "")[:10] or None}
+
+
+def described(found: dict) -> str:
+    """UT.no's two descriptions, one for each direction, as one text: each under the way it is walked."""
+    there, back = found["there"], found["back"]
+    if not there or not back or there == back:
+        return there or back
+    a, b = found["from"] or "A", found["to"] or "B"
+    return f"{a} – {b}\n{there}\n\n{b} – {a}\n{back}"
