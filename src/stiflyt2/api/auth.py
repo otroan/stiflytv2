@@ -132,7 +132,8 @@ class Gate:
                 await JSONResponse({"detail": "sign-in is not set up on this server"}, status_code=403)(
                     scope, receive, send)
                 return
-        person = await self.who(conn)
+        # A page may ask to be answered as one with a lesser role than its person holds (the role switch).
+        person = access.looking_as(await self.who(conn), conn.headers.get("x-stiflyt-as"))
         scope["stiflyt2_person"] = person
         if person is None and scope["path"] not in OPEN:
             if scope["path"].startswith("/api/") or scope["path"] == "/mcp":
@@ -241,7 +242,10 @@ def register(app: FastAPI, pool: ConnectionPool) -> None:
 
     @app.get(ME)
     def me(request: Request) -> dict:
-        """Who you are here, and what you may do."""
+        """Who you are here, and what you may do. `really` is the role you hold while you look at the pages
+        as one with a lesser role, and `may_look_as` the roles you can look as: in the pages only."""
         who = person_of(request)
+        holds = who.really or who.role
         return {"name": who.name, "email": who.email, "role": who.role, "edits": who.edits, "operates": who.operates,
-                "through": who.through, "sign_in": signed_in()}
+                "through": who.through, "sign_in": signed_in(), "really": who.really,
+                "may_look_as": access.lesser(holds) if who.name and who.through == "viewer" else []}

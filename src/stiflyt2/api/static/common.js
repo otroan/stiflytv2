@@ -12,7 +12,33 @@ function el(tag, attrs = {}, ...children) {
   for (const child of children) if (child !== null && child !== undefined) node.append(child);
   return node;
 }
-const THROUGH = { "X-Stiflyt-Through": "viewer" };
+// The role switch: one who may change things can look at the pages as one who may do less. The choice is
+// this tab's, and is sent with every request, so that the server answers and refuses as it would that one.
+const LOOKING_AS = sessionStorage.getItem("stiflyt2.as");
+const THROUGH = { "X-Stiflyt-Through": "viewer", ...(LOOKING_AS ? { "X-Stiflyt-As": LOOKING_AS } : {}) };
+const ONE_WHO = { reader: "a reader", operations: "someone in operations", editor: "an editor" };
+const ROLE_SAYS = { reader: "reader: looks", operations: "operations: changes signs, not routes", editor: "editor: changes routes and signs" };
+function lookAs(role) {
+  if (role) sessionStorage.setItem("stiflyt2.as", role); else sessionStorage.removeItem("stiflyt2.as");
+  location.reload();
+}
+// Put above a page's footer: which role the page is shown for, and the way to another. Nothing, for one who
+// holds no role to step down from. `me` is what auth/me answered.
+function roleSwitch(me, footer) {
+  for (const old of document.querySelectorAll(".role-switch")) old.remove();
+  if (!me.may_look_as || !me.may_look_as.length) return;
+  const holds = me.really || me.role;
+  const choose = el("select", { "aria-label": "Show the pages as", style: "width:auto;padding:2px 6px;font:inherit",
+      onchange: e => lookAs(e.target.value === holds ? null : e.target.value) },
+    ...[holds, ...[...me.may_look_as].reverse()].map(r => el("option", { value: r, selected: r === me.role }, ROLE_SAYS[r] || r)));
+  const bar = me.really
+    ? el("div", { class: "role-switch", role: "status", style: "padding:8px 16px;background:#fde8d8;color:#7a2c00;font-size:13px;font-weight:500" },
+        `Shown as ${ONE_WHO[me.role] || me.role} sees it. You are ${ONE_WHO[holds] || holds}. `, choose, " ",
+        el("button", { class: "link", style: "color:inherit", onclick: () => lookAs(null) }, `Back to ${holds}`))
+    : el("div", { class: "role-switch", style: "padding:6px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px" },
+        el("label", {}, "Show the pages as ", choose));
+  footer.parentNode.insertBefore(bar, footer);
+}
 // Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
 let leaving = false;
 function signIn() { if (!leaving) { leaving = true; location.href = new URL(`auth/login?next=${encodeURIComponent(location.pathname)}`, API).href; } }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from psycopg.rows import dict_row
 
@@ -23,12 +23,16 @@ class Refused(Exception):
     pass
 
 
+ROLES = ("reader", "operations", "editor")      # each may do what those before it may
+
+
 @dataclass(frozen=True)
 class Person:
     name: str | None            # None: nobody in particular, on a server with no editor named
     role: str
     email: str | None = None
     through: str = "viewer"     # how this request came in: the map, an assistant (mcp), a script (api)
+    really: str | None = None   # the role this one holds, while looking at the pages as one with a lesser role
 
     @property
     def edits(self) -> bool:
@@ -39,6 +43,20 @@ class Person:
     def operates(self) -> bool:
         """Whether this one may change what is kept about operations: signs, work. A route responsible may too."""
         return self.role in ("operations", "editor") and bool(self.name)
+
+
+def lesser(role: str) -> list[str]:
+    """The roles one with this role may look at the pages as: those that may do less."""
+    return list(ROLES[:ROLES.index(role)]) if role in ROLES else []
+
+
+def looking_as(person: Person | None, role: str | None) -> Person | None:
+    """The person as one with a lesser role, for as long as they ask to be: to see what such a one sees and
+    is refused. Only in the pages, only downwards, and only what they could do anyway: asking for a role one
+    does not hold, or holds already, changes nothing."""
+    if person is None or not person.name or person.through != "viewer" or role not in lesser(person.role):
+        return person
+    return replace(person, role=role, really=person.role)
 
 
 def _rows(conn, sql: str, params: dict) -> list[dict]:

@@ -1306,6 +1306,7 @@ function renderPlace(place, problem) {
   placeBox.scrollIntoView({ block: "nearest" });
 }
 refreshEditing();
+get("auth/me").then(me => roleSwitch(me, document.querySelector("footer"))).catch(() => {});
 refreshOwned().catch(() => {});
 
 // ---- Your routes (ADR-003): make a candidate yours, add parts, join them with crossings. ----

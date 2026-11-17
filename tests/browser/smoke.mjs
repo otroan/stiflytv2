@@ -110,6 +110,22 @@ await sleep(1500);
 await click(await onMap(`map.getCenter().toArray()`));
 check("a sign site's point among the routes opens the site among the signs", await until(`view === "signs" && open === ${JSON.stringify(dot)}`, 10), await text("#panel h2"));
 
+// The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
+if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
+  const holds = await js("me.role"), where = await js("area");
+  check("the foot of the side offers to show the pages as a lesser role", (await text(".role-switch")).includes("Show the pages as"), await text(".role-switch"));
+  await js(`(() => { const s = document.querySelector(".role-switch select"); s.value = "reader"; s.dispatchEvent(new Event("change")); })()`);
+  check("as a reader, the page says so and the server answers as to a reader", await until(`typeof me !== "undefined" && me.role === "reader" && me.really === ${JSON.stringify(holds)} && !me.operates && /Shown as a reader sees it/.test((document.querySelector(".role-switch") || {}).innerText || "")`, 20), await text(".role-switch"));
+  await open(`?area=${where}&view=signs`);
+  await until(`view === "signs" && Boolean(found) && document.querySelectorAll("#panel li.hit").length > 0`);
+  await clickOn(`document.querySelector("#panel li.hit")`);
+  check("a reader can choose no sign and is offered nothing to change", await until(`Boolean(open) && document.querySelectorAll("#panel .plate").length > 0 && document.querySelectorAll("#panel .plate:not([disabled])").length === 0 && ![...document.querySelectorAll("#panel button")].some(b => /No signs here|Another post|Change/.test(b.textContent))`, 10));
+  check("and is refused by the server, not only by the page", await js(`fetch("/api/v1/signs/undo", { headers: THROUGH }).then(r => r.status === 403)`));
+  await clickOn(`[...document.querySelectorAll(".role-switch button")].find(b => b.textContent.startsWith("Back to"))`);
+  check("back as oneself", await until(`typeof me !== "undefined" && me.role === ${JSON.stringify(holds)} && me.really === null`, 20), await text(".role-switch"));
+  await until(`Boolean(over)`);
+} else console.log("    (asked with a token, or by one with no lesser role to look as: the role switch is not checked)");
+
 // The route editor.
 const yours = await js(`over.routes[0].id`);
 await open("ruter");
@@ -120,7 +136,8 @@ if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelec
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
-check("the service answered every request of its own", refused.length === 0, refused.join(" | "));
+const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo"));      // that one was asked for as a reader, to be refused
+check("the service answered every request of its own", unasked.length === 0, unasked.join(" | "));
 check("nothing was changed", stopped.length === 0, stopped.join(" | "));
 console.log(failed.length ? `\n${failed.length} failed` : "\nall passed");
 ws.close(); chrome.kill(); await sleep(300); rmSync(profile, { recursive: true, force: true });

@@ -705,6 +705,14 @@ client set, the service is local: it answers only on localhost, as the editor
 named in `STIFLYT2_EDITOR`. How to switch sign-in on is in
 [Parallel deployment](docs/architecture/deployment.md).
 
+**Seeing the pages as somebody else does.** One who may change things can
+have the pages shown as for one who may do less: "Show the pages as" at the
+foot of the left side, for an editor as operations or as a reader, for
+operations as a reader. It is the server that answers as to that role, so
+what is refused is refused there and not only hidden. The choice is the
+tab's, a stripe says so for as long as it lasts, and it only ever goes
+downwards. Programs with a token are not affected.
+
 **Undo is your own.** Undo in the map takes back your latest change made in
 the map. What others have done since stays, and so does what an assistant did
 in your name: the assistant takes that back, or the route is put back from

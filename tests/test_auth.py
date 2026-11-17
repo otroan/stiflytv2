@@ -57,7 +57,7 @@ def test_run_locally_it_answers_only_what_is_asked_straight_of_localhost(loaded,
         assert client.get(f"{V1}/areas").status_code == 200
         assert client.get(f"{V1}/auth/me").json() == {
             "name": "Test Editor", "email": None, "role": "editor", "edits": True, "operates": True, "through": "api",
-                "sign_in": False}
+                "sign_in": False, "really": None, "may_look_as": []}
         # Passed on by a proxy, or asked for under the public name: this way of running is not for the world.
         for headers in ({"X-Forwarded-For": "203.0.113.9"}, {"Host": "stiflyt2.example.org"}):
             refused = client.get(f"{V1}/areas", headers=headers)
@@ -95,7 +95,7 @@ def test_signing_in_with_google_lets_in_only_who_is_listed(signed, owner, monkey
     assert (back.status_code, back.headers["location"]) == (302, "/?area=jot")
     assert signed.get(f"{V1}/auth/me").json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "reader", "edits": False, "operates": False, "through": "viewer",
-        "sign_in": True}
+        "sign_in": True, "really": None, "may_look_as": []}
     assert signed.get("/").status_code == 200 and signed.get(f"{V1}/areas").status_code == 200
     assert "How to use it" in signed.get("/guide").text
 
@@ -145,7 +145,7 @@ def test_a_token_acts_as_its_person_and_what_it_does_is_recorded_as_having_come_
     as_her, as_him = {"Authorization": f"Bearer {hers}"}, {"Authorization": f"Bearer {his}"}
     assert signed.get(f"{V1}/auth/me", headers=as_her).json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "editor", "edits": True, "operates": True, "through": "mcp",
-        "sign_in": True}
+        "sign_in": True, "really": None, "may_look_as": []}
     said = signed.post(f"{V1}/feedback", headers=as_her, json={"what": "report_gap", "message": "No way to do that"})
     assert owner.execute("SELECT who, through, what FROM feedback.entry WHERE id = %s", (said.json()["id"],)).fetchone() == (
         "Kari Nordmann", "mcp", "report_gap")
@@ -180,3 +180,48 @@ def test_people_are_listed_from_the_command_line_and_not_by_the_service(owner, m
     # The service's own database role reads the list and cannot add itself to it.
     with psycopg.connect(role_dsn("stiflyt2_api")) as api, pytest.raises(psycopg.errors.InsufficientPrivilege):
         api.execute("INSERT INTO access.person (email, name, role, added_by) VALUES ('me@example.org', 'Me', 'editor', 'me')")
+
+
+def test_one_who_may_change_things_can_look_at_the_pages_as_one_who_may_do_less(loaded, monkeypatch):
+    """The role switch: the page asks to be answered as a lesser role, and is answered and refused as that role."""
+    kari, per = access.Person("Kari", "reader"), access.Person("Per", "operations")
+    # Only downwards, only in the pages, and never for nobody in particular.
+    assert access.looking_as(kari, "editor") is kari and access.looking_as(kari, "reader") is kari
+    assert access.looking_as(per, "editor") is per and access.looking_as(per, "nonsense") is per
+    assert access.looking_as(per, "reader") == access.Person("Per", "reader", really="operations")
+    assert access.looking_as(access.Person("Per", "editor", through="mcp"), "reader").role == "editor"
+    assert access.looking_as(access.Person(None, "editor"), "reader").role == "editor" and access.looking_as(None, "reader") is None
+    assert (access.lesser("editor"), access.lesser("operations"), access.lesser("reader")) == (["reader", "operations"], ["reader"], [])
+
+    monkeypatch.setattr(settings, "editor", "Test Editor")
+    page = {"X-Stiflyt-Through": "viewer"}
+    with TestClient(create_app()) as client:
+        me = client.get(f"{V1}/auth/me", headers=page).json()
+        assert (me["role"], me["really"], me["may_look_as"]) == ("editor", None, ["reader", "operations"])
+        found = client.get(f"{V1}/routes", params={"q": "bre19"}).json()[0]
+        made = {"candidate_id": found["id"], "code": "bre19"}
+
+        as_reader = {**page, "X-Stiflyt-As": "reader"}
+        me = client.get(f"{V1}/auth/me", headers=as_reader).json()
+        assert (me["role"], me["edits"], me["operates"], me["really"]) == ("reader", False, False, "editor")
+        assert me["may_look_as"] == ["reader", "operations"]                 # the way back, and to the other
+        assert client.get(f"{V1}/areas", headers=as_reader).status_code == 200
+        assert client.get(f"{V1}/editing", headers=as_reader).json()["editor"] is None
+        assert client.post(f"{V1}/owned/routes", json=made, headers=as_reader).status_code == 403
+        assert client.patch(f"{V1}/signs", json={"key": "a|b|place:c", "text": "x"}, headers=as_reader).status_code == 403
+        assert client.get(f"{V1}/signs/undo", headers=as_reader).status_code == 403
+
+        as_operations = {**page, "X-Stiflyt-As": "operations"}
+        me = client.get(f"{V1}/auth/me", headers=as_operations).json()
+        assert (me["role"], me["edits"], me["operates"], me["really"]) == ("operations", False, True, "editor")
+        assert client.post(f"{V1}/owned/routes", json=made, headers=as_operations).status_code == 403
+        assert client.get(f"{V1}/signs/undo", headers=as_operations).status_code == 200
+        assert client.patch(f"{V1}/signs", json={"key": "a|b|place:c", "text": "x"}, headers=as_operations).status_code == 404
+
+        # A role one does not hold, and a program that is no page: as if nothing was asked.
+        assert client.get(f"{V1}/auth/me", headers={**page, "X-Stiflyt-As": "admin"}).json()["role"] == "editor"
+        assert client.get(f"{V1}/auth/me", headers={"X-Stiflyt-As": "reader"}).json()["role"] == "editor"
+        # Both pages have the switch, from the script they share.
+        shared = client.get("/static/common.js").text
+        assert "X-Stiflyt-As" in shared and "function roleSwitch" in shared
+        assert "roleSwitch(me" in client.get("/ruter").text and "roleSwitch(me" in client.get("/static/front/start.js").text

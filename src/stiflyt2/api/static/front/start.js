@@ -11,6 +11,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!baske
 (async () => {
   try {
     me = await get("auth/me");
+    roleSwitch(me, document.getElementById("who"));
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     document.getElementById("who").replaceChildren(me.name ? (me.operates ? `Signed in as ${me.name}. What you decide about signs is kept under that name. ` : `Signed in as ${me.name}, to look. Changing signs needs the operations role. `) : "Read-only. ", out);
     areas = await get("owned/areas");
