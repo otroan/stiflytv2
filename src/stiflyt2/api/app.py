@@ -35,6 +35,16 @@ V1 = "/api/v1"
 Text = Annotated[str, Query(min_length=1, max_length=80)]
 
 
+class _Fresh(StaticFiles):
+    """Scripts and styles that the browser asks about every time: a page and its scripts change together,
+    and a page run with yesterday's script fails in ways nobody can make sense of."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Compiling a statement before running it pays off for long reports over millions of rows. Here it
 # cost more than it saved: most of a second on a statement that then ran for two.
 QUICK = "-c jit=off"
@@ -164,8 +174,8 @@ def create_app() -> FastAPI:
         return Response(body, media_type="application/vnd.mapbox-vector-tile",
                         headers={"Cache-Control": "max-age=300"})
 
-    # What the pages share (the base maps and their switch), behind the same gate as the pages.
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    # The pages' scripts and styles, behind the same gate as the pages.
+    app.mount("/static", _Fresh(directory=STATIC), name="static")
     places_api.register(app, pool, writes)
     routes_api.register(app, pool, writes)
     feedback_api.register(app, pool, writes)

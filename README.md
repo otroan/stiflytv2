@@ -38,6 +38,42 @@ its PostgreSQL 16, PostGIS 3.4 and GDAL 3.8.
 .venv/bin/stiflyt2 routes search bre1
 ```
 
+**The pages** are plain files under `src/stiflyt2/api/static`, with no build
+step; the service reads them from disk at each request and tells the browser
+to ask every time. Scripts are loaded one after the other and share their
+names:
+
+| File | What it is |
+|---|---|
+| `drift.html`, `front.css` | the front page: its markup and its styles |
+| `front/page.js` | where one is in the front page, what has been fetched, what the side shows |
+| `front/map.js` | its map, and what a click on it means |
+| `front/routes.js` | the areas, an area, a route |
+| `front/signs.js` | the signs: sites, posts, the order and its basket |
+| `front/start.js` | what happens when it opens |
+| `index.html` | the route editor, still one file |
+| `common.js` | for both: elements from data, asking the server, moving the map |
+| `basemap.js`, `profile.js`, `profile.css` | for both: the base maps, and a route's height profile |
+
+A further part of operations gets a file of its own under `front/`.
+
+**A walk through both pages in a real browser**, with real clicks, is
+`tests/browser/smoke.mjs` (Node 22 and Chrome on your own machine, nothing to
+install). It changes nothing: every request but GET is stopped before it
+leaves the browser. `tests/browser/run.sh` starts a viewer on the test
+database on the server, opens a tunnel and runs it:
+
+```bash
+STIFLYT2_SSH=<user>@<server> tests/browser/run.sh
+STIFLYT2_TOKEN=… node tests/browser/smoke.mjs http://localhost:8100/     # a service with sign-in, read-only
+```
+
+A change to a page is live as soon as its file is in the checkout the
+service runs from. So a change is tried in a second checkout first
+(`STIFLYT2_DIR=stiflytv2-try`, with `.venv` linked and `.env` copied from the
+first, and `PYTHONPATH=src` for pytest), and copied to the first when the
+tests and the walk-through pass.
+
 A source, municipality or box is added by importing it once. After that
 `refresh` keeps it current: it asks the source for the file's date and size
 and downloads only when they differ from the active snapshot. A delivery that

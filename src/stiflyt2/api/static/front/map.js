@@ -1,0 +1,159 @@
+// The front page's map: the routes in use, the one open, the sign sites, and what a click on it means.
+const empty = { type: "FeatureCollection", features: [] };
+
+const map = new maplibregl.Map({
+  container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
+  style: {
+    version: 8, glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    sources: {
+      ...baseSources(),
+      routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
+      places: { type: "geojson", data: empty },
+    },
+    layers: [
+      ...baseLayers(),
+      { id: "route-hot", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#f5c400", "line-width": 9 } },
+      { id: "routes", type: "line", source: "routes", paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
+      { id: "route-open", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6] } },
+      { id: "places", type: "circle", source: "places", minzoom: 10, paint: { "circle-radius": 3, "circle-color": "#fff", "circle-stroke-color": css("--ink"), "circle-stroke-width": 1.5 } },
+      { id: "place-names", type: "symbol", source: "places", minzoom: 12,
+        layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top" },
+        paint: { "text-color": css("--muted"), "text-halo-color": "#fff", "text-halo-width": 1.5 } },
+      { id: "rays-hot", type: "line", source: "rays", filter: ["==", ["get", "hot"], true], paint: { "line-color": "#f5c400", "line-width": 9 } },
+      { id: "rays", type: "line", source: "rays", paint: { "line-color": css("--ink"), "line-width": 3 } },
+      { id: "ray-text", type: "symbol", source: "rays", minzoom: 15,
+        layout: { "symbol-placement": "line-center", "text-field": ["get", "text"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, -0.9], "text-allow-overlap": true },
+        paint: { "text-halo-color": "#fff", "text-halo-width": 2 } },
+      { id: "sites-small", type: "circle", source: "sites", minzoom: 10, layout: { visibility: "none" },
+        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 2.5, 15, 5], "circle-color": "#fff", "circle-stroke-color": css("--sign"), "circle-stroke-width": 1.5 } },
+      { id: "sites", type: "circle", source: "sites",
+        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 4, 14, 8],
+                 // What is going on at a site: signs on the order, signs ordered and not up yet, or no signs there at all.
+                 "circle-color": ["match", ["get", "state"], "order", "#e65100", "waiting", "#00796b", "none", "#b9c1c7", "#fff"],
+                 "circle-stroke-color": ["case", ["get", "open"], css("--ink"), css("--sign")], "circle-stroke-width": ["case", ["get", "open"], 3.5, 2] } },
+      { id: "site-names", type: "symbol", source: "sites", minzoom: 10,
+        layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.2], "text-anchor": "top" },
+        paint: { "text-halo-color": "#fff", "text-halo-width": 1.5 } },
+    ],
+  },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+map.addControl(new BaseControl(), "top-right");
+map.addControl(new maplibregl.ScaleControl(), "bottom-right");
+// What is drawn waits for the map's style once. After that it is drawn at once, also while the map is busy with something else.
+let styled = false;
+const waiting_for_style = [];
+map.once("load", () => { styled = true; for (const draw of waiting_for_style.splice(0)) draw(); });
+const whenLoaded = draw => { if (styled) draw(); else waiting_for_style.push(draw); };
+function drawMap() {
+  whenLoaded(() => {
+    // Among the routes the sign sites are small points to click; among the signs they say what is going on at each.
+    const among = view === "routes";
+    map.setLayoutProperty("sites", "visibility", among ? "none" : "visible");
+    map.setLayoutProperty("site-names", "visibility", among ? "none" : "visible");
+    map.setLayoutProperty("sites-small", "visibility", among ? "visible" : "none");
+    // The routes of the area stand out; those of other areas are there to be seen past.
+    map.setPaintProperty("routes", "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
+    const walked = among && route && over && over.routes.find(r => r.code === route);
+    map.setFilter("route-open", ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]]);
+    map.getSource("sites").setData({ type: "FeatureCollection", features: (found ? found.sites : []).map(s => ({ type: "Feature",
+      properties: { key: s.key, name: s.name || (s.near ? `by ${s.near.name}` : ""), state: s.no_signs ? "none" : onOrder(s) ? "order" : waiting(s) ? "waiting" : "", open: s.key === open }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) });
+    for (const m of stakes) m.remove();
+    stakes = [];
+    const site = found && found.sites.find(s => s.key === open), rays = [];
+    for (const post of site ? site.posts : []) {
+      if (post.taken_out) continue;
+      const number = site.posts.indexOf(post) + 1;
+      const stake = el("div", { class: `stake${post.assumed ? " assumed" : ""}${me.operates ? "" : " fixed"}`,
+        title: `Post ${number}${post.assumed ? ", where it is assumed to stand" : ""}${me.operates ? ". Drag it to where it stands: the arrows follow." : ""}` },
+        site.posts.length > 1 ? String(number) : "");
+      const marker = new maplibregl.Marker({ element: stake, draggable: me.operates }).setLngLat([post.lon, post.lat]).addTo(map);
+      marker.on("dragend", () => { const at = marker.getLngLat(); change(() => send("PATCH", `signs/posts/${post.key}`, { lon: at.lng, lat: at.lat })); });
+      stakes.push(marker);
+      const ways = new Map();                     // the signs of a post by the way they point: one line for each way
+      for (const sign of post.signs) if (!sign.taken_out && sign.bearing !== null) ways.set(sign.bearing, [...(ways.get(sign.bearing) || []), sign]);
+      for (const [bearing, signs] of ways) {
+        const far = 28, b = bearing * Math.PI / 180, named = signs.filter(g => g.text);
+        const text = named.length ? `${named[0].text}${named[0].km === null ? "" : ` ${kmText(named[0].km)}`}${signs.length > 1 ? `, and ${signs.length - 1} more` : ""}` : `${signs.length} with no name`;
+        rays.push({ type: "Feature", properties: { text, post: post.key, bearing, hot: Boolean(hot && hot.post === post.key && hot.bearing === bearing) }, geometry: { type: "LineString", coordinates: [[post.lon, post.lat],
+          [post.lon + far * Math.sin(b) / (111320 * Math.cos(post.lat * Math.PI / 180)), post.lat + far * Math.cos(b) / 111320]] } });
+      }
+    }
+    drawn = rays;
+    map.getSource("rays").setData({ type: "FeatureCollection", features: rays });
+  });
+}
+
+map.on("click", e => {
+  if (placing === "site") { stopPlacing(); change(async () => { open = (await send("POST", "signs/sites", { area, lon: e.lngLat.lng, lat: e.lngLat.lat })).key; }); return; }
+  if (placing && placing.to) {
+    const wanted = { post: placing.to, lon: e.lngLat.lng, lat: e.lngLat.lat };
+    stopPlacing();
+    change(async () => {
+      const got = await send("POST", "signs/destinations", wanted);
+      if (got.needs !== "name") return;
+      const name = prompt("That is no place of yours, but a spot on a route. What is the sign to say?", "");
+      if (name && name.trim()) await send("POST", "signs/destinations", { ...wanted, name: name.trim() });
+    });
+    return;
+  }
+  if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
+  const hit = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], { layers: [view === "signs" ? "sites" : "sites-small"] })[0];
+  if (hit) { openSite(hit.properties.key); return; }
+  if (view !== "routes") return;
+  // Among the routes a click on one opens it; where several run together, it asks which.
+  const at = routesAt(e.point);
+  if (several) { several.remove(); several = null; }
+  if (!area && at.length) visit({ area: at[0].code.slice(0, 3).toLowerCase() });
+  else if (at.length === 1) showRoute(at[0].code);
+  else if (at.length > 1) several = new maplibregl.Popup({ closeButton: false, maxWidth: "300px" }).setLngLat(e.lngLat).setDOMContent(el("div", {},
+    el("div", { class: "sub" }, `${at.length} routes go here.`),
+    el("ul", {}, ...at.map(r => el("li", {}, el("button", { class: "link", onclick: () => showRoute(r.code) }, r.code), r.name ? ` ${r.name}` : ""))))).addTo(map);
+});
+// The routes in use that run where the map was clicked: of the area, or with none chosen, of any.
+function routesAt(point) {
+  const ids = new Map();
+  for (const f of map.queryRenderedFeatures([[point.x - 5, point.y - 5], [point.x + 5, point.y + 5]], { layers: ["routes"] })) {
+    const codes = f.properties.codes_in_use.split("|");
+    f.properties.ids.split("|").forEach((id, i) => { if (id) ids.set(id, codes[i]); });
+  }
+  return area ? (over ? over.routes.filter(r => ids.has(r.id)) : []) : [...ids].map(([id, code]) => ({ id, code }));
+}
+map.on("mousemove", e => {
+  if (placing) return;
+  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small"] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
+  const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
+  point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);
+});
+// The map moves to what is chosen: a route, the routes of the area, or with no area all there are.
+function fitTo(wanted, maxZoom) {
+  if (!lines) return false;
+  let w = 180, s = 90, e = -180, n = -90;
+  for (const f of lines.features) {
+    if (!wanted(f)) continue;
+    for (const [x, y] of f.geometry.type === "LineString" ? f.geometry.coordinates : f.geometry.coordinates.flat()) { w = Math.min(w, x); e = Math.max(e, x); s = Math.min(s, y); n = Math.max(n, y); }
+  }
+  if (w > e) return false;
+  map.fitBounds([[w, s], [e, n]], { padding: 60, maxZoom, animate: !calm });
+  return true;
+}
+function fit() {
+  if (fitTo(f => !area || f.properties.areas.includes(`|${area}|`), 13)) return;
+  if (!found || !found.sites.length) return;
+  const lons = found.sites.map(s => s.lon), lats = found.sites.map(s => s.lat);
+  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 60, maxZoom: 13, animate: !calm });
+}
+// Only what is in use is drawn. Each stretch says whose it is in a form the map can be asked about.
+function inUse(all) {
+  const features = [];
+  for (const f of all.features) {
+    const of = (f.properties.routes || []).filter(r => r.in_use);
+    if (!of.length) continue;
+    f.properties.ids = `|${of.map(r => r.id).join("|")}|`;
+    f.properties.codes_in_use = `|${of.map(r => r.code).join("|")}|`;
+    f.properties.areas = `|${[...new Set(of.map(r => r.code.slice(0, 3).toLowerCase()))].join("|")}|`;
+    features.push(f);
+  }
+  return { type: "FeatureCollection", features };
+}

@@ -1,0 +1,126 @@
+/* The front page: areas, routes and signs. */
+:root {
+  --ink: #16242e; --muted: #5a6872; --line: #dfe4e8; --wash: #f1f4f6; --path: #1565c0; --ice: #00838f;
+  --sign: #7a1e2c;        /* a route of ours, and what is decided */
+  --wood: #cdc8bc; --wood-edge: #9a9486; --green: #114232; --t: #d3161b;     /* a sign is weathered wood, or green (RAL 6005) */
+  --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --tight: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; font: 15px/1.4 var(--body); color: var(--ink); }
+#side { width: 372px; flex: none; display: flex; flex-direction: column; background: #fff; border-right: 1px solid var(--line); overflow: hidden; }
+#mapwrap { flex: 1; min-width: 0; position: relative; }
+#map { position: absolute; inset: 0; }
+#hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
+        background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
+#hint button { margin-left: 10px; }
+/* The order, as a basket at the top right of the map: how many signs are in it, and the way to take it out. */
+#basket { position: absolute; top: 10px; right: 10px; z-index: 3; display: flex; align-items: center; gap: 7px; padding: 6px 10px 6px 9px;
+          background: #fff; color: var(--ink); border: 0; border-radius: 4px; box-shadow: 0 0 0 2px #0000001a; font: 600 15px var(--tight); cursor: pointer; }
+#basket:hover { background: var(--wash); }
+#basket .n { min-width: 22px; padding: 0 6px; border-radius: 11px; background: var(--sign); color: #fff; font-size: 13px; line-height: 22px; text-align: center; font-variant-numeric: tabular-nums; }
+#basket.none .n { background: #b9c1c7; }
+#basketbox { position: absolute; top: 10px; right: 96px; z-index: 3; width: 330px; max-width: calc(100% - 106px); max-height: 70vh; overflow: auto;
+             background: #fff; border-radius: 6px; box-shadow: 0 2px 14px #0005; padding: 12px 14px; }
+#basketbox h2 { margin: 0 0 6px; }
+body[data-view=signs] #mapwrap .maplibregl-ctrl-top-right { top: 46px; }
+/* The order and the signs chosen for it belong to the signs: among the routes they are out of the way. */
+body:not([data-view=signs]) #basket, body:not([data-view=signs]) #basketbox, body:not([data-view=signs]) #chosen { display: none; }
+header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+h1 { font: 600 20px/1.1 var(--tight); margin: 0; }
+nav { display: flex; gap: 14px; margin-top: 8px; font: 500 15px var(--tight); }
+nav a { color: var(--muted); text-decoration: none; padding-bottom: 2px; }
+nav a[aria-current] { color: var(--ink); border-bottom: 2px solid var(--sign); }
+nav a.away { margin-left: auto; }
+h2 { font: 600 15px/1.3 var(--body); margin: 14px 0 6px; }
+h2:first-child { margin-top: 0; }
+input[type=text], input[type=number], select, textarea { width: 100%; padding: 6px 8px; font: inherit; color: inherit;
+        border: 1px solid #b4bec6; border-radius: 4px; background: #fff; }
+textarea { resize: vertical; }
+:focus-visible { outline: 2px solid var(--path); outline-offset: 1px; }
+#scroll { flex: 1; overflow-y: auto; }
+section { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+footer { padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+ul { list-style: none; margin: 0; padding: 0; }
+li.hit { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; }
+li.hit:hover, li.hit:focus-visible { background: var(--wash); }
+.grow { flex: 1; min-width: 0; }
+.sub { color: var(--muted); font-size: 13px; }
+.error { color: #a3231b; font-weight: 500; }
+.tag { font: 500 13px var(--tight); padding: 0 7px; border-radius: 9px; background: #e6eaed; color: #44525c; white-space: nowrap; }
+.tag.warn { background: #fde8d8; color: #a23b00; }
+.filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.filter button { font: 500 13px var(--tight); padding: 3px 9px; border-radius: 12px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+.filter button[aria-pressed=true] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+button.btn { font: inherit; padding: 5px 11px; border: 1px solid #b4bec6; border-radius: 4px; background: #fff; color: var(--ink); cursor: pointer; }
+button.btn:hover { background: var(--wash); }
+button.btn.main { background: var(--sign); border-color: var(--sign); color: #fff; }
+button.btn[aria-pressed=true] { background: var(--ink); border-color: var(--ink); color: #fff; }
+button.link, a { color: var(--path); }
+a.btn { display: inline-block; font: inherit; padding: 5px 11px; border: 1px solid #b4bec6; border-radius: 4px; background: #fff; color: var(--ink); text-decoration: none; }
+a.btn:hover { background: var(--wash); }
+button.link { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
+.backbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin: -12px -16px 10px;
+           padding: 8px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+label.field { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; }
+/* An area and a route, in numbers. */
+h2.area { font: 600 24px/1.1 var(--tight); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
+h2 .code { font: 600 17px var(--tight); margin-right: 8px; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; margin: 10px 0 12px; }
+dl.facts dt { color: var(--muted); font-size: 13px; padding-top: 2px; }
+dl.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.grade { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; flex: none; }
+.grade.G { background: #2e7d32; } .grade.B { background: #1565c0; } .grade.R { background: #c62828; } .grade.S { background: #17191a; }
+.grade.none { background: #fff; box-shadow: inset 0 0 0 1.5px #9aa5ad; }
+.graded { display: inline-flex; align-items: baseline; margin-right: 10px; white-space: nowrap; }
+li.hit .code { font: 600 14px var(--tight); min-width: 50px; }
+li.hit .far { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: .03em; }
+.said { white-space: pre-wrap; overflow-wrap: anywhere; }
+.seen { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.maplibregl-popup-content { font: 15px/1.4 var(--body); padding: 10px 14px; }
+/* A sign as it hangs. In the mountains a plank of weathered wood: the red T in its ring at the end the
+   arrow is at, a small black arrow, the name. Green as the sign manual has it: arrow, distance, name,
+   and the walker at the far end. A sign that points right is the same, turned round. */
+.post { margin: 12px 0 4px; padding-left: 12px; border-left: 4px solid #6b5a43; }
+.post.out { opacity: .55; }
+.post h3 { font: 600 14px var(--tight); margin: 0 0 6px; }
+.plate { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; margin: 5px 0; padding: 5px 9px; border: 0; cursor: pointer;
+         text-align: left; font: italic 500 16px/1.2 var(--body); color: #17191a; border-radius: 1px;
+         background: repeating-linear-gradient(178deg, #0000 0 5px, #0000000d 5px 6px), linear-gradient(var(--wood), #c2bcae);
+         box-shadow: inset 0 0 0 1px var(--wood-edge), 0 1px 2px #0002; }
+.plate.høyre { flex-direction: row-reverse; text-align: right; }
+.plate svg { flex: none; }
+.plate .name { overflow-wrap: anywhere; }
+.plate .km { white-space: nowrap; font-style: normal; font-size: 14px; font-variant-numeric: tabular-nums; }
+.plate.grønn { background: var(--green); color: #fff; font: 600 16px/1.2 var(--tight); border-radius: 5px; box-shadow: 0 1px 2px #0003; }
+.plate.grønn .name { flex: 1; }
+.plate.top { justify-content: center; min-height: 40px; }
+.plate.top svg { margin-right: auto; }
+.plate.top .name { margin-right: auto; padding-right: 24px; }
+.plate[aria-pressed=true] { outline: 3px solid var(--path); outline-offset: 2px; }
+.plate.hot { box-shadow: inset 0 0 0 1px var(--wood-edge), 0 0 0 3px #f5c400; }
+.plate.grønn.hot { box-shadow: 0 0 0 3px #f5c400; }
+#find { margin-top: 8px; }
+.backbar .step { padding: 5px 9px; }
+.plate.out { opacity: .45; }
+#chosen { display: flex; align-items: center; gap: 8px; padding: 9px 16px; background: var(--ink); color: #fff; font-weight: 500; }
+#chosen .grow { flex: 1; }
+#chosen button.btn.main { background: #fff; border-color: #fff; color: var(--ink); }
+#chosen button.btn { background: none; border-color: #fff8; color: #fff; }
+.plate.out .name { text-decoration: line-through; }
+.plate:focus-visible { outline-offset: 3px; }
+.below { margin: 0 0 8px; }
+form.edit { margin: 2px 0 10px; padding: 8px 10px; background: var(--wash); border-radius: 4px; }
+form.edit .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stake { width: 20px; height: 20px; border-radius: 3px; background: #6b5a43; color: #fff; border: 2px solid #fff; box-shadow: 0 0 0 1px #3c3226; cursor: grab;
+         font: 700 12px/16px var(--tight); text-align: center; }
+.stake.assumed { background: #fff; color: #3c3226; border-color: #6b5a43; }
+.stake.fixed { cursor: default; }
+@media (max-width: 760px) {
+  body { flex-direction: column-reverse; }
+  #side { width: 100%; max-height: 52vh; border-right: 0; border-top: 1px solid var(--line); }
+}

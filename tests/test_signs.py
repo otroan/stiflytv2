@@ -4,7 +4,7 @@ from io import BytesIO
 
 import psycopg
 import pytest
-from conftest import role_dsn
+from conftest import role_dsn, scripts_of
 from fastapi.testclient import TestClient
 
 from stiflyt2.api.app import create_app
@@ -541,12 +541,14 @@ def test_the_front_door_is_operations_and_the_routes_have_an_address_of_their_ow
     from stiflyt2.config import settings
 
     with TestClient(create_app()) as client:
-        assert "Signs" in client.get("/").text and 'get("signs", { area' in client.get("/").text
+        front, editor = ("\n".join(scripts_of(client, page).values()) for page in ("/", "/ruter"))
+        assert "Signs" in client.get("/").text and 'get("signs", { area' in front
         assert "Your route" in client.get("/ruter").text
         # What the two share: the base maps and their switch, and the order as a basket on the signs page.
         shared = client.get("/static/basemap.js")
         assert shared.status_code == 200 and "tile.openstreetmap.org" in shared.text and "topograatone" in shared.text
-        assert all("/static/basemap.js" in client.get(page).text and "new BaseControl()" in client.get(page).text for page in ("/", "/ruter"))
+        assert all("/static/basemap.js" in client.get(page).text for page in ("/", "/ruter"))
+        assert "new BaseControl()" in front and "new BaseControl()" in editor
         assert 'id="basket"' in client.get("/").text
         # Nobody is named as editor on this server: looking is allowed, deciding is not.
         assert client.get(f"{V1}/signs/areas").status_code == 200

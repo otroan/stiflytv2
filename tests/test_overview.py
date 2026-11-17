@@ -1,7 +1,9 @@
 """The front door: the areas with routes in use, and one area with its routes and what they add up to."""
+import re
+
 import psycopg
 import pytest
-from conftest import role_dsn
+from conftest import role_dsn, scripts_of
 from fastapi.testclient import TestClient
 from test_height import Terrain
 
@@ -94,11 +96,32 @@ def test_an_area_is_its_routes_in_use_and_what_they_add_up_to(conn):
         "highest": None, "lowest": None, "gradings": {}, "places": {}}}
 
 
+def test_a_page_is_its_scripts_and_no_two_of_them_say_the_same_name(loaded):
+    """Scripts loaded one after the other share their names: one declared twice stops the second script whole."""
+    with TestClient(create_app()) as client:
+        for page, least in (("/", 6), ("/ruter", 3)):
+            scripts = scripts_of(client, page)
+            assert len(scripts) > least and "/static/common.js" in scripts
+            said: dict[str, str] = {}
+            for src, text in scripts.items():
+                names = re.findall(r"^(?:async function|function|class)\s+([A-Za-z_$][\w$]*)", text, re.MULTILINE)
+                for line in re.findall(r"^(?:const|let|var)\s+.*$", text, re.MULTILINE):
+                    names += re.findall(r"(?:^(?:const|let|var)\s+|,\s*)([A-Za-z_$][\w$]*)\s*=[^=>]", line)
+                for name in names:
+                    assert name not in said or said[name] == src, f"{name} is declared in {said[name] or page} and in {src or page}"
+                    said[name] = src
+            # What each page needs of the shared ones is there.
+            assert {"el", "get", "send", "svg", "go", "drawProfile", "BaseControl"} <= set(said)
+        for styles in ("/static/front.css", "/static/profile.css"):
+            assert client.get(styles).status_code == 200 and styles in client.get("/").text
+
+
 def test_the_front_door_is_the_areas_and_the_routes_and_anybody_let_in_may_look(loaded):
     with TestClient(create_app()) as client:
         page = client.get("/").text
+        code = "\n".join(scripts_of(client, "/").values())
         # The areas and the routes come first; the signs are a part to choose, and the editor is somewhere else.
-        assert "owned/areas" in page and 'id="tab-routes"' in page and 'id="tab-signs"' in page and 'href="/ruter"' in page
+        assert "owned/areas" in code and 'id="tab-routes"' in page and 'id="tab-signs"' in page and 'href="/ruter"' in page
         assert page.index('id="tab-routes"') < page.index('id="tab-signs"')
         # The height profile is one piece of code, for the front door and for the editor.
         for shared in ("/static/profile.js", "/static/profile.css"):

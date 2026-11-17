@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link rel="stylesheet" href="/static/profile.css">
+<script src="/static/common.js"></script>
 <script src="/static/basemap.js"></script>
 <script src="/static/profile.js"></script>
 <style>
@@ -168,42 +169,11 @@
 
 <script>
 "use strict";
-const API = new URL("api/v1/", location.href).href;
-const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const C = { trail: css("--trail"), path: css("--path"), road: css("--road"), heritage: css("--heritage"),
             parcel: css("--parcel"), selected: css("--selected"), together: css("--together"),
             apart: css("--apart"), meeting: css("--meeting"), sign: css("--sign"), osm: css("--osm"),
             water: css("--water"), ice: css("--ice") };
-const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const GONE = "#7a8691", IN_USE = ["!=", ["get", "discontinued"], true];    // a discontinued route is drawn apart
-function go(center, zoom) {
-  const to = { center, zoom: Math.max(map.getZoom(), zoom) };
-  if (calm) map.jumpTo(to); else map.flyTo(to);
-}
-
-// Text from the sources is always inserted as text, never as HTML.
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
-  }
-  for (const child of children) if (child !== null && child !== undefined) node.append(child);
-  return node;
-}
-const THROUGH = { "X-Stiflyt-Through": "viewer" };
-async function get(path, params = {}) {
-  const url = new URL(path, API);
-  for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined) url.searchParams.set(k, v);
-  const r = await fetch(url, { headers: THROUGH });
-  if (r.status === 401) signIn();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-}
-// Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
-let leaving = false;
-function signIn() { if (!leaving) { leaving = true; location.href = new URL(`auth/login?next=${encodeURIComponent(location.pathname)}`, API).href; } }
 // A fault in this page is told to the server, where what the tool refuses is kept too. Each fault
 // once, and not what the server has itself answered or a lost connection.
 const toldFaults = new Set();
@@ -219,7 +189,6 @@ function tellFault(message, trace) {
 }
 window.addEventListener("error", e => tellFault(e.message, e.error && e.error.stack));
 window.addEventListener("unhandledrejection", e => tellFault(e.reason && e.reason.message || e.reason, e.reason && e.reason.stack));
-const km = v => `${v.toLocaleString("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 
 const vector = (layer, minzoom) => ({
   type: "vector", minzoom, maxzoom: 15, tiles: [`${API}tiles/${layer}/{z}/{x}/{y}.mvt`],
@@ -925,12 +894,6 @@ function remember(key, value) {
 }
 let would = false;     // lines a change would give are being shown
 
-function svg(tag, attrs = {}, ...children) {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
-  for (const child of children) if (child !== null && child !== undefined) node.append(child);
-  return node;
-}
 // The side shows the list or one route. Opening a route puts the list aside and remembers where it stood;
 // leaving the route brings it back there, with the row that was open marked.
 let listAt = null, lastOpen = null;
@@ -1060,18 +1023,7 @@ function markBuilding(place) {
 }
 function closePlace() { placeBox.hidden = true; markBuilding(null); }
 
-async function send(method, path, body, more) {
-  const r = await fetch(new URL(path, API), { method, headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...THROUGH, ...(more || {}) },
-                                              body: body ? JSON.stringify(body) : undefined });
-  if (r.status === 401) signIn();
-  if (!r.ok) {
-    let message = `${r.status} ${r.statusText}`;
-    try { const d = (await r.json()).detail; message = typeof d === "string" ? d : JSON.stringify(d); } catch {}
-    throw new Error(message);
-  }
-  seenSeq = null;     // a change of your own: what the page shows is brought up to date by whoever made it
-  return r.status === 204 ? null : r.json();
-}
+afterChange = () => { seenSeq = null; };     // a change of your own: what the page shows is brought up to date by whoever made it
 // The revision of a stretch as this map has it. Sent with a change to its line, so that a change
 // somebody else made in the meantime is not written over unseen.
 const asSeen = edge => { const f = ownedLines.features.find(f => f.properties.edge_id === edge);

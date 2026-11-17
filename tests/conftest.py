@@ -10,6 +10,7 @@ user is not a superuser:
                            stiflyt2_* role, e.g. host=127.0.0.1
 """
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -172,3 +173,14 @@ def loaded(small, monkeypatch):
     monkeypatch.setattr(osm, "PAUSE_S", 0)
     osm.run("index", OSM_BOX)
     build.build()
+
+
+def scripts_of(client, page: str) -> dict[str, str]:
+    """A page's own scripts by address, as the browser would fetch them; what is written in the page itself under ''."""
+    html = client.get(page).text
+    found = {"": "\n".join(re.findall(r"<script>\n(.*?)</script>", html, re.DOTALL))}
+    for src in re.findall(r'<script src="(/static/[^"]+)"', html):
+        got = client.get(src)
+        assert got.status_code == 200 and got.headers["cache-control"] == "no-cache", src
+        found[src] = got.text
+    return found

@@ -390,10 +390,14 @@ Left, of what v1 has and of what was said:
   perhaps be proposed as an arrival point (the proposals do that within
   150 m only for route ends).
 - The factor is one number, not one per area measured from GPX.
-- The two pages share the base map and the height profile
-  (`static/basemap.js`, `profile.js`, `profile.css`); each still has its
-  own copy of the small helpers (`el`, `get`, `send`). A database role of
-  its own for operations is not made: the API role writes `ops`.
+- The front page is a file per part and the two pages share their helpers,
+  the base map and the height profile (README, "The pages"). The route
+  editor is still one file of 2,000 lines. A database role of its own for
+  operations is not made: the API role writes `ops`.
+- The walk through the pages in a browser (`tests/browser`) is run by hand
+  from a machine with Chrome; nothing runs it by itself. It does not try
+  anything that changes data: ordering a sign, dragging a post, editing a
+  route are still tried by hand on the test database.
 - Copies off the server (2026-11-17): the nightly copy is pushed to a private
   git repository. Not covered: the imported sources' older versions
   (`source_raw`, 5 GB, too big for git, and upstream serves only the latest),
