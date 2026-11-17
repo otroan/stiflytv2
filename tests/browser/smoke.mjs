@@ -23,7 +23,7 @@ if (!target) { console.error("Chrome did not start"); process.exit(2); }
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise(r => ws.addEventListener("open", r));
 let seq = 0;
-const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [];
+const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [], asked = [];
 const send = (method, params = {}) => new Promise(r => { waiting.set(++seq, r); ws.send(JSON.stringify({ id: seq, method, params })); });
 ws.addEventListener("message", m => {
   const d = JSON.parse(m.data);
@@ -33,6 +33,7 @@ ws.addEventListener("message", m => {
     refused.push(`${d.params.response.status} ${d.params.response.url.slice(HOME.length - 1)}`);
   if (d.method === "Fetch.requestPaused") {
     const q = d.params.request;
+    asked.push(q.url.slice(HOME.length - 1));
     if (q.method !== "GET") { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
@@ -94,7 +95,10 @@ if (alone) {
 // The signs: a part one chooses.
 check("the signs tab can be clicked", await clickOn(`document.getElementById("tab-signs")`));
 check("the signs of the area are listed, and the basket is there", await until(`view === "signs" && document.querySelectorAll("#panel li.hit").length > 0 && getComputedStyle(document.getElementById("basket")).display !== "none"`), (await text("#panel")).slice(0, 80));
+await sleep(800);
+const forSigns = () => asked.filter(a => a.startsWith("/api/v1/signs?area=")).length, before = forSigns();
 await clickOn(`document.querySelector("#panel li.hit")`);
+check("opening a sign site asks for the signs as they are now", await (async () => { for (let i = 0; i < 20; i++) { if (forSigns() > before) return true; await sleep(250); } return false; })());
 check("a sign site opens with its posts", await until(`Boolean(open) && document.querySelectorAll("#panel .post").length > 0`), await text("#panel h2"));
 check("the address says which site", (await js("location.search")).includes("site="));
 if (await js(`me.operates && document.querySelectorAll("#panel .plate:not([disabled])").length > 0`)) {

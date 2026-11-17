@@ -39,6 +39,8 @@ function visit(next) {
 // Arriving somewhere: by a click, by the browser going back, or by the address the page was opened with.
 function arrive(to, fitting = true) {
   const wanted = areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
+  // Going in among the signs, or to a sign site: the signs are asked for as they are now.
+  const goingIn = to.view === "signs" && wanted && (view !== "signs" || (to.site || null) !== open && Boolean(to.site));
   view = to.view; route = view === "routes" && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
   editing = null; problem = null;
   if (view !== "signs" || moved) lookingAtAdrift = false;
@@ -46,7 +48,7 @@ function arrive(to, fitting = true) {
   if (placing) stopPlacing();
   if (several) { several.remove(); several = null; }
   if (!route) shownRoute = null;
-  if (!moved) { render(); return Promise.resolve(); }
+  if (!moved) { render(); if (goingIn && found) freshen(); return Promise.resolve(); }
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
   if (area) localStorage.setItem("stiflyt2.area", area); else localStorage.removeItem("stiflyt2.area");
   render();
@@ -86,6 +88,19 @@ async function lookForLoose() {
       render();
     }
   } catch {}
+}
+// The signs as they are now, when somebody else may have decided something since they were fetched: asked
+// for when one goes in among the signs or opens a sign site, as a route is fetched when it is opened. The side
+// is drawn anew only if something is different, and not under a form that is being filled in.
+async function freshen() {
+  const asked = area, was = JSON.stringify(found);
+  let got;
+  try { got = await get("signs", { area: asked }); } catch { return; }
+  if (asked !== area || editing || !found || JSON.stringify(found) !== was || JSON.stringify(got) === was) return;
+  found = got;
+  if (open && !found.sites.some(s => s.key === open)) open = null;
+  if (view === "signs") render();
+  lookForLoose();
 }
 // A change of yours: made, and everything worked out again, so that what you see is what is kept.
 async function change(request) {

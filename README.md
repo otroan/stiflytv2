@@ -1005,6 +1005,12 @@ why, and a person says which sign it is about now or that it can be forgotten
 (`GET /api/v1/signs/adrift`, `POST …/adrift/{id}/move` and `/forget`). If the
 routes change back, it finds its sign again by itself.
 
+**Others at work.** The signs are asked for as they are now when one goes in
+among them and when a sign site is opened, as a route is when it is opened:
+what somebody else has decided since the area was chosen shows then. Two who
+decide about the same sign at once are not stopped: the later stands, for the
+arrow, the text and the rest each by itself.
+
 **Undo.** "Undo: …" at the foot of the side, and Ctrl/⌘+Z, take back your own
 latest decision about signs, made in the page: a sign changed, a post moved,
 forty signs put on the order in one go. What others have decided since stays;
