@@ -399,6 +399,18 @@ Left, of what v1 has and of what was said:
   (`source_raw`, 5 GB, too big for git, and upstream serves only the latest),
   and there is no command to put `tool.dump` back (who may sign in, feedback,
   what is decided about signs): it goes in with `pg_restore` by hand.
+- How long the editor's look-ups take (measured 2026-11-17 on the real data, before and after):
+  the to-do list of jot 8.7 s, now 4.2 s the first time and 1.7 s after;
+  of bre 4.8 s, now 2.1 s and 1.1 s; the report of bre 5.2 s, now 1.4 s;
+  proposals for jot 3.8 s, now 2.4 s and 0.5 s; corrections for everything
+  4.8 s, now 3.3 s. What was done: stretches that cross are found boxes
+  first, how much of a route lies by mapped lines is worked out per stretch
+  and kept while the process runs (`domain/kept.py`), as is what trying a
+  snap gave, a route with nothing to mend is not looked up in full, and
+  statements are not compiled first (`jit=off`). What is left is mostly
+  `routes.detail` once per route (about 20 ms each), and "Compare with the
+  mapped paths" for a whole area, which takes 19 s for jot and is only run
+  when its fold is opened.
 - The front door (areas, routes, one route; signs as a part to choose) was
   built on 2026-11-17, see the README. Left there: the areas have no names
   beyond their three letters; an area's numbers and list are worked out on

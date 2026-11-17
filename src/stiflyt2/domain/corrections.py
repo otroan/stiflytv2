@@ -315,7 +315,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         # A name is proposed only for a route a person has looked at: a name worked out
         # from the places at the ends of a route nobody has checked is a guess.
         theirs = m["rutenavn"] or ""
-        ours = m["name"] or (m["reviewed"] and routes.detail(conn, m["id"])["generated_name"]) or None
+        ours = m["name"] or (m["reviewed"] and routes.name_from_ends(conn, m["id"])) or None
         same = ours and all(part.strip().lower() in theirs.lower() for part in ours.split(" – "))
         if ours and ours != theirs and not same:
             add("route name", f"Call {m['rutenummer']} “{ours}”: Turrutebasen has “{theirs}”",

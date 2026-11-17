@@ -131,12 +131,14 @@ def validate(conn, route_ids: list[str]) -> dict:
 
     # Two stretches that cross, or lie on each other, away from their ends. A knot
     # beside a junction they both hang in is not a finding: the way round is a few steps.
+    # Their boxes are compared first: the pairs are found with no index to go by, and comparing
+    # every pair line against line is what took the time.
     crossed = defaultdict(list)
     for one, two, lon, lat, along_one, along_two in conn.execute(f"""
             SELECT m.id::text, u.id::text, ST_X(ST_Transform(x.pt, 4326)), ST_Y(ST_Transform(x.pt, 4326)),
                    ST_LineLocatePoint(m.geom, x.pt), ST_LineLocatePoint(u.geom, x.pt)
             FROM {_USED} m
-            JOIN {_USED} u ON u.id <> m.id AND ST_Intersects(m.geom, u.geom)
+            JOIN {_USED} u ON u.id <> m.id AND m.geom && u.geom AND ST_Intersects(m.geom, u.geom)
                  AND (u.id > m.id OR NOT u.id = ANY(%(edges)s::uuid[]))
             JOIN core.node ma ON ma.id = m.a_node JOIN core.node mb ON mb.id = m.b_node
             JOIN core.node ua ON ua.id = u.a_node JOIN core.node ub ON ub.id = u.b_node

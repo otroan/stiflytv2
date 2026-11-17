@@ -35,15 +35,20 @@ V1 = "/api/v1"
 Text = Annotated[str, Query(min_length=1, max_length=80)]
 
 
+# Compiling a statement before running it pays off for long reports over millions of rows. Here it
+# cost more than it saved: most of a second on a statement that then ran for two.
+QUICK = "-c jit=off"
+
+
 def create_app() -> FastAPI:
     pool = ConnectionPool(
         settings.api_dsn, min_size=1, max_size=4, open=False,
-        kwargs={"options": "-c statement_timeout=15000 -c default_transaction_read_only=on"},
+        kwargs={"options": f"-c statement_timeout=15000 -c default_transaction_read_only=on {QUICK}"},
     )
 
     # Changes to owned data go through their own small pool, which may write.
     writes = ConnectionPool(settings.api_dsn, min_size=0, max_size=2, open=False,
-                            kwargs={"options": "-c statement_timeout=15000"})
+                            kwargs={"options": f"-c statement_timeout=15000 {QUICK}"})
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

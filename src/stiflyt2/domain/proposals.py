@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
-from stiflyt2.domain import places, routes, worklist
+from stiflyt2.domain import kept, places, routes, worklist
 from stiflyt2.domain.places import AUTOMATIC
 
 TWIG_M = 100        # an extra end no longer than this is proposed taken out
@@ -72,6 +72,8 @@ def _repair(conn, route_id: str, author: str) -> dict | None:
     Returns what was done, or None when the route is a line already or cannot
     be made one this way. The caller decides whether the change is kept.
     """
+    if routes._graph(conn, route_id)["shape"] in ("line", "loop", "empty"):
+        return None             # nothing to mend, and no need to look the rest of it up
     route = routes.detail(conn, route_id)
     if route["shape"] == "branched":
         extra = route["twigs"][:len(route["twigs"]) - 2]
@@ -133,6 +135,26 @@ def _try(conn, make) -> dict | None:
             return make()
     except (places.Invalid, places.Conflict, places.NotFound):
         return None
+
+
+def _snap(conn, edge_id: str) -> dict | None:
+    """What laying a stretch on the mapped line would give, when that is worth proposing unseen."""
+    try:
+        traced = routes._trace(conn, edge_id)
+    except (places.Invalid, places.NotFound):
+        return None
+    moved, lon, lat = conn.execute("""
+        SELECT ST_HausdorffDistance(r.geom, g.new),
+               ST_X(ST_Transform(ST_LineInterpolatePoint(g.new, 0.5), 4326)),
+               ST_Y(ST_Transform(ST_LineInterpolatePoint(g.new, 0.5), 4326))
+        FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id,
+             LATERAL (SELECT ST_SetSRID(ST_GeomFromText(%s), 25833) AS new) g
+        WHERE e.id = %s""", (traced["wkt"], edge_id)).fetchone()
+    longer = traced["length_m"] / max(traced["was_m"], 1)
+    if moved < SNAP_WORTH_M or moved > SNAP_MOVE_M or not 0.75 <= longer <= 1.33:
+        return None             # there already, or too different to propose unseen
+    return {"lon": lon, "lat": lat, "was_m": traced["was_m"], "moves_m": round(moved),
+            "length_m": traced["length_m"], "geometry": traced["geometry"]}
 
 
 def proposals(conn, area: str) -> list[dict]:
@@ -311,40 +333,34 @@ def proposals(conn, area: str) -> list[dict]:
                             f"{spot['name']} meet out of the place: {named} only "
                             f"{'passes' if len(codes) == 1 else 'pass'} it"})
 
-    # Stretches Turrutebasen says follow a road or track: lay them on the mapped line.
+    # Stretches Turrutebasen says follow a road or track: lay them on the mapped line. What comes of
+    # trying is kept for the stretch as it is now: finding the way over the mapped lines is slow.
+    tried = kept.answers(conn, "snap")
     for stretch in _rows(conn, """
             SELECT DISTINCT e.id::text AS edge, t.attrs->>'rutefolger' AS follows,
+                   r.id::text || ST_AsText(a.geom) || ST_AsText(b.geom) AS as_now,
                    (SELECT string_agg(rt.code, ', ' ORDER BY length(rt.code), rt.code)
                     FROM core.route_leg x JOIN core.route rt ON rt.id = x.route_id AND rt.status = 'active'
                     WHERE x.edge_id = e.id) AS codes
             FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id AND e.status = 'active'
             JOIN core.edge_revision r ON r.id = e.current_revision_id
+            JOIN core.node a ON a.id = r.a_node JOIN core.node b ON b.id = r.b_node
             JOIN core.source_reference sr ON sr.subject_type = 'edge' AND sr.subject_id = e.id
                  AND sr.source_key = 'turrutebasen' AND sr.ref_type = 'adopted_from'
             JOIN source_index.trail_segment t ON t.id = sr.external_id
             WHERE l.route_id = ANY(%(ids)s::uuid[]) AND r.a_node <> r.b_node
               AND r.kind NOT IN ('water', 'glacier') AND t.attrs->>'rutefolger' = ANY(%(way)s)""",
             {"ids": mine, "way": list(ALONG_A_WAY)}):
-        try:
-            traced = routes._trace(conn, stretch["edge"])
-        except (places.Invalid, places.NotFound):
-            continue
-        moved, lon, lat = conn.execute("""
-            SELECT ST_HausdorffDistance(r.geom, g.new),
-                   ST_X(ST_Transform(ST_LineInterpolatePoint(g.new, 0.5), 4326)),
-                   ST_Y(ST_Transform(ST_LineInterpolatePoint(g.new, 0.5), 4326))
-            FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id,
-                 LATERAL (SELECT ST_SetSRID(ST_GeomFromText(%s), 25833) AS new) g
-            WHERE e.id = %s""", (traced["wkt"], stretch["edge"])).fetchone()
-        longer = traced["length_m"] / max(traced["was_m"], 1)
-        if moved < SNAP_WORTH_M or moved > SNAP_MOVE_M or not 0.75 <= longer <= 1.33:
-            continue        # there already, or too different to propose unseen
-        out.append({"kind": "snap", "label": stretch["codes"], "lon": lon, "lat": lat,
-                    "metres": traced["was_m"], "moves_m": round(moved),
-                    "text": f"Lay {_metres(traced['was_m'])} of {stretch['codes']} on the mapped path or road: "
-                            f"it moves up to {round(moved)} m and becomes {_metres(traced['length_m'])}",
-                    "geometry": traced["geometry"],
-                    "action": {"kind": "snap", "edge": stretch["edge"]}})
+        if stretch["as_now"] not in tried:
+            tried[stretch["as_now"]] = _snap(conn, stretch["edge"])
+        snap = tried[stretch["as_now"]]
+        if snap:
+            out.append({"kind": "snap", "label": stretch["codes"], "lon": snap["lon"], "lat": snap["lat"],
+                        "metres": snap["was_m"], "moves_m": snap["moves_m"],
+                        "text": f"Lay {_metres(snap['was_m'])} of {stretch['codes']} on the mapped path or road: "
+                                f"it moves up to {snap['moves_m']} m and becomes {_metres(snap['length_m'])}",
+                        "geometry": snap["geometry"],
+                        "action": {"kind": "snap", "edge": stretch["edge"]}})
 
     order = {"loop": 0, "double": 1, "twig": 2, "gap": 3, "reach": 4, "arrival": 5, "passed": 6, "place": 7,
              "snap": 8}

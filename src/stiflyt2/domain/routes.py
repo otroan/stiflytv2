@@ -2407,6 +2407,16 @@ def named_after(shape: str, places: list[str | None]) -> str | None:
     return " – ".join(places) if shape == "line" and all(places) and places[0] != places[1] else None
 
 
+def name_from_ends(conn, route_id: str) -> str | None:
+    """The name a route gets from the places at its ends, worked out without the rest of what is said of it."""
+    graph = _graph(conn, route_id)
+    place = dict(conn.execute("""
+        SELECT n.id::text, p.name FROM core.node n
+        JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
+        WHERE n.id = ANY(%s::uuid[])""", (graph["ends"],)).fetchall())
+    return named_after(graph["shape"], [place.get(n) for n in graph["ends"]])
+
+
 def grading_of(route: dict) -> tuple[str | None, str | None]:
     """The grading of a route and where it is from: set (by a person, or taken from Turrutebasen), or worked
     out from its length and climb where none is set. "Not graded" (I) is nobody having set one."""

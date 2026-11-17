@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
-from stiflyt2.domain import corrections, network, routes
+from stiflyt2.domain import corrections, kept, network, routes
 
 LOW_SHARE = 0.5   # a route with less than this within 20 m of a mapped path is listed
 
@@ -25,6 +25,41 @@ def routes_of(conn, area: str, discontinued: bool | None = False) -> list[str]:
             SELECT 1 FROM core.source_reference sr
             WHERE sr.subject_type = 'route' AND sr.subject_id = r.id
               AND lower(sr.external_id) ~ ('^' || %(a)s || '[0-9]')))""", {"a": area.lower(), "d": discontinued})]
+
+
+def near_mapped(conn, route_ids: list[str], mapped: str) -> dict[str, float | None]:
+    """For each route, how much of its length on the ground lies within 20 m of a mapped path or road.
+
+    None where nothing is mapped within 2 km of it: there is nothing to compare with.
+    Worked out stretch by stretch, each once however many routes walk it and
+    however often it is asked: laying buffers round the mapped lines is what
+    takes the time, and after a change only the stretches changed are new.
+    """
+    near = kept.answers(conn, "near mapped")       # by revision: its length, whether anything is mapped by it, how much lies by it
+    legs = conn.execute("""
+        SELECT DISTINCT l.route_id::text, r.id::text
+        FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+        JOIN core.edge_revision r ON r.id = e.current_revision_id
+        WHERE l.route_id = ANY(%s::uuid[]) AND r.kind NOT IN ('water', 'glacier')""", (route_ids,)).fetchall()
+    new = list({revision for _, revision in legs} - near.keys())
+    if new:
+        for revision, metres, something, by_it in conn.execute(f"""
+                SELECT r.id::text, ST_Length(r.geom),
+                       EXISTS (SELECT 1 FROM {mapped} p WHERE ST_DWithin(p.geom, r.geom, 2000)),
+                       coalesce(ST_Length(ST_Intersection(r.geom, (
+                           SELECT ST_Union(ST_Buffer(p.geom, 20)) FROM {mapped} p
+                           WHERE ST_DWithin(p.geom, r.geom, 20)))), 0)
+                FROM core.edge_revision r WHERE r.id = ANY(%s::uuid[])""", (new,)):
+            near[revision] = (metres, something, by_it)
+    share: dict[str, float | None] = {}
+    by_route: dict[str, list[tuple[float, bool, float]]] = {}
+    for route, revision in legs:
+        by_route.setdefault(route, []).append(near[revision])
+    for route, stretches in by_route.items():
+        metres = sum(m for m, _, _ in stretches)
+        share[route] = (sum(n for _, _, n in stretches) / metres
+                        if metres and any(s for _, s, _ in stretches) else None)
+    return share
 
 
 def worklist(conn, area: str) -> dict:
@@ -97,18 +132,7 @@ def worklist(conn, area: str) -> dict:
 
     mine = routes_of(conn, area)
     mapped = routes.mapped_lines(conn)      # paths, and roads where they are loaded
-    share = dict(conn.execute(f"""
-        SELECT g.route_id::text, CASE WHEN NOT EXISTS (
-                   SELECT 1 FROM {mapped} p WHERE ST_DWithin(p.geom, g.geom, 2000)) THEN NULL
-               ELSE coalesce(ST_Length(ST_Intersection(g.geom, (
-                        SELECT ST_Union(ST_Buffer(p.geom, 20)) FROM {mapped} p
-                        WHERE ST_DWithin(p.geom, g.geom, 20)))), 0) / nullif(ST_Length(g.geom), 0)
-               END
-        FROM (SELECT l.route_id, ST_Collect(r.geom) AS geom
-              FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
-              JOIN core.edge_revision r ON r.id = e.current_revision_id
-              WHERE l.route_id = ANY(%s::uuid[]) AND r.kind NOT IN ('water', 'glacier')
-              GROUP BY 1) g""", (mine,)).fetchall())
+    share = near_mapped(conn, mine, mapped)
     reviewed, yours = 0, []
     for route_id in mine:
         r = routes.detail(conn, route_id)
