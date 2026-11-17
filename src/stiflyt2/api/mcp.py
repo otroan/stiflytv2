@@ -48,6 +48,7 @@ from stiflyt2.domain import (
 )
 from stiflyt2.index import query
 from stiflyt2.ops import signs as sign_ops
+from stiflyt2.ops import undo as sign_undo
 
 log = logging.getLogger("stiflyt2.mcp")
 
@@ -94,7 +95,7 @@ over that and kept: `sign_site` (no signs here, name, back text), `sign_post` (w
 turns the arrows; a further post), `sign` (another arrow, text, distance, colour; taken out), `new_sign_site` (a \
 site at a spot on a route), `add_sign_destination` (a destination the routes do not give a post). Most signs hang \
 already: a sign that is to be replaced is marked with `sign` and `to_order`. None of them changes a route: a sign that is wrong because a route is wrong is put \
-right in the route. `order_signs` takes out an order and keeps what each sign said: only when the person says so.
+right in the route. `order_signs` takes out an order and keeps what each sign said: only when the person says so. What is decided about a sign follows the sign when the routes are mended; what no longer finds its sign is in `signs_adrift`, for the person to settle (`settle_adrift`). `undo_signs` takes back your latest decision about signs.
 """
 
 
@@ -816,6 +817,50 @@ def order_signs(c: Call, a: OrderSigns) -> dict:
         return {"would_order": len(rows), "rows": rows}
     done = sign_ops.take_out_order(c.conn, a.area, c.author, a.signs, a.note)
     return {**done, "list": f"/api/v1/signs/orders/{done['id']}.xlsx"}
+
+
+class Adrift(Args):
+    pass
+
+
+@tool("Decisions about signs that have lost their sign")
+def signs_adrift(c: Call, a: Adrift) -> dict:
+    """What has been decided about a sign, a post or a sign site that is no longer there to decide about, in
+    any area: the routes have been changed since. Each says what it said, where it was, why it is adrift, and
+    for a sign which signs at the same junction it could be moved to (`moves`). Nothing is done about them by
+    itself. Settle one with `settle_adrift`."""
+    found = sign_ops.adrift(c.conn)
+    return {"adrift": found, "count": len(found)}
+
+
+class Settle(Args):
+    adrift: str = Field(max_length=40, description="The `id` of what is adrift, from `signs_adrift`")
+    move_to: str | None = Field(None, max_length=160, description=(
+        "The key of the sign it is about now, one of its `moves`. Left out: it is forgotten"))
+    dry_run: DryRun = True
+
+
+@tool("Settle a decision that has lost its sign", changes=True, operations=True)
+def settle_adrift(c: Call, a: Settle) -> dict:
+    """Say which sign a decision that is adrift is about now (`move_to`), or forget it. Only when the person has
+    said which: which sign a decision belongs to is theirs to say. Gives what is still adrift after."""
+    done = (sign_ops.move(c.conn, a.adrift, a.move_to, c.author) if a.move_to
+            else sign_ops.forget(c.conn, a.adrift, c.author))
+    return {"moved_to" if a.move_to else "forgotten": done, "still_adrift": len(sign_ops.adrift(c.conn))}
+
+
+class UndoSigns(Args):
+    dry_run: DryRun = True
+
+
+@tool("Take back your own latest decision about signs", changes=True, operations=True)
+def undo_signs(c: Call, a: UndoSigns) -> dict:
+    """Take back the latest decision about signs made through an assistant in this person's name: a sign
+    changed, a post moved, signs put on the order. Not what the person did in the page, and not an order that
+    has been taken out, which stands. Dry, it says what it would take back."""
+    if a.dry_run:
+        return {"would_take_back": sign_undo.last(c.conn, c.author)}
+    return sign_undo.undo(c.conn, c.author)
 
 
 class Undo(Args):

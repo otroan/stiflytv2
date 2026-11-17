@@ -352,7 +352,7 @@ Left, of what v1 has and of what was said:
 - The states of a sign site (proposed, accepted, installed) were taken away
   at the route responsible's word the same day: a site only says "no signs here", and gets
   its code with its first order.
-- Not chosen yet, from the same review: undo for decisions about signs, less text and fewer buttons per
+- Not chosen yet, from the same review: less text and fewer buttons per
   post, the map showing which sites have something on the order, a guide
   for the page, the route panel in folds, the standing red warnings, what
   actually hangs today (photos), a page for the phone.
@@ -421,10 +421,9 @@ Left, of what v1 has and of what was said:
   each request (0.4 s for bre, 0.8 s for jot); the list is not brought up
   to date while the page is open when somebody changes a route.
 - 9 route ends at no place give signs with no name; an order refuses them.
-- Nothing tells a person that a decision no longer finds its sign, when a
-  junction or stretch it was made for is gone for good.
-- Undo for decisions about signs: `ops.event` keeps what was done, and
-  nothing takes it back.
+- A decision follows its sign when the routes are mended, what no longer
+  finds its sign is shown as adrift, and decisions about signs can be
+  undone (2026-11-17, ADR-004). What is left of it is under "Left" there.
 
 ### Bridges from UT.no, and how a sign looks: looked into on 2026-11-17
 

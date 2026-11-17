@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query, Response
+from fastapi import Depends, FastAPI, Path, Query, Response
 from fastapi.responses import HTMLResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from stiflyt2.api import auth
-from stiflyt2.ops import sheet, signs
+from stiflyt2.ops import sheet, signs, undo
 
 V1 = "/api/v1/signs"
 Operator = Annotated[str, Depends(auth.operator)]
@@ -88,6 +88,14 @@ class Order(BaseModel):
     area: str = Field(pattern="^[A-Za-z]{3}$")
     keys: list[Annotated[str, Field(max_length=160)]] | None = Field(None, max_length=5000)
     note: Text | None = None
+
+
+class MoveTo(BaseModel):
+    key: Annotated[str, Field(max_length=160)]
+
+
+class Undo(BaseModel):
+    txid: int | None = None
 
 
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
@@ -173,6 +181,37 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         """Say that signs that were ordered are up, or not after all."""
         with write.connection() as conn:
             return {"signs": signs.mark_up(conn, body.keys, author, body.up)}
+
+    @app.get(f"{V1}/adrift")
+    def left_adrift() -> list[dict]:
+        """What was decided about a sign, a post or a sign site that is no longer there to decide about: each
+        with what it said, where it was, why it is adrift, and for a sign which signs it could be moved to."""
+        with read.connection() as conn:
+            return signs.adrift(conn)
+
+    @app.post(f"{V1}/adrift/{{some_id}}/forget")
+    def forget(some_id: Annotated[str, Path(max_length=40)], author: Operator) -> dict:
+        """Forget what was decided about something that is gone. It can be taken back with undo."""
+        with write.connection() as conn:
+            return signs.forget(conn, some_id, author)
+
+    @app.post(f"{V1}/adrift/{{some_id}}/move")
+    def move(some_id: Annotated[str, Path(max_length=40)], body: MoveTo, author: Operator) -> dict:
+        """Say which sign a decision that is adrift is about now."""
+        with write.connection() as conn:
+            return signs.move(conn, some_id, body.key, author)
+
+    @app.get(f"{V1}/undo")
+    def would_undo(author: Operator) -> dict:
+        """What an undo would take back: your own latest decision about signs, made the way you ask."""
+        with read.connection() as conn:
+            return {"last": undo.last(conn, author)}
+
+    @app.post(f"{V1}/undo")
+    def take_back(author: Operator, body: Undo | None = None) -> dict:
+        """Take your latest decision about signs back. An order that has been taken out stands."""
+        with write.connection() as conn:
+            return undo.undo(conn, author, body.txid if body else None)
 
     @app.get(f"{V1}/orders")
     def earlier(area: Area) -> list[dict]:

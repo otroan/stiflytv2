@@ -58,13 +58,16 @@ from __future__ import annotations
 import heapq
 import math
 import uuid
+import weakref
 from collections import Counter
 
+import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from stiflyt2.domain import identity
 from stiflyt2.domain.places import Conflict, Invalid, NotFound
+from stiflyt2.ops import anchor, undo
 
 FACTOR = 1.05               # walked against the line, as v1 measured it
 DESTINATIONS = ("hut", "parking")
@@ -541,22 +544,159 @@ def _key_parts(key: str) -> tuple[str, str, str, str, str]:
         raise NotFound("no such sign") from None
 
 
-def _said(conn) -> dict:
-    """What people have decided, and what the latest order said of each sign."""
+def _said(conn, net: _Network | None = None) -> dict:
+    """What people have decided, and what the latest order said of each sign, by what each is about now.
+
+    A decision is kept under the ids of the junction, stretch and place as
+    they were when it was made. Here each is brought to what stands for those
+    now (`anchor`, ADR-004): a junction that was joined to another, the part of
+    a divided stretch that leaves the sign's junction, a route end that has
+    become a place, a code that was changed. What cannot be brought anywhere,
+    and what lands where a later decision stands already, is `adrift`.
+    `moved` are the rows whose ids are no longer the ones they are kept under.
+    """
+    site_rows = _rows(conn, "SELECT * FROM ops.sign_site ORDER BY updated_at DESC")
+    post_rows = _rows(conn, """
+        SELECT id, node_id, no, taken_out, name_sign, name_text, name_to_order, name_up_order, updated_at,
+               ST_X(geom) AS x, ST_Y(geom) AS y
+        FROM ops.sign_post ORDER BY updated_at DESC""")
+    sign_rows = _rows(conn, "SELECT * FROM ops.sign ORDER BY updated_at DESC")
+    orders = _rows(conn, "SELECT id, at, by, rows FROM ops.sign_order ORDER BY id")
+    spots = {i for (i,) in conn.execute("SELECT id::text FROM ops.sign_point WHERE NOT removed")}
+
+    def parts(key: str) -> tuple | None:        # of a key an order kept: a name sign's post, or a sign
+        if key.endswith("|name"):
+            node, _, no = key[:-len("|name")].partition(":")
+            return ("name", node, no)
+        try:
+            return ("sign", *_key_parts(key))
+        except NotFound:
+            return None
+
+    ordered_parts = [(order, row, parts(row["key"])) for order in orders for row in order["rows"]]
+    all_signs = [(str(r["node_id"]), str(r["first_edge"]), r["to_type"], str(r["to_id"]), r["route"]) for r in sign_rows]
+    all_signs += [p[1:] for _, _, p in ordered_parts if p and p[0] == "sign"]
+    nodes = ({str(r["at_id"]) for r in site_rows if r["at_type"] == "node"} | {str(r["node_id"]) for r in post_rows}
+             | {g[0] for g in all_signs} | {g[3] for g in all_signs if g[2] == "node"}
+             | {p[1] for _, _, p in ordered_parts if p and p[0] == "name"})
+    places = {str(r["at_id"]) for r in site_rows if r["at_type"] == "place"} | {g[3] for g in all_signs if g[2] == "place"}
+    now_node = anchor.stands_for(conn, "node", nodes - spots)
+    now_place = anchor.stands_for(conn, "place", places)
+    now_edge = anchor.stands_for(conn, "edge", {g[1] for g in all_signs} - {NO_STRETCH})
+    ends = anchor.ends_of(conn, {e for now in now_edge.values() if len(now) > 1 for e in now})
+    in_place = anchor.place_of(conn, {n for now in now_node.values() for n in now})
+    codes: dict[str, str | None] = {}
+    spot_edge: dict[str, str] = {}
+
+    def junction(some_id) -> str | None:
+        some_id = str(some_id)
+        return some_id if some_id in spots else anchor.one(now_node.get(some_id))
+
+    def about(kind: str, some_id) -> tuple[str, str] | None:
+        """What a site is at, or a sign points to, now. A junction that has become part of a place is the place."""
+        some_id = str(some_id)
+        if kind == "point":
+            return ("point", some_id) if some_id in spots else None
+        if kind == "place":
+            place = anchor.one(now_place.get(some_id))
+            return ("place", place) if place else None
+        node = junction(some_id)
+        if node is None:
+            return None
+        return ("place", in_place[node]) if node in in_place else ("node", node)
+
+    def stretch(edge, node: str) -> str | None:
+        """The stretch a sign points along, now. Of a stretch that was divided, the part that leaves the sign's junction."""
+        edge = str(edge)
+        if edge == NO_STRETCH:
+            return edge
+        now = now_edge.get(edge) or []
+        if len(now) <= 1:
+            return anchor.one(now)
+        if node in spots:
+            if not spot_edge:
+                spot_edge.update({spot["id"]: spot["edge"] for spot in (net.spots if net else _spots(conn))})
+            return spot_edge[node] if spot_edge.get(node) in now else None
+        leaves = [e for e in now if node in ends.get(e, ())]
+        return leaves[0] if len(leaves) == 1 else None
+
+    def sign_now(node, edge, to_type, to_id, apart) -> tuple | str:
+        """The five parts of a sign's key as they are now, or in words what of it is no longer there."""
+        here = junction(node)
+        if here is None:
+            return "the junction it stood at is gone"
+        to = about(to_type, to_id)
+        if to is None:
+            return "where it pointed to is no longer there"
+        along = stretch(edge, here)
+        if along is None:
+            return "the stretch it pointed along is gone, or no longer leaves its junction"
+        if apart and apart not in codes:
+            codes[apart] = anchor.code_now(conn, apart)
+        if apart and not codes[apart]:
+            return f"the route it was told apart by, {apart}, is no longer there"
+        return (here, along, to[0], to[1], codes[apart] if apart else "")
+
+    adrift, moved = [], []
+    signs: dict[str, dict] = {}
+    for row, stored in zip(sign_rows, all_signs, strict=False):       # the latest said first: it stands where two land on one sign
+        now = sign_now(*stored)
+        if isinstance(now, str):
+            adrift.append({"kind": "sign", "row": row, "why": now})
+        elif sign_key(*now) in signs:
+            adrift.append({"kind": "sign", "row": row, "why": "something else has been decided since about the sign this has become"})
+        else:
+            signs[sign_key(*now)] = {**row, "node_id": now[0], "first_edge": now[1], "to_type": now[2], "to_id": now[3], "route": now[4]}
+            if now != stored:
+                moved.append(("sign", row["id"], now))
+    sites: dict[tuple, dict] = {}
+    for row in site_rows:
+        now = about(row["at_type"], row["at_id"])
+        if now is None:
+            adrift.append({"kind": "site", "row": row, "why": "the junction or place it was at is gone"})
+        elif now in sites:
+            adrift.append({"kind": "site", "row": row, "why": "the place its junction has become part of has a sign site of its own"})
+        else:
+            sites[now] = row
+            if now != (row["at_type"], str(row["at_id"])):
+                moved.append(("site", row["id"], now))
+    posts: dict[tuple, dict] = {}
+    for row in post_rows:
+        node = junction(row["node_id"])
+        if node is None:
+            adrift.append({"kind": "post", "row": row, "why": "the junction it stood at is gone"})
+        elif (node, row["no"]) in posts:
+            adrift.append({"kind": "post", "row": row, "why": "the junction it stood at was joined to one that has a post of its own"})
+        else:
+            posts[(node, row["no"])] = row
+            if node != str(row["node_id"]):
+                moved.append(("post", row["id"], (node, row["no"])))
+    # What the latest order said of each sign, under the key the sign has now.
     ordered: dict[str, dict] = {}
-    for order in _rows(conn, "SELECT id, at, by, rows FROM ops.sign_order ORDER BY id"):
-        for row in order["rows"]:
-            ordered[row["key"]] = {**row, "order": order["id"], "at": order["at"], "by": order["by"]}
-    return {
-        "sites": {(s["at_type"], str(s["at_id"])): s for s in _rows(conn, "SELECT * FROM ops.sign_site")},
-        "posts": {(str(p["node_id"]), p["no"]): p for p in _rows(conn, """
-            SELECT node_id, no, taken_out, name_sign, name_text, name_to_order, name_up_order,
-                   ST_X(geom) AS x, ST_Y(geom) AS y
-            FROM ops.sign_post""")},
-        "signs": {sign_key(str(s["node_id"]), str(s["first_edge"]), s["to_type"], str(s["to_id"]), s["route"]): s
-                  for s in _rows(conn, "SELECT * FROM ops.sign")},
-        "ordered": ordered,
-    }
+    for order, row, was in ordered_parts:
+        if was and was[0] == "name":
+            node = junction(was[1])
+            key = f"{node}:{was[2]}|name" if node else None
+        else:
+            now = sign_now(*was[1:]) if was else None
+            key = sign_key(*now) if isinstance(now, tuple) else None
+        if key:
+            ordered[key] = {**row, "key": key, "order": order["id"], "at": order["at"], "by": order["by"]}
+    return {"sites": sites, "posts": posts, "signs": signs, "ordered": ordered, "adrift": adrift, "moved": moved}
+
+
+def _the_one(kept: dict, key: str, same_way: int) -> dict | None:
+    """What is kept for a sign: under its key, or, where it is the only sign from its junction along its
+    stretch to where it points, under that with another route to tell it apart by. Two routes that reach a
+    place by different ways have a sign each, told apart by a route; when one of the routes goes, or a
+    second comes, the sign that was there is still the same sign."""
+    if key in kept:
+        return kept[key]
+    if same_way != 1:
+        return None
+    way = key.split("|")[:3]
+    others = [v for k, v in kept.items() if k.split("|")[:3] == way]
+    return others[0] if len(others) == 1 else None
 
 
 def areas(conn) -> list[dict]:
@@ -574,8 +714,17 @@ def listing(conn, area: str | None = None) -> dict:
     also says what it would say untouched, and whether it has changed since
     it was last ordered.
     """
+    return _worked_out(conn, area)[0]
+
+
+def _worked_out(conn, area: str | None) -> tuple[dict, dict, set]:
+    """The listing, what is kept as `_said` has it, and the ids of the kept rows that found what they are about."""
     net = _Network(conn)
-    sites, said = _sites(conn, net, area), _said(conn)
+    sites, said = _sites(conn, net, area), _said(conn, net)
+    found: set = set()
+    posts_at: dict[str, dict[int, dict]] = {}       # what is kept about posts, by junction
+    for (node, no), row in said["posts"].items():
+        posts_at.setdefault(node, {})[no] = row
     _with_added(conn, net, sites, [s for s in said["signs"].values() if s["added"]])
     leaves = _leaving(conn, {(s["node"], s["edge"]) for site in sites for p in site["posts"] for s in p["signs"]
                              if "leaves" not in s and s["edge"]}
@@ -589,16 +738,26 @@ def listing(conn, area: str | None = None) -> dict:
     out = []
     for site in sites:
         kept = said["sites"].get((site["at_type"], site["at_id"])) or {}
+        found.add(kept.get("id"))
         name = kept.get("name") or site["place_name"]
         posts = []
         for post in site["posts"]:
             ways = post.get("ways") or [leaves[(post["node"], e)] for e in net.at[post["node"]]
                                         if (post["node"], e) in leaves]
+            # One post for the junctions of a place that lie close together: what is kept under any of them is
+            # this post's, the junction it stands at first. Which of them that is can change as routes come and go.
+            rows: dict[int, dict] = {}
+            for node in (post["node"], *(n for n in post["nodes"] if n != post["node"])):
+                for no, row in posts_at.get(node, {}).items():
+                    rows.setdefault(no, row)
+            found.update(row["id"] for row in rows.values())
+            same_way = Counter(sign_key(g["node"], g.get("key_edge", g["edge"]), g["to_type"], g["to_id"])
+                               for g in post["signs"])
             # Further posts at the same junction are a person's; each sign hangs on the post it is said to, or the first.
-            numbers = sorted({1} | {no for (node, no) in said["posts"] if node == post["node"]})
+            numbers = sorted({1} | set(rows))
             by_no = {}
             for no in numbers:
-                row = said["posts"].get((post["node"], no)) or {}
+                row = rows.get(no) or {}
                 at = (row["x"], row["y"]) if row.get("x") is not None else stands(post["at"], ways)
                 if no > 1 and row.get("x") is None:
                     at = (at[0] + 2.0 * (no - 1), at[1])
@@ -611,7 +770,9 @@ def listing(conn, area: str | None = None) -> dict:
                              if row.get("name_sign") else None}
             for sign in post["signs"]:
                 key = sign_key(sign["node"], sign.get("key_edge", sign["edge"]), sign["to_type"], sign["to_id"], sign["apart"])
-                own = said["signs"].get(key) or {}
+                alone = same_way[sign_key(sign["node"], sign.get("key_edge", sign["edge"]), sign["to_type"], sign["to_id"])]
+                own = _the_one(said["signs"], key, alone) or {}
+                found.add(own.get("id"))
                 on = by_no.get(own.get("post_no") or 1) or by_no[1]
                 if sign["metres"] is None:      # added by hand, and no way leads there over the routes
                     on["signs"].append({
@@ -651,7 +812,7 @@ def listing(conn, area: str | None = None) -> dict:
                     "added": bool(sign.get("added")), "no_way": False, "onward": sign.get("onward"),
                     "to_order": bool(own.get("to_order")), "why": own.get("why"), "_up": own.get("up_order"),
                     "unnamed": not (own.get("text") or sign["name"]), "taken_out": bool(own.get("taken_out")),
-                    "ordered": None})
+                    "ordered": None, "_alone": alone})
             posts.extend(by_no.values())
         for post in posts:          # two signs on a post that say the same are told apart by their routes
             texts = [s["text"] for s in post["signs"] if not s["taken_out"]]
@@ -660,7 +821,7 @@ def listing(conn, area: str | None = None) -> dict:
                     sign["text"] = f"{sign['text']} ({', '.join(sign['routes'])})"
             # What it said when it was last ordered, whether it says the same now, and whether it is up.
             for sign in post["signs"]:
-                before, up = said["ordered"].get(sign["key"]), sign.pop("_up")
+                before, up = _the_one(said["ordered"], sign["key"], sign.pop("_alone", 0)), sign.pop("_up")
                 if before:
                     sign["ordered"] = {"order": before["order"], "at": before["at"], "by": before["by"],
                                        "changed": any(before.get(k) != sign[k] for k in ("text", "km", "direction", "colour")),
@@ -694,7 +855,7 @@ def listing(conn, area: str | None = None) -> dict:
             "posts": posts})
     out.sort(key=lambda s: (s["name"] is None, s["name"] or "", s["key"]))
     signs = [s for site in out for p in site["posts"] if not p["taken_out"] for s in p["signs"] if not s["taken_out"]]
-    return {"area": area, "factor": FACTOR, "near_km": NEAR_KM, "onward_km": ONWARD_KM, "sites": out,
+    return ({"area": area, "factor": FACTOR, "near_km": NEAR_KM, "onward_km": ONWARD_KM, "sites": out,
             "totals": {"sites": len(out), "no_signs": sum(s["no_signs"] for s in out),
                        "posts": sum(not p["taken_out"] for s in out for p in s["posts"]), "signs": len(signs),
                        "onward": sum(bool(s["onward"]) for s in signs),
@@ -706,7 +867,8 @@ def listing(conn, area: str | None = None) -> dict:
                            for s in out for p in s["posts"]),
                        "name_signs": sum(bool(p["name_sign"]) and not p["taken_out"] for s in out for p in s["posts"]),
                        "unnamed": sum(s["unnamed"] for s in signs),
-                       "changed_since_ordered": sum(bool(s["ordered"] and s["ordered"]["changed"]) for s in signs)}}
+                       "changed_since_ordered": sum(bool(s["ordered"] and s["ordered"]["changed"]) for s in signs)}},
+            said, found - {None})
 
 
 # --- what a person decides ---------------------------------------------------------------------------------
@@ -745,6 +907,57 @@ def _current(conn, subject: str, subject_id: str) -> str:
     return now["now"][0]
 
 
+_brought: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()      # per connection: the transaction it was last done in
+
+
+def _bring_along(conn, author) -> None:
+    """Before anything new is decided: what is kept under ids that have been replaced since is put under
+    what stands for them now, so that the new is said about the same row and not beside it. Once per
+    transaction. What cannot be followed is left as it is: it is adrift, for a person to settle."""
+    now = conn.execute("SELECT txid_current()").fetchone()[0]
+    if _brought.get(conn) == now:
+        return
+    _brought[conn] = now
+    for kind, row_id, to in _said(conn)["moved"]:
+        try:
+            with conn.transaction():
+                if kind == "sign":
+                    conn.execute("""UPDATE ops.sign SET node_id = %s, first_edge = %s, to_type = %s, to_id = %s, route = %s
+                                    WHERE id = %s""", (*to, row_id))
+                elif kind == "site":
+                    conn.execute("UPDATE ops.sign_site SET at_type = %s, at_id = %s WHERE id = %s", (*to, row_id))
+                else:
+                    conn.execute("UPDATE ops.sign_post SET node_id = %s, no = %s WHERE id = %s", (*to, row_id))
+        except psycopg.errors.UniqueViolation:
+            continue            # two that change places: the next time round
+        _event(conn, author, kind, str(row_id), f"{kind}.followed", {"to": [str(part) for part in to]})
+
+
+def _same_sign(conn, node: str, edge: str, to_type: str, to_id: str, apart: str) -> None:
+    """Where a sign is the only one from its junction along its stretch to where it points, what was kept
+    for it while a route told it apart from another is kept for it still (see `_the_one`)."""
+    if apart or edge == NO_STRETCH:
+        return
+    kept = conn.execute("""SELECT id, route FROM ops.sign WHERE node_id = %s AND first_edge = %s AND to_type = %s
+                           AND to_id = %s""", (node, edge, to_type, to_id)).fetchall()
+    if len(kept) == 1 and kept[0][1] != "":
+        conn.execute("UPDATE ops.sign SET route = '' WHERE id = %s", (kept[0][0],))
+
+
+def _same_post(conn, node: str, no: int) -> None:
+    """One post for the junctions of a place that lie close together: what is kept under another of them is
+    put under the one the post stands at now."""
+    conn.execute("""
+        UPDATE ops.sign_post p SET node_id = %(n)s WHERE p.id = (
+            SELECT o.id FROM ops.sign_post o JOIN core.node was ON was.id = o.node_id
+            JOIN core.node here ON here.id = %(n)s
+            WHERE o.no = %(no)s AND was.id <> here.id AND was.place_id = here.place_id
+              AND ST_DWithin(was.geom, here.geom, %(same)s)
+            ORDER BY o.updated_at DESC LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM ops.sign_post x WHERE x.node_id = %(n)s AND x.no = %(no)s)""",
+        {"n": node, "no": no, "same": SAME_M})
+
+
 def _site_row(conn, at_type: str, at_id: str, area: str | None, author) -> dict:
     """What is kept about a site, made when there is nothing yet."""
     was = _rows(conn, "SELECT * FROM ops.sign_site WHERE at_type = %(t)s AND at_id = %(i)s FOR UPDATE",
@@ -766,6 +979,7 @@ def set_site(conn, key: str, author, *, area: str | None = None, no_signs: bool 
 
     A site has no other state: it is its signs that hang, are ordered and are put up.
     """
+    _bring_along(conn, author)
     at_type, at_id = _site_parts(key)
     at_id = _current(conn, at_type, at_id)
     was = _site_row(conn, at_type, at_id, area, author)
@@ -848,7 +1062,9 @@ def set_post(conn, key: str, author, *, lon: float | None = None, lat: float | N
              name_sign: bool | None = None, name_text: str | None = None, name_to_order: bool | None = None) -> None:
     """Say where a post stands (which turns its arrows), put it back where it is assumed to stand, take it out,
     or say that it carries a sign with the place's name on top (and what that says, if not the site's name)."""
+    _bring_along(conn, author)
     node, no = _post_parts(conn, key)
+    _same_post(conn, node, no)
     if no > 1 and not further and not conn.execute(
             "SELECT 1 FROM ops.sign_post WHERE node_id = %s AND no = %s", (node, no)).fetchone():
         raise NotFound("no such post")
@@ -911,22 +1127,26 @@ def mark(conn, keys: list[str], author, to_order: bool = True, why: str | None =
 def mark_up(conn, keys: list[str], author, up: bool = True) -> int:
     """Say that signs that were ordered are up (or not after all). A sign that was never ordered is left as it
     is: it hangs already. Answers with how many were said."""
+    _bring_along(conn, author)
     ordered = _said(conn)["ordered"]
     said = 0
     for key in keys:
-        if key not in ordered:
+        before = ordered.get(key) or (None if key.endswith("|name") or key.count("|") > 2 else _the_one(ordered, key, 1))
+        if not before:
             continue
-        order = ordered[key]["order"] if up else None
+        order = before["order"] if up else None
         if key.endswith("|name"):
             node, no = _post_parts(conn, key[:-len("|name")])
+            _same_post(conn, node, no)
             conn.execute("UPDATE ops.sign_post SET name_up_order = %s, updated_at = now(), updated_by = %s "
                          "WHERE node_id = %s AND no = %s", (order, str(author), node, no))
         else:
             node, edge, to_type, to_id, apart = _key_parts(key)
+            _same_sign(conn, node, edge, to_type, to_id, apart)
             conn.execute("""UPDATE ops.sign SET up_order = %s, updated_at = now(), updated_by = %s
                             WHERE node_id = %s AND first_edge = %s AND to_type = %s AND to_id = %s AND route = %s""",
                          (order, str(author), node, edge, to_type, to_id, apart))
-        _event(conn, author, "sign", key, "sign.up" if up else "sign.not_up", {"order": ordered[key]["order"]})
+        _event(conn, author, "sign", key, "sign.up" if up else "sign.not_up", {"order": before["order"]})
         said += 1
     return said
 
@@ -935,9 +1155,11 @@ def set_sign(conn, key: str, author, **said) -> None:
     """Say something else of a sign than what is worked out: arrow, colour, text, distance, which post it
     hangs on, or that it is taken out; or that it is to be made (`to_order`, with `why`). An empty value goes
     back to what is worked out."""
+    _bring_along(conn, author)
     node, edge, to_type, to_id, apart = _key_parts(key)
     node, to_id = _current(conn, "node", node), _current(conn, to_type, to_id)
     edge = edge if edge == NO_STRETCH else _current(conn, "edge", edge)
+    _same_sign(conn, node, edge, to_type, to_id, apart)
     unknown = set(said) - {"direction", "colour", "text", "distance_m", "post_no", "taken_out", "to_order", "why"}
     if unknown:
         raise Invalid(f"a sign has no {', '.join(sorted(unknown))}")
@@ -982,6 +1204,7 @@ def add_destination(conn, author, post: str, *, place: str | None = None, lon: f
     what the spot is called. Answers with the sign's key, or with what is
     missing (`needs`), having done nothing.
     """
+    _bring_along(conn, author)
     node, no = _post_parts(conn, post)
     if place is None:
         if lon is None or lat is None:
@@ -1074,6 +1297,7 @@ def order_rows(conn, area: str, keys: list[str] | None = None) -> list[dict]:
 def take_out_order(conn, area: str, author, keys: list[str] | None = None, note: str | None = None) -> dict:
     """Take out an order for the signs that are marked to be made (or for those asked for). What each sign says
     now is kept with it, and stays whatever happens to the routes. The signs are then no longer marked."""
+    _bring_along(conn, author)
     rows = order_rows(conn, area, keys)
     if not rows:
         raise Invalid("nothing to order: no sign is marked to be made. Choose the signs that are to be replaced "
@@ -1097,13 +1321,146 @@ def take_out_order(conn, area: str, author, keys: list[str] | None = None, note:
     for row in rows:            # ordered: off the list of what is to be ordered
         if row["key"].endswith("|name"):
             node, no = row["key"][:-len("|name")].split(":")
+            _same_post(conn, node, int(no))
             conn.execute("UPDATE ops.sign_post SET name_to_order = false WHERE node_id = %s AND no = %s", (node, int(no)))
         else:
             node, edge, to_type, to_id, apart = _key_parts(row["key"])
+            _same_sign(conn, node, edge, to_type, to_id, apart)
             conn.execute("""UPDATE ops.sign SET to_order = false, why = NULL WHERE node_id = %s AND first_edge = %s
                             AND to_type = %s AND to_id = %s AND route = %s""", (node, edge, to_type, to_id, apart))
     _event(conn, author, "order", str(order_id), "order.taken_out", {"signs": len(rows), "area": area.lower()})
+    undo.stands(conn)           # it has gone to whoever makes the signs
     return {"id": order_id, "signs": len(rows)}
+
+
+# --- what was decided about something that is no longer there ---------------------------------------------
+
+def _decided(kind: str, row: dict) -> list[str]:
+    """What a kept row says, in words. Nothing, when it only stands for what is worked out anyway."""
+    if kind == "sign":
+        said = [f"arrow {row['direction']}" if row["direction"] else "", f"colour {row['colour']}" if row["colour"] else "",
+                f"says “{row['text']}”" if row["text"] else "",
+                f"{km_text(shown_km(row['distance_m'], 1.0))} km by hand" if row["distance_m"] is not None else "",
+                f"hangs on post {row['post_no']}" if row["post_no"] else "", "taken out" if row["taken_out"] else "",
+                "on the order" + (f" ({row['why']})" if row["why"] else "") if row["to_order"] else "",
+                f"said to be up, from order {row['up_order']}" if row["up_order"] else "",
+                "a destination added by hand" if row["added"] else ""]
+    elif kind == "post":
+        said = ["placed by hand" if row["x"] is not None else "", "taken out" if row["taken_out"] else "",
+                "a further post" if row["no"] > 1 else "",
+                "carries a name sign" + (f" that says “{row['name_text']}”" if row["name_text"] else "") if row["name_sign"] else "",
+                "its name sign on the order" if row["name_to_order"] else ""]
+    else:
+        said = [f"code {row['code']}" if row["code"] else "", f"called “{row['name']}”" if row["name"] else "",
+                "said to have no signs" if row["status"] == NO_SIGNS else "",
+                "a text for the back of its signs" if row["back_text"] else "",
+                "somebody the signs are sent to" if row["send_to_name"] or row["send_to_address"] else ""]
+    return [word for word in said if word]
+
+
+def adrift(conn) -> list[dict]:
+    """What has been decided about a sign, a post or a sign site that is no longer there to decide about.
+
+    A decision is kept and followed while the routes are mended (`_said`).
+    It is adrift when what it was about is gone and nothing came instead,
+    or when the routes no longer give such a sign: a hut made on the way,
+    so that the sign now points to the hut; a route that no longer passes.
+    Nothing is done about it by itself. Each says what it said, where it
+    was, why it is adrift, and, for a sign, which signs at the same junction
+    it could be moved to (`moves`): those nothing is decided about yet,
+    the ones to the same place first.
+    """
+    worked_out, said, found = _worked_out(conn, None)
+    loose = [*said["adrift"]]
+    for kind in ("sign", "post", "site"):
+        loose += [{"kind": kind, "row": row,
+                   "why": {"sign": "the routes no longer give a sign from there to there",
+                           "post": "no post stands at that junction any more",
+                           "site": "there is no sign site there any more"}[kind]}
+                  for row in said[f"{kind}s"].values() if row["id"] not in found]
+    loose = [item for item in loose if _decided(item["kind"], item["row"])]
+    if not loose:
+        return []
+    # Where each was, and what it pointed to: the junction and the place are kept, also when they are no longer in use.
+    junction = {str(i["row"].get("node_id") or i["row"].get("at_id")) for i in loose}
+    where = {n["id"]: n for n in _rows(conn, """
+        SELECT n.id::text AS id, ST_X(ST_Transform(n.geom, 4326)) AS lon, ST_Y(ST_Transform(n.geom, 4326)) AS lat,
+               ST_X(n.geom) AS x, ST_Y(n.geom) AS y,
+               (SELECT p.name FROM core.place p WHERE p.id = n.place_id) AS name
+        FROM (SELECT id, geom, place_id FROM core.node WHERE id = ANY(%(ids)s::uuid[])
+              UNION ALL SELECT id, geom, NULL FROM ops.sign_point WHERE id = ANY(%(ids)s::uuid[])
+              UNION ALL SELECT id, geom, id FROM core.place WHERE id = ANY(%(ids)s::uuid[])) n""",
+        {"ids": list(junction)})}
+    named = dict(conn.execute("SELECT id::text, name FROM core.place WHERE id = ANY(%s::uuid[])",
+                              ([str(i["row"]["to_id"]) for i in loose if i["kind"] == "sign"],)).fetchall())
+    nameless = [n for n in where.values() if not n["name"]]      # a junction that is no place: what it lies by
+    for n, near in zip(nameless, _nearby(conn, [(n["x"], n["y"]) for n in nameless]), strict=True):
+        n["name"] = f"a junction by {near['name']}" if near else "a junction with no name"
+    free: dict[str, list[dict]] = {}       # the signs at each junction that nothing is decided about yet
+    for site in worked_out["sites"]:
+        for post in site["posts"]:
+            for sign in post["signs"]:
+                if not sign["by_hand"] and not sign["to_order"] and not sign["taken_out"] and not sign["ordered"] and not sign["added"]:
+                    free.setdefault(sign["key"].split("|")[0], []).append(
+                        {"key": sign["key"], "text": sign["text"], "km": sign["km"], "to": sign["to"]["id"], "site": site["key"]})
+    out = []
+    for item in loose:
+        kind, row = item["kind"], item["row"]
+        at = where.get(str(row.get("node_id") or row.get("at_id"))) or {}
+        entry = {"id": str(row["id"]), "kind": kind, "why": item["why"], "said": _decided(kind, row),
+                 "at": at.get("name"), "lon": at.get("lon"), "lat": at.get("lat"),
+                 "last_said": row["updated_at"], "by": row.get("updated_by"), "to": None, "moves": []}
+        if kind == "sign":
+            entry["to"] = row["text"] or named.get(str(row["to_id"])) or "where a route ends"
+            here = free.get(str(row["node_id"]), [])
+            entry["moves"] = [{k: m[k] for k in ("key", "text", "km", "site")}
+                              for m in sorted(here, key=lambda m: (m["to"] != str(row["to_id"]), m["text"] or ""))][:8]
+        out.append(entry)
+    return sorted(out, key=lambda e: (e["kind"] != "sign", e["at"] or "", e["id"]))
+
+
+def _adrift_row(conn, some_id: str) -> dict:
+    try:
+        some_id = str(uuid.UUID(str(some_id)))
+    except ValueError:
+        raise NotFound("nothing adrift is called that") from None
+    found = [entry for entry in adrift(conn) if entry["id"] == some_id]
+    if not found:
+        raise NotFound("that is not adrift: it finds what it is about, or it is forgotten already")
+    return found[0]
+
+
+def forget(conn, some_id: str, author) -> dict:
+    """Forget what was decided about a sign, a post or a sign site that is no longer there. Only what is
+    adrift can be forgotten this way; it can be taken back with undo."""
+    _bring_along(conn, author)
+    entry = _adrift_row(conn, some_id)
+    table = {"sign": "sign", "post": "sign_post", "site": "sign_site"}[entry["kind"]]
+    conn.execute(f"DELETE FROM ops.{table} WHERE id = %s", (entry["id"],))
+    _event(conn, author, entry["kind"], entry["id"], f"{entry['kind']}.forgotten",
+           {"said": entry["said"], "at": entry["at"], "to": entry["to"], "why": entry["why"]})
+    return entry
+
+
+def move(conn, some_id: str, key: str, author) -> dict:
+    """Say which sign a decision that is adrift is about now: what was decided is then that sign's.
+    Only to a sign nothing is decided about yet."""
+    _bring_along(conn, author)
+    entry = _adrift_row(conn, some_id)
+    if entry["kind"] != "sign":
+        raise Invalid("only what was decided about a sign can be moved to another sign")
+    node, edge, to_type, to_id, apart = _key_parts(key)
+    listed = {sign["key"]: sign for site in listing(conn)["sites"] for post in site["posts"] for sign in post["signs"]}
+    if key not in listed:
+        raise NotFound("no such sign")
+    if conn.execute("""SELECT 1 FROM ops.sign WHERE node_id = %s AND first_edge = %s AND to_type = %s AND to_id = %s
+                       AND route = %s""", (node, edge, to_type, to_id, apart)).fetchone():
+        raise Conflict("something is decided about that sign already: change it there, and forget this")
+    conn.execute("""UPDATE ops.sign SET node_id = %s, first_edge = %s, to_type = %s, to_id = %s, route = %s,
+                        added = false, updated_at = now(), updated_by = %s WHERE id = %s""",
+                 (node, edge, to_type, to_id, apart, str(author), entry["id"]))
+    _event(conn, author, "sign", key, "sign.moved", {"said": entry["said"], "was_to": entry["to"], "was_at": entry["at"]})
+    return {"key": key, "text": listed[key]["text"]}
 
 
 def orders(conn, area: str | None = None) -> list[dict]:

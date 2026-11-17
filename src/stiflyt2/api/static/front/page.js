@@ -8,6 +8,9 @@ let lines = null;                // every stretch of the routes in use, as the m
 let seek = "";                   // what is typed to find a route
 let shownRoute = null;           // the open route as it was fetched: { id, detail, height, problem }
 let several = null;              // the box on the map that asks which of several routes at a spot
+let adrift = [];                 // what was decided about a sign, a post or a site that is no longer there
+let lookingAtAdrift = false;
+let undoable = null;             // your latest decision about signs, which an undo would take back
 let stakes = [], placing = null, editing = null;
 const chosen = new Set();        // the signs clicked, to be added to the order together
 let sought = "";                 // what is typed to find a site
@@ -38,6 +41,7 @@ function arrive(to, fitting = true) {
   const wanted = areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
   view = to.view; route = view === "routes" && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
   editing = null; problem = null;
+  if (view !== "signs" || moved) lookingAtAdrift = false;
   leaveProfile(); pointRoute(null);
   if (placing) stopPlacing();
   if (several) { several.remove(); several = null; }
@@ -64,6 +68,24 @@ async function load() {
   found = got; foundProblem = null;
   if (open && !found.sites.some(s => s.key === open)) open = null;
   render();
+  lookForLoose();
+}
+// What was decided about a sign that is no longer there, in any area, and what an undo would take back.
+// Asked for after the signs are shown: neither is needed to show them.
+async function lookForLoose() {
+  const asked = area;
+  try {
+    const [loose, mine] = await Promise.all([get("signs/adrift"), me.operates ? get("signs/undo") : { last: null }]);
+    if (asked !== area) return;
+    const was = adrift.length;
+    adrift = loose; undoable = mine.last;
+    renderUndo();
+    // The side is drawn anew only when there is something new to say in it: a field being typed in would be emptied.
+    if (view === "signs" && found && !open && (adrift.length !== was || lookingAtAdrift)) {
+      if (!adrift.length) lookingAtAdrift = false;
+      render();
+    }
+  } catch {}
 }
 // A change of yours: made, and everything worked out again, so that what you see is what is kept.
 async function change(request) {
@@ -81,7 +103,9 @@ function render() {
   if (!area) renderAreas();
   else if (view === "routes") { if (route) renderRoute(); else renderArea(); }
   else if (!found) panel.replaceChildren(foundProblem ? el("div", { class: "error" }, `Could not get the signs: ${foundProblem}`) : el("div", { class: "sub" }, "Working out the signs…"));
+  else if (lookingAtAdrift && !open) renderAdrift();
   else { const site = open && found.sites.find(s => s.key === open); if (site) renderSite(site); else renderList(); }
+  renderUndo();
   renderChosen();
   renderBasket();
   drawMap();

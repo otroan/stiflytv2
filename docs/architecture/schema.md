@@ -293,7 +293,9 @@ said by a person.
 ## `ops` — what happens to the routes (signs built)
 
 Made on the import track, outside the overlay; copied with the nightly copy
-beside it. Points at `core` by id and never writes it. Written by the API
+beside it. Points at `core` by id and never writes it; what it keeps is read
+through what stands for those ids now
+([ADR-004](ADR-004-how-operations-hangs-on-the-routes.md)). Written by the API
 role for now: a database role of its own for operations is not made.
 
 | Table | Columns |
@@ -303,7 +305,8 @@ role for now: a database role of its own for operations is not made.
 | `sign_post` | id, node_id, no (1 is the post a junction has without a row), geom (NULL: where it is assumed to stand), taken_out, name_sign (it carries a sign with the place's name), name_text (what that says, if not the site's name), name_to_order, name_up_order, updated_at, updated_by |
 | `sign` | id, node_id, first_edge, to_type (`place`, `node`, `point`), to_id, route (what a sign is found by; route is empty unless two signs share the rest), added (a destination a person added: first_edge is the nil uuid, and the way is the shortest there), post_no, direction, colour, text, distance_m, taken_out (NULL: as worked out), to_order (it is to be made: on the order taken out next), why, up_order (the order it was made in, once it is up), updated_at, updated_by |
 | `sign_order` | id, at, by, area, note, rows JSONB (each sign as it was ordered). Insert only |
-| `event` | seq, at, who, through, subject, subject_id, type, payload. Insert only |
+| `event` | seq, at, who, through, subject, subject_id, type, payload, txid (the transaction: one request is one action). Insert only |
+| `undo_log` | id, txid, at, tbl, op (`I`, `U`, `D`), key (the row's id), old (the row as it was), undone_at, stands (an order was taken out: not to be taken back). Filled by the trigger `ops.log_for_undo` on the four tables above the order |
 
 `access.person.role` has a third value, `operations`.
 

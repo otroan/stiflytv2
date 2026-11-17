@@ -31,7 +31,8 @@ what grading its numbers give, and `route_facts` gives a route as it is
 walked, to write a description from (README, "A route in facts"). And signs:
 `signs`, `sign_site`, `sign_post`, `sign`, `new_sign_site`,
 `add_sign_destination`, `order_signs` (README, "Operations: signs"), for
-which the operations role is enough. 38 tools.
+which the operations role is enough; and `signs_adrift`, `settle_adrift` and
+`undo_signs` (ADR-004). 41 tools.
 
 For a second person, on Windows:
 

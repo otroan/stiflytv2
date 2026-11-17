@@ -109,6 +109,7 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .plate.out { opacity: .45; }
 #chosen { display: flex; align-items: center; gap: 8px; padding: 9px 16px; background: var(--ink); color: #fff; font-weight: 500; }
 #chosen .grow { flex: 1; }
+#undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #chosen button.btn.main { background: #fff; border-color: #fff; color: var(--ink); }
 #chosen button.btn { background: none; border-color: #fff8; color: #fff; }
 .plate.out .name { text-decoration: line-through; }

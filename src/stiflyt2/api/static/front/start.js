@@ -3,7 +3,10 @@ window.addEventListener("popstate", () => arrive(here()));
 for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"]])
   document.getElementById(id).addEventListener("click", e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); visit({ view: is, route: null, site: null }); });
 
-document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) stopPlacing(); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (route) visit({ route: null }); } });
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && view === "signs" && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); undoLast(); }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) stopPlacing(); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) visit({ route: null }); } });
 
 (async () => {
   try {

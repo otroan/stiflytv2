@@ -985,9 +985,28 @@ Roles: a `reader` looks; `operations` decides about signs and cannot change
 routes; an `editor`, the route responsible, does both
 (`stiflyt2 access add … --role operations`).
 
+**What is decided stays with its sign while the routes are mended**
+([ADR-004](docs/architecture/ADR-004-how-operations-hangs-on-the-routes.md)).
+A decision is kept under the junction, the stretch and the place it was made
+about, and read through what stands for those now: the junction it was joined
+to, the part of a divided stretch that leaves the sign's junction, the place
+a route end has become, the route that had the code. What still finds no
+sign is **adrift**: the routes no longer give a sign from there to there. The
+signs list says how many there are; each says what it said, where it was and
+why, and a person says which sign it is about now or that it can be forgotten
+(`GET /api/v1/signs/adrift`, `POST …/adrift/{id}/move` and `/forget`). If the
+routes change back, it finds its sign again by itself.
+
+**Undo.** "Undo: …" at the foot of the side, and Ctrl/⌘+Z, take back your own
+latest decision about signs, made in the page: a sign changed, a post moved,
+forty signs put on the order in one go. What others have decided since stays;
+where that is about the same sign, nothing is done. An order that has been
+taken out stands (`GET` and `POST /api/v1/signs/undo`, `ops/undo.py`).
+
 An assistant has the same (`signs`, `sign_site`, `sign_post`, `sign`,
-`new_sign_site`, `add_sign_destination`, `order_signs`), dry unless told
-otherwise; the operations role is enough for them.
+`new_sign_site`, `add_sign_destination`, `order_signs`, `signs_adrift`,
+`settle_adrift`, `undo_signs`), dry unless told otherwise; the operations
+role is enough for them.
 
 Not there yet, of what v1 has: the field sheet as PDF, and photos. See
 `docs/TODO.md`.
@@ -1026,6 +1045,9 @@ With a superuser OS account and password-free local logins, none of steps 1,
   places, access points and connectors
 - [ADR-003](docs/architecture/ADR-003-owned-routes-and-crossings.md) —
   owned routes, and crossings over water
+- [ADR-004](docs/architecture/ADR-004-how-operations-hangs-on-the-routes.md) —
+  how what operations keeps stays with what it is about while the routes
+  are mended, and how it is taken back
 - [To do](docs/TODO.md) — what is wanted and not built, by part; the
   operations part (signs, work, closures) is collected there
 - [v1 assessment](docs/architecture/current-state.md)

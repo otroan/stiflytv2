@@ -91,6 +91,9 @@ function renderList() {
     el("select", { "aria-label": "Area", onchange: e => visit({ area: e.target.value, site: null }) },
       ...areas.map(a => el("option", { value: a.area, selected: a.area === area }, `${a.area}, ${many(a.routes, "route", "routes")}`))),
     problem ? el("div", { class: "error", role: "alert", style: "margin-top:8px" }, `That was not done: ${problem}`) : "",
+    adrift.length ? el("div", { style: "margin-top:8px" }, el("span", { class: "tag warn" }, `${adrift.length} adrift`),
+      el("span", { class: "sub" }, ` ${adrift.length === 1 ? "Something was" : "Things were"} decided about a sign that is no longer there. `),
+      el("button", { class: "link", onclick: () => { lookingAtAdrift = true; render(); } }, "Look at " + (adrift.length === 1 ? "it" : "them"))) : "",
     el("div", { class: "sub", style: "margin-top:8px" }, `${T.sites} sign sites with ${count(T.signs)}, worked out from the routes as they are now. `
       + "A sign points to the next hut or parking place on its route, or to where the route ends."),
     T.onward ? el("div", { class: "sub", style: "margin-top:4px" }, `${count(T.onward)} point on past a place under ${found.near_km} km off, to where its signs point, up to ${found.onward_km} km in all.`) : "",
@@ -113,6 +116,42 @@ function renderList() {
     orderItems(marked),
     me.operates && marked.length ? el("div", { class: "actions" }, el("button", { class: "btn main", onclick: takeOut }, `Take out the order for ${count(marked.length)}`)) : "",
         orders);
+}
+
+// What was decided about a sign, a post or a sign site that the routes no longer give. Nothing is done about
+// it by itself: a person says which sign it is about now, or that it can be forgotten.
+function renderAdrift() {
+  const can = me.operates, settle = (entry, request) => change(async () => { await request(); adrift = adrift.filter(a => a.id !== entry.id); });
+  const what = { sign: "A sign", post: "A post", site: "A sign site" };
+  panel.replaceChildren(
+    el("div", { class: "backbar" }, el("button", { class: "btn", onclick: () => { lookingAtAdrift = false; render(); } }, "‹ All sites")),
+    el("h2", {}, "Adrift"),
+    problem ? el("div", { class: "error", role: "alert" }, `That was not done: ${problem}`) : "",
+    el("div", { class: "sub" }, "What was decided here was about a sign, a post or a sign site that is no longer there, in this area or another. "
+      + "The routes have been changed since. Nothing is lost and nothing is done by itself: say which sign it is about now, or that it can be forgotten."),
+    ...adrift.map(entry => el("div", { class: "post" },
+      el("h3", {}, `${what[entry.kind]}${entry.at ? ` at ${entry.at}` : ""}${entry.kind === "sign" && entry.to ? ` to ${entry.to}` : ""}`),
+      el("div", {}, entry.said.join(", "), "."),
+      el("div", { class: "sub" }, `Adrift because ${entry.why}.`, entry.by ? ` Last said by ${entry.by}, ${new Date(entry.last_said).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.` : ""),
+      el("div", { class: "actions" },
+        entry.lon !== null ? el("button", { class: "btn", onclick: () => map.easeTo({ center: [entry.lon, entry.lat], zoom: Math.max(map.getZoom(), 15), animate: !calm }) }, "Show where") : "",
+        ...(can ? entry.moves.map(m => el("button", { class: "btn", title: "What was decided becomes that sign's",
+          onclick: () => settle(entry, () => send("POST", `signs/adrift/${entry.id}/move`, { key: m.key })) }, `It is “${m.text || "no name"}${m.km === null ? "" : ` ${kmText(m.km)}`}” now`)) : []),
+        can ? el("button", { class: "btn", title: "It is taken away. Undo brings it back.", onclick: () => settle(entry, () => send("POST", `signs/adrift/${entry.id}/forget`)) }, "Forget it") : ""))));
+}
+// Your latest decision about signs, and the way to take it back. An order that has been taken out stands.
+const undoBar = document.getElementById("undo");
+function renderUndo() {
+  undoBar.hidden = !(view === "signs" && me.operates && undoable);
+  if (undoBar.hidden) return;
+  undoBar.replaceChildren(el("button", { class: "link", title: undoable.in_the_way ? `${undoable.in_the_way} came after, and is about the same sign` : "Takes back your latest decision about signs",
+    onclick: undoLast }, `Undo: ${undoable.what}`));
+}
+function undoLast() {
+  if (!undoable) return;
+  const txid = undoable.txid;
+  undoable = null;
+  change(() => send("POST", "signs/undo", { txid }));
 }
 
 function openSite(key) {
