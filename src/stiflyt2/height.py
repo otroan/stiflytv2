@@ -259,7 +259,8 @@ def of_route(conn, route_id: str, samples: bool = False, ground: bool = False) -
     that length and climb alone give. With `samples`, also the profile itself: for each point the
     metres walked, the height, whether the ground is snow and ice, and
     where it is (longitude, latitude); a point with no height is where a
-    part with no heights yet begins. And the places passed. With `ground`,
+    part with no heights yet begins, or where the route is in pieces and
+    the next piece begins. And the places passed. With `ground`,
     each point also says what the height service calls the ground there.
     """
     with conn.cursor(row_factory=dict_row) as cur:
@@ -287,8 +288,16 @@ def of_route(conn, route_id: str, samples: bool = False, ground: bool = False) -
             up, down, steep_up, steep_down = up + gained, down + lost, steep_up + steeply_up, steep_down + steeply_down
             run.clear()
 
+    stopped = None                                # the junction the stretch before ended at
     for leg in legs:
         z = leg["z"] or []
+        # A stretch that does not begin where the one before ended: the route is in pieces there, or goes on
+        # by boat. Nothing is climbed from the one to the other, and the profile has a break.
+        if stopped is not None and leg["a"] != stopped:
+            close()
+            if samples and profile and profile[-1][1] is not None:
+                profile.append([round(walked), None, 0, None, None])
+        stopped = leg["b"]
         if not any(h is not None for h in z):
             close()
             if samples and (not profile or profile[-1][1] is not None):

@@ -207,7 +207,7 @@ def _graph(conn, route_id: str) -> dict:
             stack.append(leg["a"] if leg["b"] == here else leg["b"])
         pieces.append({"order": order, "ends": ends, "nodes": nodes, "start": start,
                        "west": min(at[n] for n in nodes)})
-    pieces.sort(key=lambda p: p["west"])
+    pieces = _walked_through(pieces, at)
     ends = [n for p in pieces for n in p["ends"]]
     # A line through N junctions has N - 1 stretches, a round trip N. One more, and somewhere two
     # stretches run between junctions that the route already joins: it is walked double there.
@@ -225,6 +225,52 @@ def _graph(conn, route_id: str) -> dict:
         shape = "doubled"
     return {"pieces": pieces, "ends": ends, "shape": shape, "at": at,
             "starts": pieces[0]["start"] if shape == "loop" else None}
+
+
+def _walked_through(pieces: list[dict], at: dict) -> list[dict]:
+    """The pieces of a route in the order, and each the way round, that they are walked one after the other.
+
+    A piece is found walked from its western end. For a route in several
+    pieces that is not enough: Juvvasshytta – Galdhøpiggen – Spiterstulen is
+    two lines with the glacier between them, both with their western end at
+    the ice, and walked each from the west the route would jump from
+    Spiterstulen back up to the glacier. So the pieces are put in the order,
+    and each plain line turned the way, that leaves the least to cross
+    between where one stops and the next begins; of two ways equally good
+    (a walk and the same walk backwards), the one that sets out further west.
+    """
+    if len(pieces) < 2:
+        return pieces
+
+    def plain(p: dict) -> bool:            # one line between two ends: it can be walked either way
+        return len(p["ends"]) == 2 and len(p["order"]) == len(p["nodes"]) - 1
+
+    def turned(p: dict) -> dict:
+        return {**p, "order": [(edge, not back) for edge, back in reversed(p["order"])],
+                "ends": p["ends"][::-1], "start": p["ends"][1]}
+
+    def stops(p: dict) -> str:             # where walking it ends
+        return p["ends"][1] if plain(p) else p["start"]
+
+    def left_to_cross(walk: list[dict]) -> float:
+        return sum(math.dist(at[stops(a)], at[b["start"]]) for a, b in itertools.pairwise(walk))
+
+    pieces = sorted(pieces, key=lambda p: p["west"])
+    if len(pieces) > 4:                    # too many to try every way: each next piece the nearest
+        walk, rest = [pieces[0]], pieces[1:]
+        while rest:
+            here = at[stops(walk[-1])]
+            best = min(((math.dist(here, at[c["start"]]), i, c) for i, p in enumerate(rest)
+                        for c in ([p, turned(p)] if plain(p) else [p])), key=lambda t: t[:2])
+            walk.append(best[2])
+            rest.pop(best[1])
+        return walk
+    ways = []
+    for order in itertools.permutations(pieces):
+        for turns in itertools.product(*[([False, True] if plain(p) else [False]) for p in order]):
+            walk = [turned(p) if turn else p for p, turn in zip(order, turns, strict=True)]
+            ways.append((round(left_to_cross(walk), 1), at[walk[0]["start"]], len(ways), walk))
+    return min(ways, key=lambda w: w[:3])[3]
 
 
 def _sets_out(conn, legs: list[dict], nodes: set[str]) -> str:

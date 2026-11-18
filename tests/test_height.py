@@ -248,3 +248,40 @@ def test_the_page_gets_the_profile_and_what_is_missing_is_asked_for_while_it_wai
         finally:
             assert client.delete(f"{V1}/owned/routes/{route['id']}").status_code == 204
         assert client.post(f"{V1}/changeset/close").status_code == 204
+
+
+def test_a_route_in_pieces_is_walked_one_piece_after_the_other_and_climbs_nothing_between_them(conn):
+    # The order and the way round of the pieces: what leaves the least to cross from one to the next.
+    at = {"south edge": (0, 0), "Spiterstulen": (10, -1), "north edge": (2, 2), "Juvvasshytta": (4, 4)}
+    down = {"order": [("d1", False), ("d2", True)], "ends": ["south edge", "Spiterstulen"], "start": "south edge",
+            "nodes": {"south edge", "summit", "Spiterstulen"}, "west": (0, 0)}
+    up = {"order": [("u1", False)], "ends": ["north edge", "Juvvasshytta"], "start": "north edge",
+          "nodes": {"north edge", "Juvvasshytta"}, "west": (2, 2)}
+    walk = routes._walked_through([down, up], at)
+    assert [p["start"] for p in walk] == ["Juvvasshytta", "south edge"]       # not: down to the hut, and up to the ice again
+    assert walk[0]["order"] == [("u1", True)] and walk[0]["ends"] == ["Juvvasshytta", "north edge"] and walk[1] is down
+    assert routes._walked_through([down], at) == [down]
+
+    # A route with a stretch taken out of its middle is two pieces. Each is climbed for itself.
+    route = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    legs = [e for (e,) in conn.execute("SELECT edge_id::text FROM core.route_leg WHERE route_id = %s ORDER BY seq", (route,))]
+    with Terrain().client() as http:
+        height.fill(height.lacking(conn, route_id=route, again=True), lambda got: height.keep(conn, got), http=http)
+    whole = height.of_route(conn, route, samples=True)
+    assert all(s[1] is not None for s in whole["samples"])
+    routes.remove_leg(conn, route, routes.detail(conn, route)["version"], legs[len(legs) // 2], AUTHOR)
+    after = routes.detail(conn, route)
+    assert after["shape"] == "pieces" and len(after["gaps"]) == 1
+    apart = height.of_route(conn, route, samples=True)
+    breaks = [i for i, s in enumerate(apart["samples"]) if s[1] is None]
+    assert len(breaks) == 1 and 0 < breaks[0] < len(apart["samples"]) - 1         # the profile has a break where the pieces part
+    first, second = apart["samples"][:breaks[0]], apart["samples"][breaks[0] + 1:]
+    rises = (first[-1][1] - first[0][1]) + (second[-1][1] - second[0][1])
+    assert apart["up_m"] - apart["down_m"] == pytest.approx(rises, abs=6)          # nothing is climbed from the one to the other
+    assert apart["known_m"] == apart["on_foot_m"] < whole["on_foot_m"] and apart["there"] is not None
+    # The second piece is begun where the first stopped, as near as the gap allows.
+    stop, start = first[-1], second[0]
+    gap = after["gaps"][0]["metres"]
+    assert conn.execute("""SELECT ST_Distance(ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833),
+                                              ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833))""",
+                        (stop[3], stop[4], start[3], start[4])).fetchone()[0] == pytest.approx(gap, abs=15)
