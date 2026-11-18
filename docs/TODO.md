@@ -222,6 +222,51 @@ lets a person take the description. Left:
 - One description per direction: here they are one text under two headings
   (ADR-003 amendment 33). To look at again if changes are to be written back.
 
+### What a route is called: nobody hands out the numbers
+
+To think through; nothing is decided (raised 2026-11-18).
+
+The case that raised it: `jot91` in Turrutebasen is two routes that have
+nothing to do with each other, 15 km apart: Gjendesheim – Bessheim (3.7 km,
+named, and the one that fits the series, where jot88 to jot91 all end at
+Bessheim) and Glitterheim – Veodalen (7.6 km, "Ukjent"). The first has been
+given `jot91`; the second keeps the temporary code `jot91/1` until this is
+settled. The same week Kartverket delivered a file in which every
+`rutenummer` was "Ukjent", and jot90 turned out to be the stub of a route
+whose number had been taken off most of it.
+
+What there is today: no authority for route numbers, in DNT or at Kartverket.
+`rutenummer` in Turrutebasen is free text, written by whoever registered the
+route (`jot91`, `f_20170606`). Here a route has an id of its own that holds
+(ADR-003, amendment 20), a code that is unique among ours and may be marked
+temporary, a name that is given or made from the places at its ends, and
+the codes and names it has had before.
+
+Three ways it could go, which do not exclude each other:
+
+- **The id is what the route is, and nothing else is.** A uuid, as now.
+  Nothing has to be agreed with anybody, and it survives every renaming.
+  But nobody can say it, print it on a route card or find it on a map, and
+  Turrutebasen and UT.no have no field for it that we know of.
+- **A registry of numbers.** Somebody hands them out: per area prefix as
+  today (`jot`, `bre`), with rules for what happens to a number when a
+  route is given up, divided or joined, and for variants of one route
+  (jot3 and jot4, by Tjønnholet). Who keeps it is the question: each
+  association for its own areas (which is what the uniqueness among ours
+  already amounts to), DNT centrally, or Kartverket. Routes of others in
+  the same area have numbers too.
+- **From, to and via.** "Glitterheim – Bessheim, by Tjønnholet": what
+  people say, and what the name is already made from. It needs no
+  registry, but it changes when a place is renamed or an end is moved, two
+  routes between the same places need a "via" to be told apart, and it is
+  long for a key.
+
+What it hangs on: what Kartverket keys a route on after the move to NVDB,
+and whether `rutenummer` survives it; what UT.no keys on; and where a number
+is shown to people at all (the signs carry none). A likely end is all three,
+each for its own use: the id in every exchange of data, a short number for
+people from whoever keeps the registry, and from, to and via as the name.
+
 ### Two places that are one
 
 Asked for on 2026-11-17: one place at Tungestølen and one at Grotli hotell,
