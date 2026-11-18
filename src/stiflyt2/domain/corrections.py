@@ -281,7 +281,9 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 lokalid=s["lokalid"], versjonid=s["versjonid"], rutenummer=s["codes"],
                 geometry=s["geometry"], at=s["at"], was={"rutenummer": code})
     # Who maintains: Turrutebasen keeps it per route on each segment. A change is told once for
-    # all the segments of a route it holds for.
+    # all the segments of a route it holds for. Where you say nobody and Turrutebasen names somebody,
+    # that is a change too: a route made from Turrutebasen starts with who Turrutebasen has, so nobody
+    # is what a person has said.
     for change in _rows(conn, """
             SELECT sr.external_id AS rutenummer, rs.maintainers AS was,
                    coalesce(l.maintainers, r.maintainers) AS now,
@@ -297,7 +299,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
             JOIN source_index.route c ON c.code = sr.external_id
             JOIN source_index.route_segment rs ON rs.route_id = c.id AND rs.segment_id = ad.external_id
             JOIN source_index.trail_segment t ON t.id = rs.segment_id
-            WHERE r.id = ANY(%(ids)s::uuid[]) AND coalesce(l.maintainers, r.maintainers) <> '{}'
+            WHERE r.id = ANY(%(ids)s::uuid[])
               AND (SELECT array_agg(x ORDER BY x) FROM unnest(rs.maintainers) x)
                   IS DISTINCT FROM (SELECT array_agg(x ORDER BY x)
                                     FROM unnest(coalesce(l.maintainers, r.maintainers)) x)
@@ -307,7 +309,10 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         where = "all its segments" if n >= change["legs"] else f"{n} of its segments"
         add("route attribute",
             f"Change vedlikeholdsansvarlig for {change['rutenummer']} from "
-            f"{'; '.join(sorted(change['was'])) or 'nothing'} to {'; '.join(sorted(change['now']))}, on {where}",
+            f"{'; '.join(sorted(change['was'])) or 'nothing'} to {'; '.join(sorted(change['now']))}, on {where}"
+            if change["now"] else
+            f"Take {'; '.join(sorted(change['was']))} off as vedlikeholdsansvarlig for {change['rutenummer']}, "
+            f"on {where}: nobody is said to maintain it there",
             rutenummer=[change["rutenummer"]], geometry=change["geometry"],
             was={"vedlikeholdsansvarlig": sorted(change["was"])},
             now={"vedlikeholdsansvarlig": sorted(change["now"])}, lokalids=change["lokalids"])

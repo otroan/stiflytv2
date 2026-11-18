@@ -212,3 +212,33 @@ def test_a_stray_bit_taken_out_of_its_route_is_not_offered_as_a_route_again(conn
     assert routes.make_default(conn, "bre")["left withdrawn"] >= 1 and routes.owner_of(conn, stray) is None
     assert [c["change"] for c in corrections.corrections(conn, "bre")
             if c["was"].get("rutenummer") == "bre17"] == ["remove from route"]
+
+
+def test_kartverket_is_asked_to_take_a_maintainer_off_where_a_person_says_nobody_maintains_it(conn):
+    route = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    theirs = sorted({m for (ms,) in conn.execute("""
+        SELECT rs.maintainers FROM source_index.route c JOIN source_index.route_segment rs ON rs.route_id = c.id
+        WHERE c.label = 'bre18'""") for m in ms})
+    assert theirs and routes.detail(conn, route)["maintained_by"] == theirs       # made with who Turrutebasen has
+
+    def asked():
+        return [c for c in corrections.corrections(conn, "bre") if c["rutenummer"] == ["bre18"]
+                and "vedlikeholdsansvarlig" in c["text"]]
+
+    assert asked() == []
+    # Nobody, for the route and every stretch of it: that is said, and Kartverket is asked to take them off.
+    routes.update(conn, route, routes.detail(conn, route)["version"], AUTHOR, maintainers=[], everywhere=True)
+    said = asked()
+    assert len(said) >= 1 and all(c["change"] == "route attribute" and c["now"] == {"vedlikeholdsansvarlig": []} for c in said)
+    assert sorted({m for c in said for m in c["was"]["vedlikeholdsansvarlig"]}) == theirs
+    assert all(c["text"].startswith("Take ") and "off as vedlikeholdsansvarlig for bre18" in c["text"]
+               and c["text"].endswith("nobody is said to maintain it there") for c in said)
+    # One stretch is somebody's after all: for that one a change is asked, as before.
+    leg = routes.detail(conn, route)["version"]
+    edge = conn.execute("SELECT edge_id::text FROM core.route_leg WHERE route_id = %s ORDER BY seq LIMIT 1", (route,)).fetchone()[0]
+    routes.set_leg(conn, route, leg, edge, AUTHOR, ["Luster Turlag"])
+    assert [c["now"]["vedlikeholdsansvarlig"] for c in asked() if c["text"].startswith("Change ")] == [["Luster Turlag"]]
+    # A route that is given up has its number asked off instead: nothing is asked about who maintained it.
+    routes.discontinue(conn, route, routes.detail(conn, route)["version"], AUTHOR, "another route runs there")
+    assert asked() == []
+    assert any("Take rutenummer bre18 off" in c["text"] for c in corrections.corrections(conn, "bre"))

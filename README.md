@@ -509,7 +509,11 @@ the Turrutebasen that is loaded now, per segment, by Turrutebasen's own
 `lokalid` and with the segment's `versjonid`:
 
 - a line that has moved more than 1 m, as proposed and as it is now;
-- `merking`, `skilting`, `rutefolger` or `vedlikeholdsansvarlig` that differ;
+- `merking`, `skilting`, `rutefolger` or `vedlikeholdsansvarlig` that differ.
+  Where you say that nobody maintains a route or a stretch of it and
+  Turrutebasen names somebody, Kartverket is asked to take them off: a
+  route made from Turrutebasen starts with who Turrutebasen has, so nobody
+  is something a person has said;
 - a segment that is no stretch at all: a few metres that begin and end at
   the same junction;
 - a `rutenummer` to take off a segment the route no longer uses, or to add
