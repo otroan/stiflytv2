@@ -1343,3 +1343,54 @@ def test_a_route_that_runs_double_between_two_junctions_is_not_one_line(conn):
     mended = routes.detail(conn, route)
     assert mended["shape"] == "line" and mended["length"] == made["length"] and mended["doubles"] == []
     assert not [p for p in proposals.proposals(conn, "bre") if p["action"].get("route") == route]
+
+
+def test_two_routes_that_cross_between_the_same_two_junctions_share_the_crossing(conn):
+    long_one = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    short = routes.make(conn, candidate(conn, "bre14"), AUTHOR)          # all of it is a stretch of bre18 too
+    a, b = (e["id"] for e in routes.detail(conn, short)["ends"])
+    edges = conn.execute("SELECT count(*) FROM core.edge WHERE status = 'active'").fetchone()[0]
+
+    first = routes.add_crossing(conn, short, routes.detail(conn, short)["version"], a, b, "glacier", AUTHOR)
+    assert conn.execute("SELECT count(*) FROM core.edge WHERE status = 'active'").fetchone()[0] == edges + 1
+    # The other route is joined between the same two junctions, the other way round: the crossing that is there is its too.
+    second = routes.add_crossing(conn, long_one, routes.detail(conn, long_one)["version"], b, a, "glacier", AUTHOR)
+    assert second == first
+    assert conn.execute("SELECT count(*) FROM core.edge WHERE status = 'active'").fetchone()[0] == edges + 1
+    assert conn.execute("SELECT count(*) FROM core.route_leg WHERE edge_id = %s", (first,)).fetchone()[0] == 2
+    told = conn.execute("""SELECT payload FROM history.event WHERE type = 'route.crossing_added' AND subject_id = %s
+                           ORDER BY seq DESC LIMIT 1""", (long_one,)).fetchone()[0]
+    assert told["shared"] == first and told["kind"] == "glacier"
+    with pytest.raises(places.Conflict, match="already"):              # and not twice for one route
+        routes.add_stretch(conn, long_one, routes.detail(conn, long_one)["version"], AUTHOR, edge_id=first)
+    # Kartverket is asked for one segment there, with both numbers: not for two that lie on each other.
+    from stiflyt2.domain import corrections
+    asked = [c for c in corrections.corrections(conn, "bre") if c["change"] == "new segment"]
+    assert len(asked) == 1 and asked[0]["rutenummer"] == ["bre14", "bre18"] and "for bre14, bre18:" in asked[0]["text"]
+    # Another kind of crossing there is another stretch.
+    by_boat = routes.add_crossing(conn, long_one, routes.detail(conn, long_one)["version"], a, b, "water", AUTHOR)
+    assert by_boat != first
+
+    # A stretch routes run along is not taken away; one that came from Turrutebasen is not either.
+    with pytest.raises(places.Conflict, match="bre14, bre18 run along that stretch"):
+        routes.take_away(conn, first, AUTHOR)
+    for route in (long_one, short):
+        routes.remove_leg(conn, route, routes.detail(conn, route)["version"], first, AUTHOR)
+    routes.remove_leg(conn, long_one, routes.detail(conn, long_one)["version"], by_boat, AUTHOR)
+    theirs = conn.execute("""SELECT l.edge_id::text FROM core.route_leg l WHERE l.route_id = %s AND NOT EXISTS (
+                                 SELECT 1 FROM core.route_leg o WHERE o.edge_id = l.edge_id AND o.route_id <> l.route_id)
+                             ORDER BY l.seq LIMIT 1""", (long_one,)).fetchone()[0]
+    with pytest.raises(places.Conflict, match="bre18 runs along that stretch"):
+        routes.take_away(conn, theirs, AUTHOR)
+    routes.remove_leg(conn, long_one, routes.detail(conn, long_one)["version"], theirs, AUTHOR)
+    with pytest.raises(places.Invalid, match="came from Turrutebasen"):
+        routes.take_away(conn, theirs, AUTHOR)
+    # Left by every route, the crossing that was made here is taken away, and is no stretch any more.
+    routes.take_away(conn, first, AUTHOR)
+    assert conn.execute("SELECT status FROM core.edge WHERE id = %s", (first,)).fetchone()[0] == "retired"
+    assert conn.execute("SELECT type, payload->>'kind' FROM history.event WHERE subject_type = 'edge' AND subject_id = %s",
+                        (first,)).fetchall() == [("edge.taken_away", "glacier")]
+    with pytest.raises(places.NotFound):
+        routes.take_away(conn, first, AUTHOR)
+    with pytest.raises(places.NotFound):
+        routes.take_away(conn, "no-such-stretch", AUTHOR)

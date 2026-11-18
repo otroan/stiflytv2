@@ -150,7 +150,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         ORDER BY length(r.code), r.code""", params)
     ids = sorted({m["id"] for m in made})
     legs = _rows(conn, f"""
-        SELECT l.route_id::text AS route, ad.external_id AS lokalid, t.codes,
+        SELECT l.route_id::text AS route, e.id::text AS edge, ad.external_id AS lokalid, t.codes,
                t.attrs->>'versjonid' AS versjonid, rv.kind, round({routes._LEN.replace('r.geom', 'rv.geom')})::int AS metres,
                ST_AsGeoJSON(ST_Transform(rv.geom, %(srid)s), %(digits)s)::json AS geometry,
                ARRAY[ST_X(c.p), ST_Y(c.p)] AS at
@@ -166,14 +166,22 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         numbers.setdefault(m["id"], set()).add(m["rutenummer"])
     used: dict[str, set] = {}           # Turrutebasen code -> segments your routes with that code use
     added: set[tuple] = set()
+    lacking: dict[str, set] = {}        # a stretch Turrutebasen has no segment for -> the numbers that run along it
+    for leg in legs:
+        if leg["lokalid"] is None:
+            lacking.setdefault(leg["edge"], set()).update(numbers[leg["route"]])
     for leg in legs:
         codes = numbers[leg["route"]]
         if leg["lokalid"] is None:
-            add("new segment",
-                f"Add a segment for {', '.join(sorted(codes))}: {leg['metres']} m, "
-                f"{_KIND.get(leg['kind'], leg['kind'])}",
-                rutenummer=codes, geometry=leg["geometry"], at=leg["at"],
-                now={"length_m": leg["metres"], "rutefolger": _FOLLOWS.get(leg["kind"])})
+            # One segment to add, with every number that runs along it: two routes that cross the same
+            # ice by one stretch are one segment to Kartverket, not two on top of each other.
+            together = lacking.pop(leg["edge"], None)
+            if together:
+                add("new segment",
+                    f"Add a segment for {', '.join(sorted(together))}: {leg['metres']} m, "
+                    f"{_KIND.get(leg['kind'], leg['kind'])}",
+                    rutenummer=together, geometry=leg["geometry"], at=leg["at"],
+                    now={"length_m": leg["metres"], "rutefolger": _FOLLOWS.get(leg["kind"])})
             continue
         for code in codes:
             used.setdefault(code, set()).add(leg["lokalid"])

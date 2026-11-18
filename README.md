@@ -517,7 +517,8 @@ the Turrutebasen that is loaded now, per segment, by Turrutebasen's own
 - a segment that is no stretch at all: a few metres that begin and end at
   the same junction;
 - a `rutenummer` to take off a segment the route no longer uses, or to add
-  to one it now runs along; a segment to add where you joined two ends;
+  to one it now runs along; a segment to add where you joined two ends,
+  once for all the routes that run along it;
 - a `rutenummer` to take off every segment of a route you have withdrawn,
   where other routes of yours run over (95 % of) what it ran over: a misspelt
   number such as jot03 beside jot3, or one route under two numbers. A route

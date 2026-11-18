@@ -2415,6 +2415,20 @@ def add_crossing(conn, route_id: str, version: int, from_node: str, to_node: str
     on_route = _graph(conn, route_id)["at"]
     if from_node == to_node or from_node not in on_route or to_node not in on_route:
         raise Invalid("a crossing joins two different points of the route")
+    metres = round(math.dist(on_route[from_node], on_route[to_node]))
+    # A crossing of that kind between the same two junctions, which another route uses: the ice is crossed
+    # once, by both. A second one would lie on top of the first, and the two would be signed apart.
+    there = conn.execute("""
+        SELECT e.id::text FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
+        WHERE e.status = 'active' AND r.kind = %(kind)s
+          AND (r.a_node, r.b_node) IN ((%(a)s::uuid, %(b)s::uuid), (%(b)s::uuid, %(a)s::uuid))
+          AND NOT EXISTS (SELECT 1 FROM core.route_leg l WHERE l.route_id = %(route)s AND l.edge_id = e.id)
+        ORDER BY e.created_at LIMIT 1""", {"kind": kind, "a": from_node, "b": to_node, "route": route_id}).fetchone()
+    if there:
+        _add_legs(conn, route_id, [there[0]])
+        _event(conn, author, "route.crossing_added", route_id, {"kind": kind, "metres": metres, "shared": there[0]})
+        _touch(conn, route_id, author)
+        return there[0]
     marked, signed = _FACTS[kind]
     edge = _new_edge(
         conn, author,
@@ -2422,10 +2436,35 @@ def add_crossing(conn, route_id: str, version: int, from_node: str, to_node: str
             WHERE a.id = %(a)s AND b.id = %(b)s)""", {}, from_node, to_node, kind, "drawn",
         marked, signed)
     _add_legs(conn, route_id, [edge])
-    metres = round(math.dist(on_route[from_node], on_route[to_node]))
     _event(conn, author, "route.crossing_added", route_id, {"kind": kind, "metres": metres})
     _touch(conn, route_id, author)
     return edge
+
+
+def take_away(conn, edge_id: str, author: str) -> None:
+    """Take away a stretch that was made here and that no route uses: a crossing made twice, a line drawn and left.
+
+    A stretch a route runs along is taken out of the route first. One that
+    came from Turrutebasen is not taken away: what is wrong with it is told
+    to Kartverket. The stretch is kept in the history, and can be undone.
+    """
+    found = conn.execute("""
+        SELECT e.status, round(ST_Length(r.geom))::int, r.kind,
+               (SELECT string_agg(t.code, ', ' ORDER BY t.code) FROM core.route_leg l
+                JOIN core.route t ON t.id = l.route_id AND t.status = 'active' WHERE l.edge_id = e.id),
+               EXISTS (SELECT 1 FROM core.source_reference sr WHERE sr.subject_type = 'edge' AND sr.subject_id = e.id
+                       AND sr.source_key = 'turrutebasen')
+        FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
+        WHERE e.id::text = %s FOR UPDATE OF e""", (edge_id,)).fetchone()
+    if not found or found[0] != "active":
+        raise NotFound("no such stretch")
+    _, metres, kind, used_by, theirs = found
+    if used_by:
+        raise Conflict(f"{used_by} {'run' if ', ' in used_by else 'runs'} along that stretch: take it out of the route first")
+    if theirs:
+        raise Invalid("that stretch came from Turrutebasen: it is not taken away here")
+    conn.execute("UPDATE core.edge SET status = 'retired', version = version + 1 WHERE id = %s", (edge_id,))
+    _event(conn, author, "edge.taken_away", edge_id, {"kind": kind, "metres": metres}, subject="edge")
 
 
 def remove_leg(conn, route_id: str, version: int, edge_id: str, author: str) -> None:

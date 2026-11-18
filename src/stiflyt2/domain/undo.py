@@ -59,6 +59,7 @@ _WHAT = {
     "edge.restored": "a stretch given its earlier line",
     "edge.split": "a stretch divided",
     "edge.changed": "what a stretch is changed",
+    "edge.taken_away": "a stretch no route uses taken away",
     "node.moved": "a junction moved",
     "node.merged": "two junctions joined",
     "place.adopted": "{name} made a place",

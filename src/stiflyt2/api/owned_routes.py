@@ -374,6 +374,13 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             routes.set_stretch(conn, edge_id, author, **body.model_dump(exclude_unset=True))
         return Response(status_code=204)
 
+    @app.delete("/api/v1/owned/stretches/{edge_id}", status_code=204)
+    def take_stretch_away(edge_id: Annotated[str, Path(max_length=40)], author: Editor) -> Response:
+        """Take away a stretch that was made here and that no route uses."""
+        with write.connection() as conn:
+            routes.take_away(conn, edge_id, author)
+        return Response(status_code=204)
+
     @app.post("/api/v1/owned/stretches/{edge_id}/snap")
     def snap(edge_id: str, body: Snap, author: Editor, seen: Seen = None) -> dict:
         """Replace a stretch's line with the mapped path between its ends, or preview that."""
