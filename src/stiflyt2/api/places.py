@@ -123,6 +123,26 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             places.add_access_point(conn, place_id, body.lon, body.lat, author)
             return places.detail(conn, place_id)
 
+    @app.post(f"{V1}/places/{{place_id}}/access-points/{{node_id}}", status_code=201)
+    def take_in(place_id: str, node_id: str, author: Editor) -> dict:
+        """Make a junction that is there already an arrival point of the place."""
+        with write.connection() as conn:
+            places.take_in(conn, place_id, node_id, author)
+            return places.detail(conn, place_id)
+
+    @app.get(f"{V1}/places/{{place_id}}/around")
+    def around(place_id: str) -> dict:
+        """What lies round a place and may belong to it: route ends that are not its arrival points, other places."""
+        with read.connection() as conn:
+            return places.around(conn, place_id)
+
+    @app.post(f"{V1}/places/{{place_id}}/merge/{{other_id}}")
+    def merge(place_id: str, other_id: str, body: Version, author: Editor) -> dict:
+        """Make two places one: this one stays, and takes over the other's arrival points."""
+        with write.connection() as conn:
+            places.merge(conn, place_id, body.version, other_id, author)
+            return places.detail(conn, place_id)
+
     @app.delete(f"{V1}/places/{{place_id}}/access-points/{{node_id}}")
     def remove_access_point(place_id: str, node_id: str, author: Editor) -> dict:
         with write.connection() as conn:

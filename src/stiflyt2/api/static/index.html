@@ -1073,7 +1073,7 @@ setInterval(lookAtNight, 30 * 60 * 1000);
 let ownedLines = { features: [] };
 async function refreshOwned() {
   const data = await get("places.geojson");
-  adopted = data.features.filter(f => f.properties.type === "place" && f.properties.adopted_from).map(f => f.properties.adopted_from);
+  adopted = data.features.filter(f => f.properties.type === "place").flatMap(f => [f.properties.adopted_from, ...(f.properties.taken_in || [])]).filter(Boolean);
   const lines = ownedLines = await get("owned/routes.geojson");
   whenStyled(() => {
     map.getSource("ownedroutes").setData(lines);
@@ -1088,10 +1088,16 @@ async function refreshOwned() {
 const undoButton = document.getElementById("undo"), redoButton = document.getElementById("redo");
 const moreLatest = document.getElementById("morelatest"), latestBox = document.getElementById("latest");
 let undoNext = null, redoNext = null;
+let undoAsked = 0;
 async function refreshUndo() {
-  try { showUndo(...(EDITOR ? await Promise.all([get("undo"), get("redo")]) : [null, null])); } catch { showUndo(null, null); }
+  // An answer that comes in after something newer is known (an undo or redo made meanwhile) is not shown.
+  const asked = ++undoAsked;
+  let got = [null, null];
+  try { if (EDITOR) got = await Promise.all([get("undo"), get("redo")]); } catch {}
+  if (asked === undoAsked) showUndo(...got);
 }
 function showUndo(next, again) {
+  undoAsked++;
   [undoNext, redoNext] = [next, again];
   undoButton.hidden = moreLatest.hidden = !undoNext;
   redoButton.hidden = !redoNext;
@@ -1308,6 +1314,8 @@ const EVENT = {
   "place.access_point_added": () => "Access point added",
   "place.access_point_removed": () => "Access point taken out of the place",
   "place.retired": () => "Place withdrawn",
+  "place.merged_into": () => "Taken into another place",
+  "place.merged": p => `${p.name} taken in: the two are one place now`,
   "place.reviewed": () => "Reviewed and found right",
 };
 function renderPlace(place, problem) {
@@ -1339,6 +1347,52 @@ function renderPlace(place, problem) {
       can && !p.is_primary ? el("button", { class: "btn quiet", onclick: () => change(() => send("DELETE", `places/${place.id}/access-points/${p.id}`)) }, "Take out of place") : ""))));
   const total = place.connectors.reduce((sum, c) => sum + c.length_m, 0);
 
+  // Round the place: route ends that are not arrival points of it, and other places that may be the same one.
+  // This is where "every route to the hut ends at the same spot" and "the hut is there twice" are put right.
+  const KIND = { hut: "hut", parking: "parking", glacier_edge: "edge of a glacier", other: "place" };
+  const round = el("div", {}, el("div", { class: "sub" }, "Looking round the place…"));
+  const after = async request => {       // a change that does not answer with the place: all is read again
+    try { await request(); await refreshOwned(); refreshEditing(); renderPlace(await get(`places/${place.id}`)); afterPlaceChange(); }
+    catch (err) { renderPlace(place, err.message); }
+  };
+  const endHere = async (end, r) => {
+    const body = { version: r.version, end: end.id, lon: main.lon, lat: main.lat, reach_m: 10 };
+    let told;
+    try { told = await send("POST", `owned/routes/${r.id}/end`, { ...body, dry_run: true }, { "X-Stiflyt-Preview": "1" }); }
+    catch (err) { renderPlace(place, `${r.code} cannot be ended here: ${err.message}`); return; }
+    const how = told.straight_m ? `straight for ${told.straight_m} m, as a new stretch, since nothing leads between the two`
+      : told.mapped_m ? `along the mapped paths and roads for ${km(told.mapped_m / 1000)}, as ${told.added} new stretch${told.added === 1 ? "" : "es"}`
+      : told.added ? `along ${told.added} stretch${told.added === 1 ? "" : "es"} that ${told.added === 1 ? "is" : "are"} there` + (told.dropped ? `, leaving ${told.dropped}` : "")
+      : told.dropped ? `cut back by ${told.dropped} stretch${told.dropped === 1 ? "" : "es"}` : "as it is";
+    if (!confirm(`End ${r.code} where the routes arrive at ${place.name}? It goes there ${how}, and is ${km(told.length_m / 1000)} then. Undo takes it back.`)) return;
+    after(() => send("POST", `owned/routes/${r.id}/end`, body));
+  };
+  get(`places/${place.id}/around`).then(found => {
+    if (!round.isConnected) return;
+    const ends = found.ends.map(e => { const ending = e.routes.filter(r => r.ends_here), passing = e.routes.filter(r => !r.ends_here);
+      return el("li", { class: "point" },
+        el("div", {}, el("span", { class: "routes" }, ending.map(r => r.code).join(", ")), ` end${ending.length === 1 ? "s" : ""} here`,
+          passing.length ? `; ${passing.map(r => r.code).join(", ")} pass${passing.length === 1 ? "es" : ""}` : "", e.place ? `, at ${e.place}` : ""),
+        el("span", { class: "num" }, `${e.metres} m away`),
+        el("div", { class: "actions", style: "grid-column:1/-1;margin:0" },
+          el("button", { class: "btn quiet", onclick: () => go([e.lon, e.lat], 16.5) }, "Show"),
+          can && !e.place_id ? el("button", { class: "btn quiet", title: "The junction becomes an arrival point of this place. No route is changed.", onclick: () => change(() => send("POST", `places/${place.id}/access-points/${e.id}`)) }, "It is an arrival point") : "",
+          ...(can && main ? ending.map(r => el("button", { class: "btn quiet", title: "The route is carried on, or cut back, to where the routes arrive at this place. Shown first.", onclick: () => endHere(e, r) }, `End ${r.code} at the primary one`)) : []))); });
+    const others = found.places.map(o => el("li", { class: "point" },
+      el("div", {}, el("span", { class: "routes" }, o.name), `, ${KIND[o.kind]}` + (o.same_name ? ", the same name" : "")),
+      el("span", { class: "num" }, `${o.metres} m away`),
+      el("div", { class: "actions", style: "grid-column:1/-1;margin:0" },
+        el("button", { class: "btn quiet", onclick: () => openPlace(o.id) }, "Open it"),
+        can ? el("button", { class: "btn quiet", title: "This place stays, with its name and kind, and takes over the other's arrival points. The other is withdrawn.", onclick: () => {
+          if (!confirm(`Take ${o.name} (${KIND[o.kind]}) into ${place.name} (${KIND[place.kind]})? ${place.name} keeps its name, kind and building mark, and takes over the ${o.access_points} arrival point${o.access_points === 1 ? "" : "s"} of the other, which is withdrawn. No route is changed. Undo takes it back.`)) return;
+          change(() => send("POST", `places/${place.id}/merge/${o.id}`, { version: place.version }));
+        } }, "They are one place: take it in") : "")));
+    round.replaceChildren(
+      ends.length || others.length ? el("h2", { class: "next" }, "Round this place") : "",
+      ends.length ? el("div", { class: "sub" }, "Routes that end near, but not at an arrival point of this place.") : "", ends.length ? el("ul", {}, ...ends) : "",
+      others.length ? el("div", { class: "sub" }, "Other places near, or of the same name.") : "", others.length ? el("ul", {}, ...others) : "");
+  }).catch(err => { if (round.isConnected) round.replaceChildren(el("div", { class: "sub" }, `Could not look round the place: ${err.message}`)); });
+
   placeBox.replaceChildren(
     el("div", { class: "plate" }, el("div", { class: "name" }, place.name),
       el("div", { class: "kind" }, `${{ hut: "Hut", parking: "Parking", glacier_edge: "Edge of a glacier", other: "Place" }[place.kind]}, ${place.reviewed ? "reviewed" : "made automatically, not reviewed yet"}`)),
@@ -1364,6 +1418,7 @@ function renderPlace(place, problem) {
     el("div", { class: "sub" }, place.connectors.length
       ? `${place.connectors.length} connector${place.connectors.length > 1 ? "s" : ""}, ${total} m in all, join them to the primary one as straight lines.`
       : "One access point, so no connectors are needed."),
+    round,
     el("h2", { class: "next" }, "History"),
     el("ol", { class: "log" }, ...place.history.map(e => el("li", {},
       el("span", {}, new Date(e.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),

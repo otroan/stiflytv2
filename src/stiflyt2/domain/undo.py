@@ -70,6 +70,8 @@ _WHAT = {
     "edge.taken_away": "a stretch no route uses taken away",
     "node.moved": "a junction moved",
     "node.merged": "two junctions joined",
+    "place.merged": "two places made one",
+    "place.merged_into": "two places made one",
     "place.adopted": "{name} made a place",
     "place.retired": "a place withdrawn",
     "place.renamed": "a place renamed",

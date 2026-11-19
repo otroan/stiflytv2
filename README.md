@@ -138,6 +138,28 @@ recorded with its author in a changeset; rebuilding the index never touches
 it. The model is described in
 [ADR-002](docs/architecture/ADR-002-places-access-points-connectors.md).
 
+**Round a place.** The panel of a place also lists what lies round it and
+may belong to it, which is where "every route to the hut ends at the same
+spot" and "the hut is there twice" are put right:
+
+- *Routes that end near, but not at an arrival point of the place* (within
+  300 m of where the routes arrive). "It is an arrival point" takes the
+  junction into the place as it lies; no route is changed. "End … at the
+  primary one" carries that route on, or cuts it back, to where the routes
+  arrive: it says first what that would do (along which stretches, along
+  mapped paths, or straight over a short gap) and asks.
+- *Other places near, or of the same name* (within 300 m, or 3 km for the
+  same name). "They are one place: take it in" makes the two one: the place
+  whose panel is open keeps its name, kind and building mark and takes over
+  the other's arrival points; the other is withdrawn, and what pointed at it
+  (a sign site, an earlier id) is led on to the one that stays. No junction
+  is moved and no route is changed. Open the one you want to keep first.
+
+Which arrival point the routes are measured to is chosen with "Make
+primary", and one that is not wanted is taken out, as before. Over the API:
+`GET /api/v1/places/{id}/around`, `POST /api/v1/places/{id}/merge/{other}`,
+`POST /api/v1/places/{id}/access-points/{junction}`.
+
 ### Making routes yours
 
 A route in the viewer is a candidate from Turrutebasen until you make it

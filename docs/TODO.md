@@ -10,8 +10,10 @@ The route responsible listed what is missing and agreed to this order. Each
 step is still started on their word; the details of each are further down.
 
 1. **The route editor.**
-   - *One way of snapping*, whatever is dragged (an end, the line, a new
-     point): to a stretch of ours first, then a mapped path, then a road,
+   - *One way of snapping* (the first part built 2026-11-19: ADR-003,
+     amendment 37; left: laying out between points by the same rule for the
+     pointer, and the same look ahead in "Fix the line itself"), whatever is
+     dragged (an end, the line, a new point): to a stretch of ours first, then a mapped path, then a road,
      shown before the pointer is let go. Today an end, a way round and a
      lay-out between points each have their own rules, and what the editor
      refused in use was each time one of them being stricter than the others:
@@ -23,9 +25,9 @@ step is still started on their word; the details of each are further down.
    - *A new route from A to B* exists ("New route between points"). Left:
      points to go by, and dragging the proposed line to another way before
      it is kept.
-   - *Small gaps*: making two places one in the page (feedback 23), a button
-     for taking away a stretch no route uses, the route panel listing the
-     stretches that say otherwise than the route.
+   - *Small gaps*: a button for taking away a stretch no route uses, the
+     route panel listing the stretches that say otherwise than the route.
+     (Making two places one in the page, feedback 23: built 2026-11-19.)
    - *The other areas* (ron, har, ska, fem, hul, osl) made ours in bulk.
      Operations is of little use where the routes are not ours yet.
 2. **One table for what happens on a route** (the pattern of ADR-004). An
@@ -335,16 +337,15 @@ people from whoever keeps the registry, and from, to and via as the name.
 
 ### Two places that are one
 
-Asked for on 2026-11-17: one place at Tungestølen and one at Grotli hotell,
-which the page did not manage. Each was two places of the same
-name. Done through the API: the second place withdrawn, its junction
-taken into the first as an arrival point (the `arrival` action of the
-proposals). The page has no way of doing that: a place can be given a new
-arrival point at a spot, and a junction can be made a place, and a junction
-that belongs to one place cannot be taken into another. Wanted: "join with
-another place" on a place, and the same as a proposal where two places
-share a name (Bøvertun and Bøvertun (Dumma) are 588 m apart, and the route responsible has
-named them apart). Feedback entry 23.
+Built 2026-11-19 (README, "Round a place"): the panel of a place lists the
+other places near it or of its name, and takes one in; and the route ends
+near it that are not its arrival points, to be made arrival points or ended
+where the routes arrive. Asked for on 2026-11-17 (feedback entry 23), after
+Tungestølen and Grotli hotell each were two places of the same name and the
+page had no way of making them one. Left: the same as a proposal in the
+to-do list where two places share a name, and joining two junctions that
+lie a few metres apart from the panel (today: drag one onto the other in
+"Fix the line itself").
 
 ## Operations (drift)
 

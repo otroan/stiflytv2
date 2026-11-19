@@ -263,3 +263,47 @@ def test_an_end_is_named_after_what_lies_there_when_no_hut_does(conn):
     end = str(conn.execute("INSERT INTO core.node (geom) VALUES (%s) RETURNING id", (at,)).fetchone()[0])
     named = places.suggest(conn, end)
     assert named["what"] == "the road" and named["name"].startswith(road) and named["stedsnavn_id"] is None
+
+
+def test_two_places_that_are_one_are_made_one_and_what_lies_round_a_place_is_listed(conn):
+    """A hut with an arrival point of its own that no route reaches, and a place made by hand where the route ends."""
+    from stiflyt2.domain import identity, routes
+
+    route = routes.make(conn, one(conn, "SELECT id FROM source_index.route WHERE label = 'bre18'"), AUTHOR)
+    end = routes.detail(conn, route)["ends"][0]
+    x, y = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = %s", (end["id"],)).fetchone()
+    beside = routes._node_at(conn, f"SRID=25833;POINT({x + 120:.2f} {y:.2f})")
+    hut = places.at_node(conn, beside, AUTHOR, "Hytta ved veien")
+
+    # Round the hut: the route ends 120 m off, at no arrival point of it.
+    found = places.around(conn, hut)
+    there = next(e for e in found["ends"] if e["id"] == end["id"])
+    assert (there["metres"], there["place"], there["routes"]) == (
+        120, None, [{"id": route, "code": "bre18", "version": routes.detail(conn, route)["version"], "ends_here": True}])
+    # Somebody makes a place of that end, by the same name: now the hut is there twice.
+    by_hand = places.at_node(conn, end["id"], AUTHOR, "Hytta ved veien")
+    found = places.around(conn, hut)
+    assert [(o["metres"], o["same_name"], o["access_points"]) for o in found["places"] if o["id"] == by_hand] == [(120, True, 1)]
+    assert next(e for e in found["ends"] if e["id"] == end["id"])["place"] == "Hytta ved veien"
+
+    # Made one: the hut stays, and the junction where the route ends is an arrival point of it.
+    places.merge(conn, hut, places.detail(conn, hut)["version"], by_hand, AUTHOR)
+    now = places.detail(conn, hut)
+    assert {str(a["id"]) for a in now["access_points"]} == {beside, end["id"]} and len(now["connectors"]) == 1
+    assert str(next(a for a in now["access_points"] if a["is_primary"])["id"]) == beside
+    assert now["history"][0]["type"] == "place.merged" and now["history"][0]["payload"]["taken_in"] == by_hand
+    assert one(conn, "SELECT status FROM core.place WHERE id = %s", by_hand) == "retired"
+    assert identity.current(conn, "place", by_hand)["now"] == [hut]
+    assert routes.detail(conn, route)["ends"][0]["place"] == "Hytta ved veien"
+    after = places.around(conn, hut)
+    assert by_hand not in {o["id"] for o in after["places"]} and end["id"] not in {e["id"] for e in after["ends"]}
+    # A person withdrew it into the other: the proposal it may have come from is not made a place again.
+    assert conn.execute("SELECT payload FROM history.event WHERE subject_id = %s AND type = 'place.merged_into'",
+                        (by_hand,)).fetchone()[0] == {"into": hut}
+
+    with pytest.raises(places.Invalid, match="the same place"):
+        places.merge(conn, hut, now["version"], hut, AUTHOR)
+    with pytest.raises(places.NotFound):
+        places.merge(conn, hut, now["version"], by_hand, AUTHOR)
+    with pytest.raises(places.Conflict, match="changed since"):
+        places.merge(conn, hut, now["version"] - 1, places.at_node(conn, routes.detail(conn, route)["ends"][1]["id"], AUTHOR, "Andre enden"), AUTHOR)

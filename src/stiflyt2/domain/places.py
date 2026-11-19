@@ -506,7 +506,7 @@ def make_default(conn, area: str | None = None) -> dict:
         FROM history.event e
         JOIN core.source_reference sr ON sr.subject_type = 'place' AND sr.subject_id = e.subject_id
                                      AND sr.ref_type = 'adopted_from'
-        WHERE e.type = 'place.retired' AND e.author <> %s""", (AUTOMATIC,))}
+        WHERE e.type IN ('place.retired', 'place.merged_into') AND e.author <> %s""", (AUTOMATIC,))}
     done = {"made": 0, "made again": 0, "kept": 0, "left withdrawn": 0, "withdrawn": 0}
     for anchor_id, fingerprint in sorted(current.items()):
         if anchor_id in places:
@@ -587,6 +587,84 @@ def retire(conn, place_id: str, author: str) -> None:
     _event(conn, author, "place.retired", place_id, {})
 
 
+NEARBY_M = 300          # how far round a place its loose ends and its doubles are looked for
+SAME_NAME_M = 3000      # a place of the same name this near is most likely the same place
+
+
+def merge(conn, place_id: str, version: int, other_id: str, author: str) -> None:
+    """Make two places one: the other's arrival points become this place's, and the other is withdrawn.
+
+    This place keeps its name, its kind and its building mark; the other's
+    name is kept as one it has gone by. No junction is moved and no route is
+    changed: the routes that arrived at the other now arrive at this one.
+    What pointed at the other is led on to this one (`core.succession`).
+    """
+    if str(place_id) == str(other_id):
+        raise Invalid("that is the same place")
+    place, other = _place(conn, place_id, version), _place(conn, other_id)
+    nodes = [str(n) for (n,) in conn.execute(
+        "SELECT id FROM core.node WHERE place_id = %s AND status = 'active' ORDER BY id", (other_id,))]
+    for node_id in nodes:
+        _retire_connectors(conn, node_id)
+    conn.execute("UPDATE core.node SET place_id = %s, version = version + 1 WHERE place_id = %s AND status = 'active'",
+                 (place_id, other_id))
+    if place["primary_node_id"] is None and other["primary_node_id"] is not None:
+        conn.execute("UPDATE core.place SET primary_node_id = %s WHERE id = %s", (other["primary_node_id"], place_id))
+    conn.execute("""UPDATE core.place SET status = 'retired', version = version + 1, updated_at = now()
+                    WHERE id = %s""", (other_id,))
+    _keep_connected(conn, author, place_id)
+    identity.succeed(conn, "place", str(other_id), [str(place_id)], "joined")
+    if other["name"].strip().lower() != place["name"].strip().lower():
+        identity.remember(conn, "place", str(place_id), "name", other["name"])
+    _event(conn, author, "place.merged", place_id,
+           {"taken_in": str(other_id), "name": other["name"], "kind": other["kind"], "access_points": len(nodes)})
+    _event(conn, author, "place.merged_into", other_id, {"into": str(place_id)})
+    _touch(conn, place_id, author)
+
+
+def around(conn, place_id: str) -> dict:
+    """What lies round a place and may belong to it.
+
+    `ends`: junctions within 300 m where a route ends and that are not arrival
+    points of this place, each with the routes there (and whether each ends
+    there or passes), and the place it belongs to if it belongs to another.
+    `places`: other places within 300 m, or of the same name within 3 km.
+    Measured from where the routes arrive (the primary arrival point).
+    """
+    if not conn.execute("SELECT 1 FROM core.place WHERE id = %s AND status = 'confirmed'", (place_id,)).fetchone():
+        raise NotFound("no such place")
+    here = """(SELECT p.id, p.name, coalesce(n.geom, p.geom) AS at FROM core.place p
+               LEFT JOIN core.node n ON n.id = p.primary_node_id WHERE p.id = %(id)s) here"""
+    ends = _rows(conn, f"""
+        SELECT n.id::text, {_LON.format(g="n.geom")} AS lon, {_LAT.format(g="n.geom")} AS lat,
+               round(ST_Distance(n.geom, here.at))::int AS metres, n.place_id::text AS place_id,
+               (SELECT o.name FROM core.place o WHERE o.id = n.place_id AND o.status = 'confirmed') AS place,
+               t.routes
+        FROM {here}, core.node n, LATERAL (
+            SELECT jsonb_agg(jsonb_build_object('id', r.id, 'code', r.code, 'version', r.version,
+                                                'ends_here', r.legs = 1) ORDER BY r.code) AS routes,
+                   bool_or(r.legs = 1) AS ends
+            FROM (SELECT rt.id, rt.code, rt.version, count(*) AS legs
+                  FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
+                  JOIN core.edge e ON e.id = l.edge_id AND e.status = 'active'
+                  JOIN core.edge_revision v ON v.id = e.current_revision_id
+                  WHERE n.id IN (v.a_node, v.b_node) AND v.a_node <> v.b_node
+                  GROUP BY rt.id, rt.code, rt.version) r) t
+        WHERE n.status = 'active' AND n.place_id IS DISTINCT FROM here.id
+          AND ST_DWithin(n.geom, here.at, %(near)s) AND t.ends
+        ORDER BY metres, n.id""", {"id": place_id, "near": NEARBY_M})
+    others = _rows(conn, f"""
+        SELECT o.id::text, o.name, o.kind, o.reviewed, round(ST_Distance(coalesce(pn.geom, o.geom), here.at))::int AS metres,
+               lower(o.name) = lower(here.name) AS same_name,
+               (SELECT count(*) FROM core.node x WHERE x.place_id = o.id AND x.status = 'active')::int AS access_points
+        FROM {here}, core.place o LEFT JOIN core.node pn ON pn.id = o.primary_node_id
+        WHERE o.status = 'confirmed' AND o.id <> here.id
+          AND (ST_DWithin(coalesce(pn.geom, o.geom), here.at, %(near)s)
+               OR (lower(o.name) = lower(here.name) AND ST_DWithin(coalesce(pn.geom, o.geom), here.at, %(same)s)))
+        ORDER BY metres, o.id""", {"id": place_id, "near": NEARBY_M, "same": SAME_NAME_M})
+    return {"ends": ends, "places": others}
+
+
 def detail(conn, place_id: str) -> dict:
     found = _rows(conn, f"""
         SELECT p.id, p.name, p.kind, p.version, p.primary_node_id, p.reviewed,
@@ -638,7 +716,12 @@ def collection(conn) -> dict:
                                      WHERE n.place_id = p.id AND n.status = 'active'),
                    'adopted_from', (SELECT sr.detail->>'anchor_id' FROM core.source_reference sr
                                     WHERE sr.subject_type = 'place' AND sr.subject_id = p.id
-                                      AND sr.ref_type = 'adopted_from' LIMIT 1))
+                                      AND sr.ref_type = 'adopted_from' LIMIT 1),
+                   'taken_in', (SELECT coalesce(jsonb_agg(sr.detail->>'anchor_id'), '[]')
+                                FROM core.succession s JOIN core.source_reference sr
+                                  ON sr.subject_type = 'place' AND sr.subject_id = s.old_id
+                                 AND sr.ref_type = 'adopted_from' AND sr.detail ? 'anchor_id'
+                                WHERE s.subject_type = 'place' AND s.new_id = p.id))
         FROM core.place p LEFT JOIN core.node pn ON pn.id = p.primary_node_id
         WHERE p.status = 'confirmed'
         UNION ALL

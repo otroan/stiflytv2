@@ -145,6 +145,9 @@ check("the editor opens one of your routes from its address", await until(`[...d
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
+check("a place says what lies round it", await js(`(async () => { const all = await get("places.geojson"), one = all.features.find(f => f.properties.type === "place"); if (!one) return true;
+  const found = await get("places/" + one.properties.id + "/around"); return Array.isArray(found.ends) && Array.isArray(found.places); })()`));
+
 // Changing things, where that was asked for: a name changed three times, taken back and brought back.
 if (EDIT) {
   editing = true;
@@ -193,12 +196,30 @@ if (EDIT) {
     await clickOn(`document.getElementById("undo")`);
     check("and Undo puts the end back", await until(`Boolean(openRoute) && openRoute.length.legs === ${legs}`, 20), await text("#undobar"));
   } else console.log("    (no route of a few stretches in one line was found: dragging an end is not tried)");
+  // Two places that are one: a place made where the route ends and one at the junction before it, by the
+  // same name. From the panel of the first, the other is taken in; Undo takes that back, and then the two.
+  const twice = await js(`(async () => { const ends = new Set(openRoute.ends.map(e => e.id)), end = openRoute.ends.find(e => !e.place);
+    const inner = end && openRoute.nodes.filter(n => !ends.has(n.id)).sort((p, q) => Math.hypot(p.lon - end.lon, p.lat - end.lat) - Math.hypot(q.lon - end.lon, q.lat - end.lat))[0];
+    if (!end || !inner) return null;
+    const name = "Trial hut " + Date.now() % 100000, a = await send("POST", "places/at-junction", { node_id: end.id, name }), b = await send("POST", "places/at-junction", { node_id: inner.id, name });
+    await refreshOwned(); await openPlace(a.id); return JSON.stringify({ a: a.id, b: b.id }); })()`);
+  if (twice && !twice.startsWith("EXCEPTION")) {
+    const { a, b } = JSON.parse(twice), take = `[...document.querySelectorAll("#place button")].find(x => x.textContent === "They are one place: take it in")`;
+    check("the panel of a place lists another of the same name near it", await until(`/Round this place/.test(document.getElementById("place").textContent) && Boolean(${take})`, 20), (await text("#place")).slice(250, 700));
+    await clickOn(take);
+    check("taken in, the two are one place with both arrival points", await until(`/Access points \\(2\\)/.test(document.getElementById("place").textContent) && !${take}`, 20), (await text("#place")).slice(0, 160));
+    check("and the other is no longer a place", await js(`get("places/${b}").then(() => false, () => true)`));
+    check("Undo offers to take that back", await until(`/Undo\\s*two places made one$/.test(document.getElementById("undo").textContent)`, 10), await text("#undo"));
+    for (let i = 0; i < 3; i++) { await clickOn(`document.getElementById("undo")`); await until(`!document.getElementById("undo").disabled`, 10); await sleep(400); }
+    check("and with the two places taken back as well, nothing of the trial is left", await js(`Promise.all([get("places/${a}").then(() => false, () => true), get("places/${b}").then(() => false, () => true)]).then(gone => gone.every(Boolean))`));
+  } else console.log(`    (no end without a place on a route of several stretches: making two places one is not tried) ${twice || ""}`);
   editing = false;
-} else console.log("    (not asked to change anything: undo, redo and dragging are not tried)");
+} else console.log("    (not asked to change anything: undo, redo, dragging and places are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
-check("and put up no box to say that something went wrong", said.length === 0, said.join(" | "));
-const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo"));      // that one was asked for as a reader, to be refused
+const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes
+check("and put up no box to say that something went wrong", boxes.length === 0, boxes.join(" | "));
+const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r)));      // that one was asked for as a reader, to be refused
 check("the service answered every request of its own", unasked.length === 0, unasked.join(" | "));
 check("nothing was changed", stopped.length === 0, stopped.join(" | "));
 console.log(failed.length ? `\n${failed.length} failed` : "\nall passed");
