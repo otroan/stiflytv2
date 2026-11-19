@@ -26,6 +26,7 @@ class Ask(BaseModel):
     tent: bool = Field(False, description="A day may end anywhere, not only at a hut")
     over_ice: bool = Field(False, description="Stretches over a glacier are walked too")
     back_to_start: bool = Field(False, description="The trip ends where it began")
+    mapped: bool = Field(True, description="Between the routes, also along mapped paths and roads")
 
 
 def register(app: FastAPI, read: ConnectionPool) -> None:
@@ -34,7 +35,8 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
         """A trip on foot that covers the routes asked for, with little walked twice, in days that end at huts."""
         with read.connection() as conn:
             return trips.for_routes(conn, routes=body.routes, area=body.area, start=body.start, hours=body.hours,
-                                    tent=body.tent, over_ice=body.over_ice, back_to_start=body.back_to_start)
+                                    tent=body.tent, over_ice=body.over_ice, back_to_start=body.back_to_start,
+                                    mapped=body.mapped)
 
 
 class PlanTrip(mcp.Args):
@@ -45,6 +47,8 @@ class PlanTrip(mcp.Args):
     tent: bool = Field(False, description="True: a day may end anywhere, not only at a hut")
     over_ice: bool = Field(False, description="True: stretches over a glacier are walked too")
     back_to_start: bool = Field(False, description="True: the trip ends where it began")
+    mapped: bool = Field(True, description="True: between the routes, and from where it begins, it may also go along "
+                                           "mapped paths (FKB) and roads (NVDB). False: only along the routes")
 
 
 @mcp.tool("Plan a trip that covers some routes", feature="trips")
@@ -52,11 +56,15 @@ def plan_trip(c: mcp.Call, a: PlanTrip) -> dict:
     """A trip on foot for whoever is to see to some routes (inspect them, mark them): it walks every stretch of
     them with as little as possible walked twice, and is cut into days that end at a hut. For each day: from
     where to where, how far, the climb, the walking time by Naismith's rule with no rests, which of the routes are
-    covered that day, and whether the day is longer than asked for because no hut lies nearer. Also what was left
-    out: routes that cannot be reached on foot, and what lies over water or ice. Give either `routes` or `area`."""
+    covered that day, whether the day is longer than asked for because no hut lies nearer, and walking
+    instructions (`steps`): along which route, path or road to where, and where a part is walked back the same way.
+    Also what was left out: routes that cannot be reached on foot, and what lies over water or ice; and `notes`.
+    Give either `routes` or `area`."""
     told = trips.for_routes(c.conn, routes=a.routes, area=a.area, start=a.start, hours=a.hours, tent=a.tent,
-                            over_ice=a.over_ice, back_to_start=a.back_to_start)
+                            over_ice=a.over_ice, back_to_start=a.back_to_start, mapped=a.mapped)
     for day in told["days"]:
         ends = day.pop("coords")
         day["ends_at"] = [round(ends[-1][0], 5), round(ends[-1][1], 5)]     # the line itself is for a map, not for words
+        for step in day["steps"]:
+            step.pop("at")
     return told

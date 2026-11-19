@@ -13,6 +13,7 @@ from stiflyt2.api.app import create_app
 from stiflyt2.config import settings
 from stiflyt2.domain import places, routes
 from stiflyt2.domain.places import Invalid, NotFound
+from stiflyt2.domain.routes import _Paths
 from stiflyt2.ops import trips
 
 AUTHOR = "Test Editor"
@@ -71,6 +72,50 @@ def test_a_line_of_huts_is_walked_once_and_a_spur_out_and_back():
     assert trips.plan(NET, PLACES, line, start="A", back_to_start=True)["total"]["twice_m"] == 23_000
 
 
+def test_each_day_says_how_it_is_walked_and_where_it_goes_back_the_same_way():
+    """The spur up to the top has one end only: it is walked out and back, and the instructions say so."""
+    both = {**{e: {"r1"} for e in ("ax", "xb", "by", "yc")}, "xt": {"r2"}}
+    told = trips.plan(NET, PLACES, both, start="A", hours=7)
+    first = [s["says"] for s in told["days"][0]["steps"]]
+    assert first == ["Along r1 to the junction with r2", "Along r2 to the end of r2",
+                     "Back the same way along r2 to the junction with r1", "Along r1 to Hut B"]
+    assert [s["says"] for s in told["days"][1]["steps"]] == ["Along r1 to Hut C"]
+    up, back = told["days"][0]["steps"][1:3]
+    assert (up["metres"], up["again"], back["metres"], back["again"], back["back"]) == (3000, False, 3000, True, True)
+    assert told["days"][0]["back_m"] == told["total"]["back_m"] == 3000 and told["total"]["off_route_m"] == 0
+    # Each instruction says which part of the day's line it is, and the parts follow one another.
+    day = told["days"][0]
+    assert day["steps"][0]["at"][0] == 0 and day["steps"][-1]["at"][1] == len(day["coords"]) - 1
+    assert all(a["at"][1] == b["at"][0] for a, b in zip(day["steps"], day["steps"][1:], strict=False))
+
+
+def test_between_routes_it_may_go_along_a_road_and_says_so():
+    """Two routes that no route joins, with a road between their ends: the road is walked from the one to the other."""
+    road = _Paths([(("vegnett", "Fjellvegen"), [(0.0, 0.0), (4000.0, 0.0)], [])])
+    made = trips._links(road, [("A", (0.0, 30.0)), ("B", (4000.0, -20.0)), ("Z", (2000.0, 900.0))])
+    assert {(s.kind, s.a, s.b, round(s.metres)) for s in made.values() if s.kind == "hop"} == {
+        ("hop", "A", "t:A", 30), ("hop", "B", "t:B", 20)}                         # Z lies too far off to be joined
+    assert [round(s.metres) for s in made.values() if s.kind == "road" and s.metres > 1] == [4000]
+    # (Lines are given here in metres; the planner is told of them in lon, lat. It needs no more than lengths.)
+    net = {s.id: s for s in (stretch("pa", "P", "A", 2), stretch("bq", "B", "Q", 2, codes=("r2",)))} | made
+    near = {"P": {"name": "Hut P", "kind": "hut"}, "Q": {"name": "Hut Q", "kind": "hut"}}
+    told = trips.plan(net, near, {"pa": {"r1"}, "bq": {"r2"}}, start="P", hours=10)
+    assert told["left_out"] == [] and told["covered"] == ["r1", "r2"]
+    assert [s["says"] for s in told["days"][0]["steps"]] == [
+        "Along r1 to the end of r1", "Along Fjellvegen to the end of r2", "Along r2 to Hut Q"]
+    assert told["total"]["off_route_m"] == 4030 and told["total"]["twice_m"] == 4050     # (the hop back onto r2 goes with r2)
+    # Without the road, the second route cannot be reached from the first, and is left out.
+    alone = trips.plan({k: v for k, v in net.items() if k in ("pa", "bq")}, near, {"pa": {"r1"}, "bq": {"r2"}}, start="P")
+    assert alone["left_out"] == ["r2"]
+    # A mapped path that lies along a route is that route, mapped: it counts for so much more that the route is walked.
+    along = _Paths([(("route", "pa"), [(0.0, -2000.0), (0.0, 0.0)], [])])
+    twin = _Paths([(("fkb_wfs", "p1"), [(5.0, -2000.0), (5.0, 0.0)], []), (("vegnett", "Fjellvegen"), [(0.0, 0.0), (4000.0, 0.0)], [])])
+    kept = trips._links(twin, [("A", (0.0, 30.0)), ("P", (0.0, -2000.0)), ("B", (4000.0, -20.0))], along)
+    assert {(x.kind, x.twin) for x in kept.values() if x.metres > 100} == {("path", True), ("road", False)}
+    side = trips.plan({**{k: v for k, v in net.items() if k in ("pa", "bq")}, **kept}, near, {"bq": {"r2"}}, start="P")
+    assert "Along r1" in side["days"][0]["steps"][0]["says"]
+
+
 def test_routes_apart_are_joined_by_the_way_between_them_and_what_cannot_be_reached_is_left_out():
     # Only the two ends are asked for: the way between them is walked to get from the one to the other, once.
     ends = {"ax": {"r1"}, "yc": {"r3"}}
@@ -82,7 +127,7 @@ def test_routes_apart_are_joined_by_the_way_between_them_and_what_cannot_be_reac
     assert told["left_out"] == ["r9"] and told["covered"] == ["r1", "r3"]
     # Begun at a hut that none of it can be reached from: said so, with where it would begin if left to it.
     apart = {**island, "qh": stretch("qh", "q", "H", 1, codes=("r9",))}
-    with pytest.raises(Invalid, match="no way over your routes leads on foot from Hut H to r1, r3: begin at Hut .*, or leave where it begins empty"):
+    with pytest.raises(Invalid, match="no way on foot leads from Hut H to r1, r3: begin at Hut .*, or leave where it begins empty"):
         trips.plan(apart, {**PLACES, "H": {"name": "Hut H", "kind": "hut"}}, ends, start="H", hours=10)
     with pytest.raises(Invalid, match="none of that can be walked"):
         trips.plan(NET, PLACES, {"not there": {"r1"}})
@@ -129,6 +174,10 @@ def test_a_route_of_yours_is_covered_from_the_hut_at_one_end_to_the_hut_at_the_o
 
     told = trips.for_routes(conn, routes=["BRE18"], hours=10)
     assert told["asked"] == told["covered"] == ["bre18"] and told["left_out"] == [] and told["not_on_foot"] == []
+    assert told["days"][0]["steps"][0]["says"].startswith("Along bre18 to ")
+    # The same, kept to the routes: nothing off them is needed here, so it is the same trip.
+    kept = trips.for_routes(conn, routes=["bre18"], hours=10, mapped=False)
+    assert kept["total"]["metres"] == told["total"]["metres"] and kept["notes"] == []
     assert told["total"]["new_m"] == pytest.approx(long, abs=5) and told["total"]["twice_m"] == 0
     assert [(d["routes"], d["long"]) for d in told["days"]] == [(["bre18"], False)]
     assert {told["days"][0]["from"]["place"], told["days"][0]["to"]["place"]} == {"Arentzbu", "Sprongdalshytta"}

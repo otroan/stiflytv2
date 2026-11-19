@@ -1210,23 +1210,44 @@ Naismith's rule with no rests, and which of the routes each day covers. Each
 day is a line in its own colour on the map, ending at its number, and can be
 taken out as a GPX file, alone or with the others.
 
+Each day comes with **walking instructions**: "Along bre59 to Skålabotn,
+6.2 km", "Back the same way along bre59 to Stølsdalen", "Along
+Sognefjellsvegen, the road Fortunsdalen and a path to Ormeli". What is
+walked a second time is dashed on the map, and the GPX file carries the
+instructions too.
+
+**Between routes** (on unless unticked) it may also go along mapped paths
+(FKB) and roads (NVDB): from where it begins to the routes, and from the end
+of one route to another, where that saves walking back the same way. They
+are looked for only within 1.5 km of the routes of the trip and of straight
+lines between their ends, and not at all in trips of more than 150 km of
+route (a whole area). A path or road that lies along a route is the route
+itself, mapped: the route is walked there. Their heights are not known, and
+they are timed as flat ground. OpenStreetMap is not used (ODbL).
+
 How it is worked out (`src/stiflyt2/ops/trips.py`): the stretches to cover
 are joined into one piece along the shortest ways between them; junctions
-where an odd number of them meet are paired off, nearest first, and the way
-between each pair is walked once more; then all of it can be walked in one
-go, and is cut into days at huts. A day may run up to an hour over to reach a
+where an odd number of them meet are paired off (nearest first, then pairs
+swapped wherever that is shorter), and where it begins and ends is chosen
+in the same pairing, as what leaves least to walk twice; the way between
+each pair is walked once more; then all of it can be walked in one go, and
+is cut into days at huts. Covering given stretches with the least walking
+is the Rural Postman Problem, which is NP-hard: this is a good answer, not
+always the best one. A day may run up to an hour over to reach a
 hut; where none lies within that, the day ends at a junction and says so (a
 night in a tent, or a day to walk on from). It says what it leaves out:
 routes no way on foot leads to, and what lies over water or ice.
 
-It reads the routes and keeps nothing. On two areas as they stood on
-2026-11-19: three routes at Gjende (jot2, jot6, jot88) come out as three
-days and 35 km, 4 km of it walked twice; all of Jotunheimen as 42 days, in
-under a second. A whole area in one trip is not how anybody walks, and many
+It reads the routes and keeps nothing. On the routes as they stood on
+2026-11-19: bre2, bre3 and bre59 from Fortun come out as three days and 40
+km (8.6 km of it by road to Ormeli); three routes at Gjende (jot2, jot6,
+jot88) from Gjendesheim as three days and 37 km; all of Jotunheimen as 39
+days. A few routes take some seconds, as the paths and roads round them
+are read. A whole area in one trip is not how anybody walks, and many
 of its days end where there is no hut: it is meant for a handful of routes.
 
 Over the API: `POST /api/v1/trips/plan` with `routes` (codes) or `area`,
-and `start`, `hours`, `tent`, `over_ice`, `back_to_start`. An assistant has
+and `start`, `hours`, `tent`, `over_ice`, `back_to_start`, `mapped`. An assistant has
 `plan_trip`, which it is told of only when the person has the feature.
 
 ## Setup

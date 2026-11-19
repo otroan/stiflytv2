@@ -57,10 +57,13 @@ step is still started on their word; the details of each are further down.
      have them), and which huts are open and which bridges are out, which
      UT.no has and we do not (the API client asked for below).
    - *For work* (built 2026-11-19 as the feature `trips`: README, "Trips
-     for work"; left: planning round what is known of a route, such as when
-     it was last inspected and what is to be mended, once that is kept;
-     going by a hut that lies off the way when none lies on it; several
-     short trips from where one can park, in place of one long). Through
+     for work"; with walking instructions and paths and roads between
+     routes since the same evening. Left: planning round what is known of
+     a route, such as when it was last inspected and what is to be mended,
+     once that is kept; going by a hut that lies off the way when none lies
+     on it; several short trips from where one can park, in place of one
+     long; heights for paths and roads off the routes; OpenStreetMap paths
+     between routes, which waits for a word on ODbL). Through
      the assistant: "these routes are to be inspected:
      propose a trip that covers them". Covering given stretches with the
      least walked twice, in days that end at a hut. Needs only what is ours
