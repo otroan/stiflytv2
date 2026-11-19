@@ -650,9 +650,13 @@ said to look after.
 
 Names of maintainers are compared without case, without spaces at the ends
 or doubled, and without the "DNT | " some of them begin with, so the ways
-Turrutebasen spells one association are one (`domain/whose.py`). And "DNT"
-alone counts as DNT Oslo og omegn's (decided 2026-11-20): in its areas many
-stretches say only that. The same rule chooses what "Make the clean lines
+Turrutebasen spells one association are one (`domain/whose.py`). Many
+routes all over the country say only "DNT". Such a route counts as DNT Oslo
+og omegn's where the routes it meets name DNT Oslo og omegn and no other
+association (decided 2026-11-20): in Femundsmarka and Rondane they lie among
+its routes, in Hardangervidda some lie among other associations'. A route of
+yours that says only "DNT" and meets others' routes is listed with "Whose?",
+for a person to judge. The same rule chooses what "Make the clean lines
 yours" makes, with a maintainer chosen: only their routes, and the huts and
 parking places where those end (`POST /api/v1/areas/{area}/places` and
 `…/routes`, both with `?maintainer=`).
