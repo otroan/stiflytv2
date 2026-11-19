@@ -2271,7 +2271,7 @@ function renderOwnedRoute(route, problem, note) {
   const tools = can ? el("div", { class: "actions", style: "margin-top:8px" },
       fixing ? el("button", { class: "btn main", onclick: () => setFixing(false) }, "Back to the route")
         : el("button", { class: "btn", title: "For when the line lies wrong on the map: move junctions, pull the line onto a path, divide a stretch", onclick: () => setFixing(true) }, "Fix the line itself"),
-      fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay it out again between points"),
+      fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay out again"),
       fixing || route.shape === "loop" ? "" : el("button", { class: "btn", title: "Then click a line the route does not use: a stretch of another route, or a line of Turrutebasen. The route is carried on along it from the end it meets.", onclick: startCarryingOn }, "Carry it on along another line…")) : "";
 
   const codeInput = el("input", { type: "text", value: route.code, "aria-label": "Code of the route", maxlength: 40, style: "width:9em" });
@@ -2402,7 +2402,7 @@ function renderOwnedRoute(route, problem, note) {
     tools,
     can ? el("div", { class: "actions" },
       !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: done }, "Done with this route") : "",
-      el("button", { class: "btn", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, maintainer, grading or description")) : "",
+      el("button", { class: "btn", title: "Its name, code, who maintains it, its grading and its description", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, grading…")) : "",
     edit, hands,
     route.description ? el("p", { style: "margin:8px 0;white-space:pre-wrap" }, route.description) : "",
     facts, profile, mapped,

@@ -179,7 +179,7 @@ path, routes without a name, temporary codes, and places where routes arrive
 at several spots.
 
 An open route is changed on the map itself. Its tools are at the top of its
-panel: "Fix the line itself", "Lay it out again between points", "Carry it on
+panel: "Fix the line itself", "Lay out again", "Carry it on
 along another line…", "Done with this route" and the form for its name and
 the rest; what a change did is said right under its name. Leaving the route
 (the list, previous and next, a search, a click on another route's line)
@@ -264,7 +264,7 @@ Turrutebasen candidate behind it: click where it starts and where it goes,
 and it is laid along the shortest way over your stretches and Turrutebasen's
 segments. More clicks steer it. The way is shown before anything is saved;
 give it a code and make it. A segment on the way that was nobody's stretch
-becomes yours then, and only then. "Lay it out again between points" in a
+becomes yours then, and only then. "Lay out again" in a
 route's panel replaces that route's stretches the same way, keeping its code,
 name and what is said about it.
 
@@ -403,7 +403,7 @@ the mapped path where it lands.
 
 A route can carry a description: where it goes when nothing on the ground
 shows it, what it asks of the one who walks it. It is written in the same
-form as the name ("Change name, code, maintainer, grading or description"),
+form as the name ("Change name, code, grading…"),
 shown under the name, and handed on in the export for UT.no.
 
 ### The description UT.no has
