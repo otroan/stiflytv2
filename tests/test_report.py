@@ -2,8 +2,10 @@
 import psycopg
 import pytest
 from conftest import role_dsn
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from stiflyt2.api.app import create_app
 from stiflyt2.cli import app as cli
 from stiflyt2.domain import report, routes, whose
 
@@ -88,10 +90,6 @@ def test_the_report_of_every_area_from_the_command_line(loaded):
 
 
 def test_who_maintains_routes_is_listed_by_the_ground_they_look_after(loaded):
-    from fastapi.testclient import TestClient
-
-    from stiflyt2.api.app import create_app
-
     with psycopg.connect(role_dsn("stiflyt2_api")) as conn:
         found = report.maintainers(conn, least_m=1)
         assert found and [m["metres"] for m in found] == sorted((m["metres"] for m in found), reverse=True)

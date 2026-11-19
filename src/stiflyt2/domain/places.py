@@ -504,8 +504,8 @@ def make_default(conn, area: str | None = None, maintainer: str | None = None) -
         inside = {a for (a,) in conn.execute(
             f"""SELECT DISTINCT e.anchor_id FROM source_index.route_end e
                 JOIN source_index.route r ON r.id = e.route_id
-                WHERE r.area_prefix = lower(%(a)s) AND {whose.sql("r.maintainers")}""",
-            {"a": area, "kin": whose.kin(maintainer)})}
+                WHERE r.area_prefix = lower(%(a)s) AND {whose.sql("r.maintainers", "r.id")}""",
+            {"a": area, **whose.params(conn, maintainer)})}
         current = {a: f for a, f in current.items() if a in inside}
     places = {anchor: (str(place_id), reviewed, fingerprint) for anchor, place_id, reviewed, fingerprint
               in conn.execute("""

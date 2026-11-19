@@ -550,8 +550,8 @@ def make_default(conn, area: str, maintainer: str | None = None) -> dict:
     candidates = _rows(conn, f"""
         SELECT r.id, r.label FROM source_index.route r
         JOIN source_index.route_shape s ON s.route_id = r.id
-        WHERE r.area_prefix = lower(%(a)s) AND s.shape = 'line' AND {whose.sql("r.maintainers")}
-        ORDER BY length(r.code), r.label""", {"a": area, "kin": whose.kin(maintainer)})
+        WHERE r.area_prefix = lower(%(a)s) AND s.shape = 'line' AND {whose.sql("r.maintainers", "r.id")}
+        ORDER BY length(r.code), r.label""", {"a": area, **whose.params(conn, maintainer)})
     withdrawn = withdrawn_by_a_person(conn) | set(taken_out_by_a_person(conn))
     taken = {code for (code,) in conn.execute(
         "SELECT lower(code) FROM core.route WHERE status = 'active'")}

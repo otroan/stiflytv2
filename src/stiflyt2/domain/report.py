@@ -133,7 +133,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
     """
     from stiflyt2.domain import whose
 
-    who = {"who": maintainer, "kin": whose.kin(maintainer)}
+    who = {"who": maintainer, **whose.params(conn, maintainer)}
     rows: dict[str, dict] = {}
 
     def row(area: str) -> dict:
@@ -146,7 +146,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
             SELECT DISTINCT {area} AS area, t.id, t.length_m AS m, t.marked, t.attrs->>'rutefolger' = 'VV' AS water
             FROM source_index.route r JOIN source_index.route_segment rs ON rs.route_id = r.id
             JOIN source_index.trail_segment t ON t.id = rs.segment_id
-            WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers") + """)
+            WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers", "rs.route_id") + """)
         SELECT area, coalesce(sum(m) FILTER (WHERE water IS NOT TRUE), 0),
                coalesce(sum(m) FILTER (WHERE water IS NOT TRUE AND marked), 0),
                coalesce(sum(m) FILTER (WHERE water IS NOT TRUE AND NOT marked), 0),
@@ -159,7 +159,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
             SELECT r.area_prefix, count(DISTINCT r.id), coalesce(sum(t.length_m), 0)
             FROM source_index.route r JOIN source_index.route_segment rs ON rs.route_id = r.id
             JOIN source_index.trail_segment t ON t.id = rs.segment_id
-            WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers") + """
+            WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers", "rs.route_id") + """
             GROUP BY 1""", who):
         row(area)["turrutebasen"].update(routes=n, route_m=round(metres))
 
@@ -174,7 +174,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
             SELECT {area} AS area, m.id AS route, m.reviewed, e.id AS edge, v.kind, v.marked, """ + _GROUND + """ AS m
             FROM mine m JOIN core.route_leg l ON l.route_id = m.id JOIN core.route t ON t.id = l.route_id
             JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
-            WHERE """ + whose.sql("coalesce(l.maintainers, t.maintainers)") + """),
+            WHERE """ + whose.sql("coalesce(l.maintainers, t.maintainers)", "(SELECT sr.detail->>'candidate_id' FROM core.source_reference sr WHERE sr.subject_type = 'route' AND sr.subject_id = t.id AND sr.ref_type = 'adopted_from' LIMIT 1)") + """),
         ground AS (SELECT DISTINCT area, edge, kind, marked, m FROM legs)
         SELECT g.area,
                (SELECT count(DISTINCT route) FROM legs x WHERE x.area IS NOT DISTINCT FROM g.area),

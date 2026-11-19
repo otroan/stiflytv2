@@ -529,11 +529,12 @@ const areaSelect = document.getElementById("area"), areaRoutes = document.getEle
 const whoSelect = document.getElementById("who"), reportBox = document.getElementById("report");
 let everyArea = [], sideBySide = null;      // sideBySide: { maintainer, areas, all } as last fetched
 const WHOSE = "stiflyt2.maintainer";
-// Whether a list of maintainers has this one, compared as the server does (domain/whose.py): no case, no "DNT | "
-// in front, and "DNT" alone counts as DNT Oslo og omegn's.
+// Whether a route is this maintainer's, as the server compares names (domain/whose.py): no case, no "DNT | " in
+// front. A route that says only "DNT" is DNT Oslo og omegn's where the server says so by the routes it meets
+// ("home"); one of yours that says only "DNT" and meets other associations' routes is listed too, to be judged.
 const whoseName = n => (n || "").trim().replace(/\s+/g, " ").replace(/^dnt ?\| ?/i, "").toLowerCase();
-const looksAfter = (list, who) => { const w = whoseName(who), kin = w === "dnt oslo og omegn" ? [w, "dnt"] : [w];
-  return (list || []).some(m => kin.includes(whoseName(m))); };
+const looksAfter = (r, who) => (r.maintainers || []).some(m => whoseName(m) === whoseName(who))
+  || (whoseName(who) === "dnt oslo og omegn" && (r.dnt === "home" || (r.dnt === "bare" && r.kind === "yours")));
 function listAreas() {
   const chosen = areaSelect.value, mine = sideBySide && sideBySide.maintainer ? new Map(sideBySide.areas.map(a => [a.area, a.turrutebasen])) : null;
   areaSelect.replaceChildren(el("option", { value: "" }, "Choose an area prefix…"),
@@ -675,10 +676,10 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     const STATUS = { work: ["Needs work", "tag"], check: ["To check", "tag ok"], done: ["Done", "tag yours"], "new": ["Not yours yet", "tag none"], gone: ["Withdrawn", "tag none"], disc: ["Discontinued", "tag none"] };
     // Whose routes: with a maintainer chosen at the top, only the routes that maintainer is said to look after
     // (on the route, or on a stretch of it). The others are a click away.
-    const whose = whoSelect.value, theirs = r => !whose || othersToo || looksAfter(r.maintainers, whose);
-    const hidden = whose ? report.all.filter(r => !looksAfter(r.maintainers, whose)).length : 0;
+    const whose = whoSelect.value, theirs = r => !whose || othersToo || looksAfter(r, whose);
+    const hidden = whose ? report.all.filter(r => !looksAfter(r, whose)).length : 0;
     // Clean lines not made yours yet, of the maintainer chosen: what the button makes yours.
-    const clean = report.all.filter(r => r.kind === "candidate" && !r.withdrawn && /^One clean line/.test(r.problems[0] || "") && (!whose || looksAfter(r.maintainers, whose))).length;
+    const clean = report.all.filter(r => r.kind === "candidate" && !r.withdrawn && /^One clean line/.test(r.problems[0] || "") && (!whose || looksAfter(r, whose))).length;
     const all = report.all.filter(theirs), counts = { all: all.length, work: 0, check: 0, done: 0, "new": 0, gone: 0, disc: 0 };
     for (const r of all) counts[statusOf(r)] += 1;
     if (areaFilter !== "all" && !counts[areaFilter]) areaFilter = "all";
@@ -691,6 +692,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
         el("span", { class: "code" }, r.code),
         el("span", { class: "grow" }, r.name || "", r.problems.length && (!r.done || r.discontinued) ? el("span", { class: "sub" }, `${r.name ? " " : ""}${r.problems[0]}${more}`) : ""),
         r.unpublished ? el("span", { class: "tag none", title: `Not published: ${r.unpublished}` }, "Not published") : "",
+        r.kind === "yours" && r.dnt === "bare" ? el("span", { class: "tag", title: "Turrutebasen says only “DNT” as its maintainer, and it meets routes of other associations: is it DNT Oslo og omegn’s? If not, withdraw it." }, "Whose?") : "",
         el("span", { class: cls }, word));
     }));
     const filter = el("div", { class: "filter", role: "group", "aria-label": "Which routes to list" },

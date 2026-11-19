@@ -6,11 +6,36 @@ from conftest import role_dsn
 from stiflyt2.domain import places, report, routes, whose
 
 
-def test_names_are_compared_without_case_or_the_dnt_in_front_and_dnt_alone_is_dnt_oslo_og_omegn():
+def test_names_are_compared_without_case_or_the_dnt_in_front():
     assert {whose.norm(n) for n in ("DNT | DNT Oslo og omegn", "DNT Oslo og Omegn", " DNT |  DNT Oslo og Omegn ",
                                     "dnt|dnt oslo og omegn")} == {"dnt oslo og omegn"}
-    assert whose.kin("DNT | DNT Oslo og omegn") == ["dnt oslo og omegn", "dnt"]
-    assert whose.kin("DNT | DNT Lillehammer") == ["dnt lillehammer"] and whose.kin("DNT") == ["dnt"] and whose.kin(None) is None
+    assert whose.kin("DNT | DNT Oslo og omegn") == ["dnt oslo og omegn"] and whose.is_home("dnt oslo og Omegn")
+    assert whose.kin("DNT | DNT Lillehammer") == ["dnt lillehammer"] and whose.kin(None) is None
+    assert whose.bare(["DNT", " dnt "]) and not whose.bare(["DNT", "DNT | DNT Telemark"]) and not whose.bare([])
+
+
+def test_a_route_that_says_only_dnt_is_dnt_oslo_og_omegns_where_it_meets_its_routes_and_no_one_elses(loaded):
+    """bre14 runs on bre18: said to be only DNT's, it is DNT Oslo og omegn's, until a route it meets is DNT Telemark's."""
+    with psycopg.connect(role_dsn("stiflyt2_import")) as c:
+        try:
+            label = dict(c.execute("SELECT label, id FROM source_index.route WHERE area_prefix = 'bre'").fetchall())
+            c.execute("UPDATE source_index.route SET maintainers = '{DNT}' WHERE label = 'bre14'")
+            whose._kept.clear()
+            assert label["bre14"] in whose.home_dnt(c)
+            # Asked of the database with the routes' ids: bre14 counts as DNT Oslo og omegn's, a name alone does not.
+            found = {lab for (lab,) in c.execute(
+                "SELECT r.label FROM source_index.route r WHERE r.area_prefix = 'bre' AND " + whose.sql("r.maintainers", "r.id"),
+                whose.params(c, "DNT Oslo og Omegn"))}
+            assert "bre14" in found and "bre14" not in {lab for (lab,) in c.execute(
+                "SELECT r.label FROM source_index.route r WHERE r.area_prefix = 'bre' AND " + whose.sql("r.maintainers"),
+                whose.params(c, "DNT Oslo og Omegn"))}
+            # A route it meets is another association's: then nobody can say from the routes whose it is.
+            c.execute("UPDATE source_index.route SET maintainers = '{DNT | DNT Telemark}' WHERE label = 'bre18'")
+            whose._kept.clear()
+            assert label["bre14"] not in whose.home_dnt(c)
+        finally:
+            c.rollback()
+            whose._kept.clear()
 
 
 @pytest.fixture
@@ -22,11 +47,11 @@ def conn(loaded):
 
 
 def test_an_area_is_made_yours_for_one_maintainer_only(conn):
-    # As the database compares them, the same as here.
-    said = conn.execute("SELECT m FROM unnest(%s::text[]) m WHERE " + whose.sql("ARRAY[m]").replace("%(kin)s", "%s"),
-                        (["DNT Oslo og Omegn", "DNT", "DNT | DNT Lillehammer", "Lom kommune"],
-                         whose.kin("DNT | DNT Oslo og omegn"), whose.kin("DNT | DNT Oslo og omegn"))).fetchall()
-    assert [m for (m,) in said] == ["DNT Oslo og Omegn", "DNT"]
+    # As the database compares them, the same as here: a name alone, "DNT" not among them.
+    said = conn.execute("SELECT m FROM unnest(%(names)s::text[]) m WHERE " + whose.sql("ARRAY[m]"),
+                        {"names": ["DNT Oslo og Omegn", "DNT", "DNT | DNT Lillehammer", "Lom kommune"],
+                         **whose.params(conn, "DNT | DNT Oslo og omegn")}).fetchall()
+    assert [m for (m,) in said] == ["DNT Oslo og Omegn"]
 
     clean = {label for (label,) in conn.execute(
         "SELECT r.label FROM source_index.route r JOIN source_index.route_shape s ON s.route_id = r.id "

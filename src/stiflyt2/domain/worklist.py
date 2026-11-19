@@ -72,8 +72,15 @@ def worklist(conn, area: str) -> dict:
 
     An area is a three-letter route code prefix, such as jot.
     """
+    from stiflyt2.domain import whose
+
     area = area.lower()
     items = []
+    home = set(whose.home_dnt(conn))       # candidates that say only "DNT" and are DNT Oslo og omegn's
+
+    def dnt(ids, names) -> str | None:
+        """For a route that says only "DNT": "home" where it is DNT Oslo og omegn's by its neighbours, else "bare"."""
+        return None if not whose.bare(names) else "home" if set(ids) & home else "bare"
     candidates = _rows(conn, """
         SELECT r.id, r.label, r.name, s.shape, s.pieces, s.ends, r.maintainers,
                round((r.length_m / 1000)::numeric, 1)::float8 AS length_km
@@ -88,7 +95,7 @@ def worklist(conn, area: str) -> dict:
             continue
         row = {"kind": "candidate", "id": c["id"], "code": c["label"], "km": c["length_km"],
                "name": None if (c["name"] or "Ukjent") == "Ukjent" else c["name"], "done": False,
-               "maintainers": sorted(c["maintainers"] or [])}
+               "maintainers": sorted(c["maintainers"] or []), "dnt": dnt([c["id"]], c["maintainers"])}
         rows.append(row)
         if c["label"] in taken_out:
             # A route of yours was made from it and no longer runs over it: a person took it out.
@@ -137,6 +144,12 @@ def worklist(conn, area: str) -> dict:
                       "problem": "shape", "text": f"Not yours yet: {what}"})
 
     mine = routes_of(conn, area)
+    made_from: dict[str, list] = {}
+    for route_id, candidate in conn.execute(
+            """SELECT subject_id::text, detail->>'candidate_id' FROM core.source_reference
+               WHERE subject_type = 'route' AND ref_type = 'adopted_from' AND subject_id = ANY(%s::uuid[])""",
+            ([str(m) for m in [*mine, *routes_of(conn, area, discontinued=True)]],)):
+        made_from.setdefault(route_id, []).append(candidate)
     mapped = routes.mapped_lines(conn)      # paths, and roads where they are loaded
     share = near_mapped(conn, mine, mapped)
     reviewed, yours = 0, []
@@ -145,6 +158,7 @@ def worklist(conn, area: str) -> dict:
         reviewed += r["reviewed"]
         yours.append({"id": r["id"], "code": r["code"], "name": r["name"] or r["generated_name"],
                       "reviewed": r["reviewed"], "shape": r["shape"], "maintainers": _who(r),
+                      "dnt": dnt(made_from.get(str(r["id"]), []), _who(r)),
                       "unpublished": r["unpublished"] and r["unpublished"]["why"],
                       "km": round(r["length"]["on_foot_m"] / 1000, 1)})
 
@@ -199,12 +213,12 @@ def worklist(conn, area: str) -> dict:
         r = routes.detail(conn, route_id)
         rows.append({"kind": "yours", "id": r["id"], "code": r["code"], "name": r["name"] or r["generated_name"],
                      "km": round(r["length"]["on_foot_m"] / 1000, 1), "done": r["reviewed"], "discontinued": True,
-                     "maintainers": _who(r),
+                     "maintainers": _who(r), "dnt": dnt(made_from.get(str(r["id"]), []), _who(r)),
                      "unpublished": r["unpublished"] and r["unpublished"]["why"],
                      "problems": [f"Discontinued since {r['discontinued']['since']:%-d %b %Y}: {r['discontinued']['why']}"]})
     for r in yours:
         rows.append({"kind": "yours", "id": r["id"], "code": r["code"], "name": r["name"], "km": r["km"],
-                     "done": r["reviewed"], "unpublished": r["unpublished"], "maintainers": r["maintainers"],
+                     "done": r["reviewed"], "unpublished": r["unpublished"], "maintainers": r["maintainers"], "dnt": r["dnt"],
                      "problems": [i["text"] for i in items if i["about"] == "route" and i["id"] == r["id"]]})
     rows.sort(key=lambda r: (len(r["code"].split("/")[0]), r["code"]))
     order = {"shape": 0, "network": 1, "geometry": 2, "name": 3, "place": 4, "code": 5, "end": 6}
