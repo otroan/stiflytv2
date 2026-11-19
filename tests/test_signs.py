@@ -217,7 +217,9 @@ def test_a_destination_the_routes_do_not_give_is_added_to_a_post_by_hand(conn):
 
     # A place on the way that is no hut gets no sign by the rule, and is added the same way: once.
     ends = {e["id"] for e in route["ends"]}
-    middle = places.at_node(conn, next(n["id"] for n in route["nodes"] if n["id"] not in ends), AUTHOR, "Midtveis")
+    free = [n["id"] for n in route["nodes"] if n["id"] not in ends and not conn.execute(
+        "SELECT place_id FROM core.node WHERE id = %s", (n["id"],)).fetchone()[0]]      # not one a hut has taken as its own
+    middle = places.at_node(conn, free[0], AUTHOR, "Midtveis")
     assert "Midtveis" not in [g["text"] for g in at_the_post()[1].values()]
     by_place = signs.add_destination(conn, AUTHOR, post["key"], place=str(middle))["key"]
     assert (at_the_post()[1][by_place]["text"], at_the_post()[1][by_place]["added"]) == ("Midtveis", True)
@@ -573,6 +575,15 @@ def test_the_front_door_is_operations_and_the_routes_have_an_address_of_their_ow
             assert client.post(f"{V1}/signs/orders", json={"area": "bre"}).status_code == 422       # nothing is marked
             named = [s["key"] for s in post["signs"] if not s["unnamed"]]
             if named:
+                # An item of work, over HTTP: what was decided so far is saved; a sign put on the order waits;
+                # discarded, it is off the order again and nothing waits.
+                assert client.post(f"{V1}/signs/work/save").json()["saved"] >= 1
+                assert client.post(f"{V1}/signs/to-order", json={"keys": named[:1], "why": "worn"}).json() == {"signs": 1}
+                assert [c["what"] for c in client.get(f"{V1}/signs/work").json()["changes"]] == ["1 sign put on the order"]
+                gone = client.post(f"{V1}/signs/work/discard")
+                assert gone.status_code == 200 and gone.json()["undone"] == ["1 sign put on the order"]
+                assert client.get(f"{V1}/signs/work").json() == {"changes": [], "in_the_way": None}
+                assert client.post(f"{V1}/signs/work/discard").status_code == 409
                 assert client.post(f"{V1}/signs/to-order", json={"keys": named, "why": "worn"}).json() == {"signs": len(named)}
                 order = client.post(f"{V1}/signs/orders", json={"area": "bre", "note": "From the test"})
                 assert order.status_code == 201 and order.json()["signs"] >= 1

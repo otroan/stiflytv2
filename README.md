@@ -1151,6 +1151,18 @@ forty signs put on the order in one go. What others have decided since stays;
 where that is about the same sign, nothing is done. An order that has been
 taken out stands (`GET` and `POST /api/v1/signs/undo`, `ops/undo.py`).
 
+**Save or discard.** As with the routes, what you have decided about signs
+since you last saved is an item of work, usually one sign site. A yellow box
+above "Undo" counts it ("2 changes not saved"), with **Save** (it stays) and
+**Discard** (all of it is taken back in one go). Leaving a sign site with
+decisions not saved asks which: save and go on, discard and go on, "same job:
+keep going" (the next site belongs to the same piece of work), or stay.
+Taking out an order saves: what has gone to whoever makes the signs is not
+discarded. A decision made with no sign site open and nothing else waiting is
+saved as it is made. Every decision is kept the moment it is made, for
+others too; where you last saved is kept on the server (`ops.saved`;
+`GET /api/v1/signs/work`, `POST /api/v1/signs/work/save` and `…/discard`).
+
 An assistant has the same (`signs`, `sign_site`, `sign_post`, `sign`,
 `new_sign_site`, `add_sign_destination`, `order_signs`, `signs_adrift`,
 `settle_adrift`, `undo_signs`), dry unless told otherwise; the operations

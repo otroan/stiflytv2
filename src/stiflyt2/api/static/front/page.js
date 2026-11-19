@@ -11,6 +11,7 @@ let several = null;              // the box on the map that asks which of severa
 let adrift = [];                 // what was decided about a sign, a post or a site that is no longer there
 let lookingAtAdrift = false;
 let undoable = null;             // your latest decision about signs, which an undo would take back
+let pending = { changes: [], in_the_way: null }, pendingRead = false, pendingGrew = false;     // what you have decided since you last saved
 let stakes = [], placing = null, editing = null;
 const chosen = new Set();        // the signs clicked, to be added to the order together
 let sought = "";                 // what is typed to find a site
@@ -30,8 +31,13 @@ function addressOf(at) {
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
 }
-function visit(next) {
+function visit(next, sure) {
   const to = { view, area, route, site: open, ...next };
+  // Leaving a sign site with decisions that are not saved: it is asked first what is to become of them.
+  if (!sure && view === "signs" && open && pending.changes.length && (to.view !== "signs" || to.area !== area || (to.site || null) !== open)) {
+    beforeLeavingSite(() => visit(next, true));
+    return Promise.resolve();
+  }
   const url = addressOf(to);
   if (url.href !== location.href) history.pushState(null, "", url);
   return arrive(to);
@@ -77,10 +83,18 @@ async function load() {
 async function lookForLoose() {
   const asked = area;
   try {
-    const [loose, mine] = await Promise.all([get("signs/adrift"), me.operates ? get("signs/undo") : { last: null }]);
+    let [loose, mine, work] = await Promise.all([get("signs/adrift"), me.operates ? get("signs/undo") : { last: null },
+      me.operates ? get("signs/work") : { changes: [], in_the_way: null }]);
     if (asked !== area) return;
+    // Decided with no sign site open, and nothing else waiting (signs put on the order from the list): that is
+    // no item of work to come back to, and is saved as it is made. Undo still takes it back.
+    if (pendingRead && work.changes.length && !pending.changes.length && !open) {
+      try { await send("POST", "signs/work/save"); work = { changes: [], in_the_way: null }; } catch { /* shown as not saved */ }
+    }
+    pendingGrew = pendingRead && work.changes.length > pending.changes.length;
+    pendingRead = true;
     const was = adrift.length;
-    adrift = loose; undoable = mine.last;
+    adrift = loose; undoable = mine.last; pending = work;
     renderUndo();
     // The side is drawn anew only when there is something new to say in it: a field being typed in would be emptied.
     if (view === "signs" && found && !open && (adrift.length !== was || lookingAtAdrift)) {

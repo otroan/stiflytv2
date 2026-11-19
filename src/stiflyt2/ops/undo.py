@@ -15,6 +15,10 @@ it, and nothing is done.
 An order that has been taken out stands: it has gone to whoever makes the
 signs. What was decided before it about the signs it holds stands with it.
 The events are never taken away: they show the change and that it was undone.
+
+What a person has decided since they last saved is their item of work
+(import migration 0015), as with the routes: `save` says it stays, `discard`
+takes all of it back. Taking out an order saves.
 """
 from __future__ import annotations
 
@@ -126,6 +130,50 @@ def undo(conn, author, txid: int | None = None) -> dict:
                     VALUES (%(who)s, %(how)s, 'action', %(id)s, 'undone', %(said)s)""",
                  {**_whose(author), "id": str(latest["txid"]), "said": Jsonb({"what": latest["what"]})})
     return {"undone": latest["what"], "next": last(conn, author)}
+
+
+def item(conn, author) -> dict:
+    """What the one who asks has decided since they last saved, and stands: their item of work, newest first.
+
+    Usually about one sign site. With what stands in the way of discarding it
+    as a whole: a later decision of somebody else's about the same sign, post
+    or site.
+    """
+    mine = _whose(author)
+    mark = conn.execute("SELECT txid FROM ops.saved WHERE who = %(who)s AND through = %(how)s", mine).fetchone()
+    changes = _rows(conn, """
+        SELECT u.txid, min(u.at) AS at FROM ops.undo_log u
+        WHERE u.undone_at IS NULL AND NOT u.stands AND u.txid > %(mark)s AND EXISTS (
+            SELECT 1 FROM ops.event e WHERE e.txid = u.txid AND e.who = %(who)s AND e.through = %(how)s)
+        GROUP BY u.txid ORDER BY u.txid DESC LIMIT 100""", {**mine, "mark": mark[0] if mark else 0})
+    for c in changes:
+        c["what"] = _describe(conn, c["txid"])
+    txids = [c["txid"] for c in changes]
+    late = _rows(conn, """
+        SELECT l.txid FROM ops.undo_log l JOIN ops.undo_log mine ON mine.tbl = l.tbl AND mine.key = l.key
+        WHERE mine.txid = ANY(%(t)s) AND l.txid > mine.txid AND l.undone_at IS NULL AND l.txid <> ALL(%(t)s)
+        ORDER BY l.txid DESC LIMIT 1""", {"t": txids}) if txids else []
+    return {"changes": changes, "in_the_way": _describe(conn, late[0]["txid"]) if late else None}
+
+
+def save(conn, author) -> dict:
+    """Say that what was decided since the last save is to stay: the item of work is done, and the next begins."""
+    n = len(item(conn, author)["changes"])
+    conn.execute("""INSERT INTO ops.saved (who, through, txid) VALUES (%(who)s, %(how)s, txid_current())
+                    ON CONFLICT (who, through) DO UPDATE SET txid = EXCLUDED.txid, at = now()""", _whose(author))
+    return {"saved": n}
+
+
+def discard(conn, author) -> dict:
+    """Take back all that was decided since the last save, in one go, newest first."""
+    now = item(conn, author)
+    if not now["changes"]:
+        raise Conflict("there is nothing that is not saved")
+    if now["in_the_way"]:
+        raise Conflict(f"{now['in_the_way']} came after, and is about the same sign, post or site: "
+                       "it cannot be discarded as a whole")
+    told = [undo(conn, author, c["txid"])["undone"] for c in now["changes"]]
+    return {"undone": told, "next": last(conn, author)}
 
 
 def stands(conn) -> None:

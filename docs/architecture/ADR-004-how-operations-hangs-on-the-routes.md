@@ -67,7 +67,12 @@ Every further part of operations would have had the same two faults.
    action. Undo takes back your own latest, made the way you ask (in the
    page, or through an assistant); what others have done since stays, and
    where that is about the same thing, nothing is done. This is the routes'
-   own undo (ADR-003, amendment 16) over again, for `ops`.
+   own undo (ADR-003, amendment 16) over again, for `ops`. And what a person
+   has decided since they last saved is an item of work, saved or discarded
+   as a whole and asked about when they leave what they were at (a sign
+   site), as with the routes (ADR-003, amendment 38). Operations has no
+   changesets: where each person last saved is a mark of its own
+   (`ops.saved`, import migration `0015`).
 
 7. **What has left the house stands.** An order that has been taken out has
    gone to whoever makes the signs: it cannot be undone, and it keeps what

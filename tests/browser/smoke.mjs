@@ -329,8 +329,34 @@ if (EDIT) {
     check("Discard takes back the whole item: both routes are as they were", await until(`unsaved.changes.length === 0`, 20) && await js(`Promise.all([get("owned/routes/${a.id}"), get("owned/routes/${b.id}")]).then(([x, y]) => x.name === ${JSON.stringify(wasA)} && y.name === ${JSON.stringify(was)})`));
     check("the panel has carrying on along another line as a tool of its own", await js(`[...document.querySelectorAll("#selected button")].some(x => x.textContent === "Carry it on along another line…")`));
   } else console.log("    (no two routes with a stretch of their own each: going from one to the other is not tried)");
+  // The signs: what is decided at a sign site is an item of work too. A sign is put on the order with real
+  // clicks; leaving the site asks; Discard takes it back; and saved, leaving asks nothing.
+  const among = await js(`localStorage.getItem("stiflyt2.area")`);
+  await open(`?area=${among}&view=signs`);
+  await until(`typeof view !== "undefined" && view === "signs" && Boolean(found) && me.operates && document.querySelectorAll("#panel li.hit").length > 0`, 40);
+  await clickOn(`document.querySelector("#panel li.hit")`);
+  const plate = `document.querySelector("#panel .plate:not([disabled])")`, onOrder = () => js(`found.sites.flatMap(s => s.posts.flatMap(q => q.signs)).filter(g => g.to_order).length`);
+  if (await until(`Boolean(open) && Boolean(${plate}) && pendingRead`, 20)) {
+    const before = await onOrder(), add = async () => { await clickOn(plate); await until(`chosen.size === 1`, 5); await clickOn(`[...document.querySelectorAll("#chosen button")].find(x => x.textContent.startsWith("Add to the order"))`); };
+    await add();
+    check("a decision about a sign is counted as not saved", await until(`/^1 change not saved/.test((document.querySelector("#undo .unsaved") || {}).textContent || "")`, 20) && await onOrder() === before + 1, await text("#undo"));
+    await clickOn(`document.querySelector("#panel .backbar button")`);
+    check("leaving the sign site asks first what is to become of it", await until(`document.getElementById("leave").open && document.querySelectorAll("#leave button").length === 4`, 10), await text("#leave"));
+    await clickOn(`[...document.querySelectorAll("#leave button")].find(x => x.textContent.startsWith("Stay at "))`);
+    check("Stay: the site is open as it was", await js(`Boolean(open) && !document.getElementById("leave").open && pending.changes.length === 1`));
+    await clickOn(`[...document.querySelectorAll("#undo .unsaved button")].find(x => x.textContent === "Discard")`);
+    check("Discard takes it back: the sign is off the order, and nothing waits", await until(`pending.changes.length === 0 && !document.querySelector("#undo .unsaved")`, 20) && await onOrder() === before && await js(`get("signs/work").then(w => w.changes.length === 0)`), await text("#undo"));
+    await add();
+    await until(`pending.changes.length === 1`, 20);
+    await clickOn(`[...document.querySelectorAll("#undo .unsaved button")].find(x => x.textContent === "Save")`);
+    check("Save says it stays", await until(`pending.changes.length === 0 && !document.querySelector("#undo .unsaved")`, 20) && await onOrder() === before + 1 && await js(`get("signs/work").then(w => w.changes.length === 0)`));
+    await clickOn(`document.querySelector("#panel .backbar button")`);
+    check("and saved, the site is left without a question", await until(`!open && !document.getElementById("leave").open`, 10));
+    await clickOn(`document.querySelector("#undo button.link")`);
+    check("Undo still takes a saved decision back: the trial leaves the order as it was", await until(`Boolean(found)`, 5) && await (async () => { for (let i = 0; i < 40; i++) { if (await onOrder() === before) return true; await sleep(250); } return false; })());
+  } else console.log("    (no sign that can be chosen at the first sign site: the item of work among the signs is not tried)");
   editing = false;
-} else console.log("    (not asked to change anything: undo, redo, dragging, places, saving and changing route are not tried)");
+} else console.log("    (not asked to change anything: undo, redo, dragging, places, saving, changing route and signs are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
 const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes

@@ -110,6 +110,13 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 #chosen { display: flex; align-items: center; gap: 8px; padding: 9px 16px; background: var(--ink); color: #fff; font-weight: 500; }
 #chosen .grow { flex: 1; }
 #undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
+#undo .unsaved { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff7dc; border: 1.5px solid #b07d00; border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; color: var(--ink); }
+#undo .unsaved strong { font-weight: 600; }
+#undo .unsaved.new { animation: took 0.9s ease-out; }
+@keyframes took { from { background: #ffd24a; box-shadow: 0 0 0 5px #ffd24a88; } to { background: #fff7dc; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { #undo .unsaved.new { animation: none; } }
+dialog#leave { border: 1.5px solid var(--sign); border-radius: 6px; padding: 16px 18px; max-width: 420px; font: inherit; color: var(--ink); }
+dialog#leave::backdrop { background: #0005; }
 #chosen button.btn.main { background: #fff; border-color: #fff; color: var(--ink); }
 #chosen button.btn { background: none; border-color: #fff8; color: #fff; }
 .plate.out .name { text-decoration: line-through; }

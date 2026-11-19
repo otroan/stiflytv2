@@ -141,11 +141,47 @@ function renderAdrift() {
 }
 // Your latest decision about signs, and the way to take it back. An order that has been taken out stands.
 const undoBar = document.getElementById("undo");
+// And what you have decided since you last saved: your item of work, usually one sign site. Save says it
+// stays; Discard takes all of it back. Every decision is kept the moment it is made, for others too.
+const countOf = n => `${n} change${n === 1 ? "" : "s"}`;
 function renderUndo() {
-  undoBar.hidden = !(view === "signs" && me.operates && undoable);
-  if (undoBar.hidden) return;
-  undoBar.replaceChildren(el("button", { class: "link", title: undoable.in_the_way ? `${undoable.in_the_way} came after, and is about the same sign` : "Takes back your latest decision about signs",
-    onclick: undoLast }, `Undo: ${undoable.what}`));
+  const n = pending.changes.length;
+  undoBar.hidden = !(view === "signs" && me.operates && (undoable || n));
+  if (undoBar.hidden) { undoBar.replaceChildren(); return; }
+  const box = n ? el("div", { class: pendingGrew ? "unsaved new" : "unsaved", role: "status" },
+    el("strong", {}, `${countOf(n)} not saved`), el("span", { class: "sub" }, `latest: ${pending.changes[0].what}`),
+    el("button", { class: "btn main", title: "Says these decisions are to stay, and ends this item of work. They are kept already, for others too.", onclick: saveSigns }, "Save"),
+    pending.in_the_way ? el("span", { class: "sub" }, `Cannot be discarded as a whole: ${pending.in_the_way} came after.`)
+      : el("button", { class: "btn", title: "Takes all of them back, in one go", onclick: discardSigns }, "Discard")) : "";
+  pendingGrew = false;
+  undoBar.replaceChildren(box, undoable ? el("button", { class: "link", title: undoable.in_the_way ? `${undoable.in_the_way} came after, and is about the same sign` : "Takes back your latest decision about signs",
+    onclick: undoLast }, `Undo: ${undoable.what}`) : "");
+}
+async function saveSigns() {
+  try { await send("POST", "signs/work/save"); pending = { changes: [], in_the_way: null }; problem = null; }
+  catch (err) { problem = err.message; }
+  render();
+  return !problem;
+}
+async function discardSigns() {
+  const n = pending.changes.length;
+  if (n > 3 && !confirm(`Discard your ${n} decisions about signs since you last saved?`)) return false;
+  await change(() => send("POST", "signs/work/discard"));
+  return !problem;
+}
+// Leaving the sign site that is open, with decisions not saved: save, discard, the same job, or stay.
+const leaveBox = document.getElementById("leave");
+function beforeLeavingSite(go) {
+  const n = pending.changes.length, site = found && found.sites.find(s => s.key === open), left = (site && site.name) || "this sign site", close = () => leaveBox.close();
+  leaveBox.replaceChildren(
+    el("h2", { style: "margin:0 0 4px;font-size:17px" }, `${countOf(n)} not saved`),
+    el("div", { class: "sub" }, `You are leaving ${left}. The latest: ${pending.changes[0].what}.`),
+    el("div", { class: "actions", style: "display:flex;flex-direction:column;align-items:stretch;gap:6px;margin-top:12px" },
+      el("button", { class: "btn main", title: "The decisions stay, and this item of work is done", onclick: async () => { close(); if (await saveSigns()) go(); } }, "Save, and go on"),
+      pending.in_the_way ? "" : el("button", { class: "btn", title: "All of them are taken back, in one go", onclick: async () => { close(); if (await discardSigns()) go(); } }, "Discard, and go on"),
+      el("button", { class: "btn", title: "What you do next belongs to the same piece of work, and is saved or discarded with this", onclick: () => { close(); go(); } }, "Same job: keep going"),
+      el("button", { class: "btn quiet", onclick: close }, `Stay at ${left}`)));
+  leaveBox.showModal();
 }
 function undoLast() {
   if (!undoable) return;

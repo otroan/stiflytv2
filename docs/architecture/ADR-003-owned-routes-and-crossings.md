@@ -384,8 +384,8 @@ are clean lines, and making each by hand was the bottleneck.
     brought back is unsaved again. Leaving a route asks which. It is not a
     draft: every change is in the data, for everybody, when it is made, and
     others are told who has unsaved changes to a route. A change made with
-    no route open is saved as it is made. Signs are to get the same, with
-    the sign site as the item; not built.
+    no route open is saved as it is made. Signs have the same since the
+    same day, with the sign site as the item (ADR-004, point 6).
 
 ## Built so far, and not yet
 

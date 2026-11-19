@@ -1330,6 +1330,7 @@ def take_out_order(conn, area: str, author, keys: list[str] | None = None, note:
                             AND to_type = %s AND to_id = %s AND route = %s""", (node, edge, to_type, to_id, apart))
     _event(conn, author, "order", str(order_id), "order.taken_out", {"signs": len(rows), "area": area.lower()})
     undo.stands(conn)           # it has gone to whoever makes the signs
+    undo.save(conn, author)     # and with it, what was decided up to now is saved
     return {"id": order_id, "signs": len(rows)}
 
 

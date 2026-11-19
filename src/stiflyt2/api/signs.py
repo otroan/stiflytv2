@@ -213,6 +213,24 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         with write.connection() as conn:
             return undo.undo(conn, author, body.txid if body else None)
 
+    @app.get(f"{V1}/work")
+    def item_of_work(author: Operator) -> dict:
+        """Your item of work among the signs: what you have decided since you last saved."""
+        with read.connection() as conn:
+            return undo.item(conn, author)
+
+    @app.post(f"{V1}/work/save")
+    def save_work(author: Operator) -> dict:
+        """Say that what you have decided since you last saved is to stay."""
+        with write.connection() as conn:
+            return undo.save(conn, author)
+
+    @app.post(f"{V1}/work/discard")
+    def discard_work(author: Operator) -> dict:
+        """Take back all that you have decided since you last saved, in one go."""
+        with write.connection() as conn:
+            return undo.discard(conn, author)
+
     @app.get(f"{V1}/orders")
     def earlier(area: Area) -> list[dict]:
         with read.connection() as conn:

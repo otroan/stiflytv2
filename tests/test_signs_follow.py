@@ -212,6 +212,7 @@ def test_what_is_decided_about_signs_can_be_taken_back_by_the_one_who_decided_it
     now = {g["key"]: g for _, _, g in every(signs.listing(conn, "bre"))}
     assert not now[one["key"]]["to_order"] and not now[two["key"]]["to_order"] and now[one["key"]]["text"] == one["text"]
     assert act(conn, lambda: undo.undo(conn, ola))["next"] is None
+
     back = next(p for _, p, _ in every(signs.listing(conn, "bre")) if p["key"] == post["key"])
     assert back["assumed"] and back["lon"] == pytest.approx(post["lon"], abs=1e-6)
     with pytest.raises(Conflict, match="nothing of yours"):
@@ -276,3 +277,36 @@ def test_the_page_and_an_assistant_have_what_is_adrift_and_the_undo(loaded, monk
         finally:
             assert client.delete(f"{v1}/owned/routes/{route['id']}").status_code == 204
         assert client.post(f"{v1}/changeset/close").status_code == 204
+
+
+def test_what_is_decided_about_signs_since_the_last_save_is_saved_or_discarded_as_a_whole(conn):
+    ola, assistant, kari = Author("Ola Nordmann", "viewer"), Author("Ola Nordmann", "mcp"), Author("Kari Nordmann", "viewer")
+    act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    for hut in ("place:799507", "place:27269"):
+        act(conn, lambda hut=hut: places.adopt(conn, hut, AUTHOR))
+    (_, _, one), (_, _, two) = every(signs.listing(conn, "bre"))[:2]
+    assert undo.item(conn, ola) == {"changes": [], "in_the_way": None}
+    with pytest.raises(Conflict, match="nothing that is not saved"):
+        undo.discard(conn, ola)
+    before = {g["key"]: (g["text"], g["to_order"]) for _, _, g in every(signs.listing(conn, "bre"))}
+    act(conn, lambda: signs.set_sign(conn, one["key"], ola, text="Til hytta"))
+    assert act(conn, lambda: undo.save(conn, ola)) == {"saved": 1} and undo.item(conn, ola)["changes"] == []
+    saved = {g["key"]: (g["text"], g["to_order"]) for _, _, g in every(signs.listing(conn, "bre"))}
+    assert saved != before
+    act(conn, lambda: signs.set_sign(conn, two["key"], ola, text="Til vannet"))
+    act(conn, lambda: signs.mark(conn, [one["key"], two["key"]], ola))
+    assert [c["what"] for c in undo.item(conn, ola)["changes"]] == ["2 signs put on the order", "what was said of a sign"]
+    assert undo.item(conn, kari)["changes"] == [] and undo.item(conn, assistant)["changes"] == []
+    # Kari decides something about one of the two since: his cannot be discarded over hers.
+    act(conn, lambda: signs.set_sign(conn, two["key"], kari, text="Karis tekst"))
+    with pytest.raises(Conflict, match="came after.*cannot be discarded as a whole"):
+        act(conn, lambda: undo.discard(conn, ola))
+    act(conn, lambda: undo.undo(conn, kari))
+    told = act(conn, lambda: undo.discard(conn, ola))
+    assert told["undone"] == ["2 signs put on the order", "what was said of a sign"]
+    assert {g["key"]: (g["text"], g["to_order"]) for _, _, g in every(signs.listing(conn, "bre"))} == saved
+    assert undo.item(conn, ola)["changes"] == [] and told["next"]["what"] == "what was said of a sign"
+    # An order taken out is the save: what went into it is not his to discard afterwards.
+    act(conn, lambda: signs.mark(conn, [one["key"]], ola))
+    act(conn, lambda: signs.take_out_order(conn, "bre", ola))
+    assert undo.item(conn, ola)["changes"] == []
