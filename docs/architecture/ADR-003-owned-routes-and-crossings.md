@@ -356,6 +356,23 @@ are clean lines, and making each by hand was the bottleneck.
     statistics belong to the area as a whole. Nothing is changed from there. Later parts of operations
     come in the same way: a part to choose beside the signs. Looking only
     is the reader role, which was there already; no new role was made.
+37. **A spot pointed at means what is under the pointer; a short gap is
+    crossed straight; and what was taken back can be brought back**
+    (2026-11-19, after an end and a way round had been refused in use where
+    a lay-out between points would have gone through). Moving an end and
+    sending a route another way take a reach, as wide as the pointer is on
+    the map. With one, a junction, a stretch or a mapped line counts only
+    within it: the 300 m for a stretch and 150 m for a mapped line are for
+    positions that are stated (an assistant, a script), not pointed at.
+    Where neither stretches nor mapped lines lead to the spot and it is at
+    most 500 m off, the route goes straight to it as a stretch in the
+    terrain, by the rule a lay-out between points already had. The page
+    asks what letting go would give while something is held (a dry run,
+    whose refusals are not kept as feedback) and shows it. Undo keeps the
+    rows as they stood when an action is taken back (domain migration
+    `d0016`), so that the one who took it back can bring it back, until
+    they change something else; and all of one's latest changes down to
+    one of them can be taken back in one go.
 
 ## Built so far, and not yet
 

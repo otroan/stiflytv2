@@ -169,8 +169,32 @@ if (EDIT) {
   await until(`document.querySelectorAll("#latest li button").length >= 3`);
   await clickOn(`document.querySelectorAll("#latest li button")[2]`);
   check("and the route is left as it was found", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)}`), await js("openRoute && openRoute.name"));
+  // An end dragged with the mouse to the junction before it: what that would give is shown while it is held,
+  // it is done when let go, and Undo takes it back.
+  const several = await js(`(() => { const n = {}; for (const f of ownedLines.features) for (const r of f.properties.routes) n[r.id] = (n[r.id] || 0) + 1;
+    return Object.keys(n).filter(id => n[id] >= 3 && n[id] <= 12).sort()[0] || null; })()`);       // a route of a few stretches, one line
+  if (several) { await js(`openOwnedRoute(${JSON.stringify(several)})`); await until(`Boolean(openRoute) && openRoute.id === ${JSON.stringify(several)}`, 20); }
+  const far = await js(`(() => { if (openRoute.shape !== "line") return null; const ends = new Set(openRoute.ends.map(e => e.id)), end = openRoute.ends[0];
+    const inner = openRoute.nodes.filter(n => !ends.has(n.id)).sort((a, b) => Math.hypot(a.lon - end.lon, a.lat - end.lat) - Math.hypot(b.lon - end.lon, b.lat - end.lat))[0];
+    if (!inner) return null;
+    map.fitBounds([[Math.min(end.lon, inner.lon), Math.min(end.lat, inner.lat)], [Math.max(end.lon, inner.lon), Math.max(end.lat, inner.lat)]], { padding: 260, animate: false, maxZoom: 16 });
+    return JSON.stringify({ end: [end.lon, end.lat], inner: [inner.lon, inner.lat], legs: openRoute.length.legs }); })()`);
+  if (far) {
+    const { end, inner, legs } = JSON.parse(far);
+    await until(`map.loaded() && map.queryRenderedFeatures({ layers: ["selected-nodes"] }).some(f => f.properties.end)`, 20); await sleep(600);
+    const from = await onMap(JSON.stringify(end)), to = await onMap(JSON.stringify(inner));
+    await mouse("mouseMoved", from.x, from.y); await sleep(150);
+    await mouse("mousePressed", from.x, from.y, 1);
+    for (let i = 1; i <= 12; i++) { await mouse("mouseMoved", from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12, 1); await sleep(30); }
+    check("held still, an end says what letting go there would give, before anything is changed", await until(`/^Let go: .* ends .*cut back by \\d+ stretch/.test(document.getElementById("hint").textContent) && openRoute.length.legs === ${legs}`, 15), await text("#hint"));
+    await mouse("mouseReleased", to.x, to.y);
+    check("let go, the route is cut back to there", await until(`Boolean(openRoute) && openRoute.length.legs < ${legs}`, 20), await js("openRoute && openRoute.length.legs"));
+    await until(`/end of .* moved/.test(document.getElementById("undo").textContent)`, 10);
+    await clickOn(`document.getElementById("undo")`);
+    check("and Undo puts the end back", await until(`Boolean(openRoute) && openRoute.length.legs === ${legs}`, 20), await text("#undobar"));
+  } else console.log("    (no route of a few stretches in one line was found: dragging an end is not tried)");
   editing = false;
-} else console.log("    (not asked to change anything: undo and redo are not tried)");
+} else console.log("    (not asked to change anything: undo, redo and dragging are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
 check("and put up no box to say that something went wrong", said.length === 0, said.join(" | "));

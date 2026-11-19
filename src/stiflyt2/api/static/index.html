@@ -341,8 +341,8 @@ const map = new maplibregl.Map({
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": C.sign, "line-width": width(2.6, 4.2) } },
       { id: "held-handle", type: "circle", source: "held", filter: ["==", ["geometry-type"], "Point"],
-        paint: { "circle-radius": ["match", ["get", "state"], "join", 11, "snap", 9, "held", 8, 7],
-                 "circle-color": ["match", ["get", "state"], "join", C.sign, "snap", C.sign, "#ffffff"],
+        paint: { "circle-radius": ["match", ["get", "state"], "join", 11, "snap", 9, "held", 8, "no", 8, 7],
+                 "circle-color": ["match", ["get", "state"], "join", C.sign, "snap", C.sign, "no", "#9aa3aa", "#ffffff"],
                  "circle-stroke-color": ["match", ["get", "state"], "join", "#ffffff", "snap", "#ffffff", C.sign],
                  "circle-stroke-width": 3 } },
       // Where the chosen area's network is not joined: a ring to look inside. Smaller for plain ends.
@@ -1387,7 +1387,7 @@ const ROUTE_EVENT = {
   "route.made": p => p.candidate ? `Made yours from ${p.candidate}, ${p.legs} legs`
     : `Laid out between ${(p.laid_out_between || []).map(s => typeof s === "string" ? s : "a junction").join(" and ")}, ${p.legs} stretches`,
   "route.laid_out_again": p => `Laid out again: ${p.to_legs} stretches, ${p.kept} of them as before`,
-  "route.end_moved": p => (p.round_trip ? "Closed as a round trip" : p.joined ? "Its pieces joined by moving an end" : `An end moved${typeof p.to === "string" ? ` to ${p.to}` : ""}`) + `: ${p.added} stretches added, ${p.dropped} left out` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : ""),
+  "route.end_moved": p => (p.round_trip ? "Closed as a round trip" : p.joined ? "Its pieces joined by moving an end" : `An end moved${typeof p.to === "string" ? ` to ${p.to}` : ""}`) + `: ${p.added} stretches added, ${p.dropped} left out` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : "") + (p.straight_m ? `, ${p.straight_m} m of it straight where nothing led` : ""),
   "route.sent_via": p => `Sent by way of ${typeof p.via === "string" ? p.via : "another spot"}: ${p.added} stretches in place of ${p.dropped}` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : ""),
   "route.joined_into": p => `Taken into ${p.into}`,
   "undone": p => `Taken back: ${p.what}`,
@@ -1715,6 +1715,7 @@ map.on("mousemove", e => {
     // Over the route's own other end: let go there, and it comes back to its start as a round trip.
     const other = drag.end && openRoute.pieces === 1 && openRoute.ends.find(n => n.id !== drag.end);
     const home = other && (p => Math.hypot(p.x - e.point.x, p.y - e.point.y) <= 14)(map.project([other.lon, other.lat]));
+    lookAhead(e.point, to, place);
     hintBox.textContent = home ? `Let go to make ${openRoute.code} a round trip: it comes back here, where it starts, another way than it went. Nothing of it is cut.`
       : drag.end ? (place ? `Let go to end ${openRoute.code} at this arrival point.` : `Let go to end ${openRoute.code} here. It follows the stretches that lead here, or the mapped paths and roads where none does; dropped on itself it is cut back.`)
       : `Let go to send ${openRoute.code} by way of this spot. No line is moved.`;
@@ -1732,11 +1733,52 @@ map.on("mousemove", e => {
     : drag.node ? "Let go to move the junction here." : "Let go to pull the line here.";
   hintBox.hidden = false;
 });
+// Looking ahead: while an end or the line is held still for a moment, the server is asked what letting go
+// there would give, and that is drawn and said before anything is changed. Nothing is kept of the asking.
+const plural = n => `${n} ${n === 1 ? "stretch" : "stretches"}`;
+function wouldBe(route, told, end) {
+  const longer = told.length_m - Math.round(route.length.on_foot_m + route.length.water_m);
+  const change = Math.abs(longer) < 1 ? "as long as now" : `${km(Math.abs(longer) / 1000)} ${longer > 0 ? "longer" : "shorter"}`;
+  const where = told.stops[end ? told.stops.length - 1 : 1].place;
+  const how = told.straight_m ? `straight for ${told.straight_m} m, since nothing leads here: a new stretch to say more about`
+    : told.mapped_m ? `along the mapped paths and roads for ${km(told.mapped_m / 1000)}, as ${plural(told.added)} that are new`
+    : told.added ? `along ${plural(told.added)} that ${told.added === 1 ? "is" : "are"} there` + (told.dropped ? `, leaving ${plural(told.dropped)}` : "")
+    : told.dropped ? `cut back by ${plural(told.dropped)}` : "";
+  if (told.round_trip) return `Let go: ${route.code} becomes a round trip, ${change}.`;
+  return `Let go: ${route.code} ${end ? "ends" : "goes by"} ${where ? (end ? `at ${where}` : where) : (end ? "here" : "this spot")}${how ? `, ${how}` : ""}. ${change[0].toUpperCase()}${change.slice(1)}.`;
+}
+function lookAhead(at, to, place) {
+  const d = drag;
+  clearTimeout(d.timer);
+  d.asked = (d.asked || 0) + 1;
+  const asked = d.asked, route = openRoute;
+  d.timer = setTimeout(async () => {
+    if (drag !== d || d.asked !== asked) return;
+    const spot = place ? place.geometry.coordinates : to;
+    const body = { version: route.version, lon: spot[0], lat: spot[1], reach_m: Math.min(500, Math.max(10, reachMetres(spot[1], 14))), dry_run: true, ...(d.end ? { end: d.end } : { edge_id: d.via }) };
+    let told = null, problem = null;
+    try {
+      const r = await fetch(new URL(`owned/routes/${route.id}/${d.end ? "end" : "via"}`, API), { method: "POST", headers: { "Content-Type": "application/json", "X-Stiflyt-Preview": "1", ...THROUGH }, body: JSON.stringify(body) });
+      if (r.ok) told = await r.json(); else problem = (await r.json().catch(() => ({}))).detail || `${r.status}`;
+    } catch { return; }
+    if (drag !== d || d.asked !== asked) return;     // let go, or moved on, in the meantime
+    d.ahead = told ? "yes" : "no";
+    if (told) {
+      const g = told.geometry || {}, lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : (g.geometries || []).map(x => x.coordinates);
+      hold([...lines.map(c => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: c } })), point(to, place ? "join" : "snap")]);
+      hintBox.textContent = wouldBe(route, told, Boolean(d.end));
+    } else {
+      hold([point(to, "no")]);
+      hintBox.textContent = `Not here: ${typeof problem === "string" ? problem : "that cannot be done"}.`;
+    }
+  }, 220);
+}
 // Letting go. What was dragged stays drawn where it was let go until the change has come back from the
 // server and is drawn: otherwise the line jumps back to where it was, and then on to where it is.
 let settling = false;
 function endDrag(keep) {
   const d = drag;
+  if (d) clearTimeout(d.timer);
   drag = null;
   hintBox.style.pointerEvents = "";
   map.setLayoutProperty("glue", "visibility", "none");
@@ -1764,7 +1806,7 @@ map.on("mouseup", e => {
   if (!d || !d.moved) return;   // not moved: it was a click
   const to = e.lngLat;
   if (d.end || d.via) {
-    const route = openRoute, plural = n => `${n} ${n === 1 ? "stretch" : "stretches"}`;
+    const route = openRoute;
     attempt(async () => {
       // A drop on a marker means that spot exactly; near a junction means the junction, as wide as 14 pixels are now.
       const spot = map.queryRenderedFeatures(around(e.point, 12), { layers: ["owned-places", "owned-access"] })[0];
@@ -1776,6 +1818,7 @@ map.on("mouseup", e => {
           + (t.mapped_m ? `, the last ${km(t.mapped_m / 1000)} along the mapped paths and roads, as ${plural(t.added)} of yours that are new. Say what they are (marked, signed) by clicking them.` : t.added ? `, carried on along ${plural(t.added)}.` : ".")
           + " Nothing of it was cut. To change it, take a stretch out of it: that opens it again.";
         if (t.joined) return `The pieces of ${route.code} are joined: it is one line now` + (t.added ? `, carried on along ${plural(t.added)}` : "") + (t.mapped_m ? `, ${km(t.mapped_m / 1000)} of it new along mapped paths and roads` : "") + ".";
+        if (t.straight_m) return `${route.code} now ends ${where ? `at ${where}` : "where you let go"}. Nothing led there, so it goes straight for ${t.straight_m} m, as one new stretch of yours. Say what it is (a path, marked, signed) by clicking it.`;
         if (t.mapped_m) return `${route.code} now ends ${where ? `at ${where}` : "where you let go"}. No stretch led there, so it was carried on ${km(t.mapped_m / 1000)} along the mapped paths and roads, as ${plural(t.added)} of yours that are new. Say what they are (marked, signed) by clicking them.`;
         return `${route.code} now ends ${where ? `at ${where}` : "where you let go"}` + (t.added ? `, carried on along ${plural(t.added)}` : "")
           + (t.dropped ? `${t.added ? "; " : ", cut back by "}${plural(t.dropped)}${t.added ? " left out" : ""}` : "") + (t.new ? `. ${plural(t.new)} came new from Turrutebasen` : "")

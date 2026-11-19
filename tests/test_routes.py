@@ -888,10 +888,52 @@ def test_an_end_is_carried_on_along_mapped_paths_where_no_stretch_leads(loaded, 
                                 "WHERE id = %s", (tx, ty, moved["id"])).fetchone()[0]
             assert after["history"][0]["type"] == "route.end_moved" and after["history"][0]["payload"]["along_mapped_m"] > 690
 
-            # Where nothing is mapped either, it says so and nothing is changed.
-            with pytest.raises(routes.Invalid, match="no mapped path or road lies within 150 m"):
+            # Where nothing is mapped either, and it is far, it says so and nothing is changed.
+            with pytest.raises(routes.Invalid, match="no mapped path or road lies within 150 m.*further than the 500 m"):
                 routes.move_end(conn, route, after["version"], AUTHOR, moved["id"], off_lon, off_lat)
             assert routes.detail(conn, route)["length"] == after["length"]
+
+            # A short way off with nothing mapped, it goes straight there, as between two points laid out:
+            # one stretch in the terrain, for a person to say what it is.
+            near_lon, near_lat = conn.execute(
+                "SELECT ST_X(g), ST_Y(g) FROM ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 25833), 4326) g",
+                (tx + 300, ty + 250)).fetchone()
+            shown = routes.move_end(conn, route, after["version"], AUTHOR, moved["id"], near_lon, near_lat, dry_run=True)
+            assert (shown["added"], shown["mapped_m"]) == (1, 0) and 380 < shown["straight_m"] < 400
+            assert routes.detail(conn, route)["length"] == after["length"]
+            told = routes.move_end(conn, route, after["version"], AUTHOR, moved["id"], near_lon, near_lat)
+            hopped = routes.detail(conn, route)
+            assert hopped["shape"] == "line" and told["straight_m"] == shown["straight_m"]
+            assert conn.execute("""
+                SELECT count(*), round(sum(ST_Length(v.geom)))::int FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+                JOIN core.edge_revision v ON v.id = e.current_revision_id
+                WHERE l.route_id = %s AND v.kind = 'off_trail' AND v.origin = 'drawn'""", (route,)).fetchone() == (1, told["straight_m"])
+            assert hopped["history"][0]["payload"]["straight_m"] == told["straight_m"]
+            there = next(e for e in hopped["ends"] if e["id"] not in {x["id"] for x in after["ends"]})
+
+            # Pointed at on the map (a reach is given), a spot means what is under the pointer: 100 m beside
+            # the route's own last stretch is not that stretch, and the route goes straight on to the spot.
+            beside_lon, beside_lat = conn.execute(
+                "SELECT ST_X(g), ST_Y(g) FROM ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 25833), 4326) g",
+                (tx + 86, ty + 202)).fetchone()
+            given = routes.move_end(conn, route, hopped["version"], AUTHOR, there["id"], beside_lon, beside_lat, dry_run=True)
+            assert (given["added"], given["dropped"]) == (0, 1)     # a position somebody gave: the stretch 100 m off is meant
+            pointed = routes.move_end(conn, route, hopped["version"], AUTHOR, there["id"], beside_lon, beside_lat,
+                                      reach_m=15, dry_run=True)
+            assert (pointed["added"], pointed["dropped"]) == (1, 0) and 214 < pointed["straight_m"] < 224
+            assert routes.detail(conn, route)["length"] == hopped["length"]
+
+            # Let go on the arrival point of a hut that lies beside the end, with no stretch to it: the end
+            # itself is the nearest junction, but the mark is what was meant.
+            hut = routes._node_at(conn, f"SRID=25833;POINT({tx + 300 + 12:.2f} {ty + 250 + 16:.2f})")
+            places.at_node(conn, hut, AUTHOR, "Hytta ved enden")
+            hut_lon, hut_lat = conn.execute("SELECT ST_X(g), ST_Y(g) FROM (SELECT ST_Transform(geom, 4326) AS g "
+                                            "FROM core.node WHERE id = %s) n", (hut,)).fetchone()
+            now = routes.detail(conn, route)
+            told = routes.move_end(conn, route, now["version"], AUTHOR, there["id"], hut_lon, hut_lat)
+            assert (told["added"], told["straight_m"], told["stops"][-1]["place"]) == (1, 20, "Hytta ved enden")
+            with pytest.raises(routes.Invalid, match="already ends there"):
+                routes.move_end(conn, route, routes.detail(conn, route)["version"], AUTHOR, hut, hut_lon, hut_lat)
         finally:
             conn.rollback()
 
@@ -953,6 +995,10 @@ def test_a_route_is_sent_another_way_along_mapped_paths_where_no_stretch_leads(l
                                     round_[2]).fetchone()
             shown = routes.send_via(conn, route, before["version"], AUTHOR, only, lon, lat, dry_run=True)
             assert shown["mapped_m"] > 600 and routes.detail(conn, route)["length"] == before["length"]
+            # Pointed at from far out on the map, the nearest thing of the route's own lies within reach of the
+            # pointer. That is not "the route already goes there": the mapped path under the pointer is meant.
+            wide = routes.send_via(conn, route, before["version"], AUTHOR, only, lon, lat, reach_m=500, dry_run=True)
+            assert wide["mapped_m"] == shown["mapped_m"] and routes.detail(conn, route)["length"] == before["length"]
 
             told = routes.send_via(conn, route, before["version"], AUTHOR, only, lon, lat)
             after = routes.detail(conn, route)

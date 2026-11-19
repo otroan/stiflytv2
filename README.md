@@ -171,6 +171,18 @@ which stretches the route uses; no line is moved and no other route changes.
   maintains it there. Click a line that is not part of the route to carry the
   route on along it.
 
+While an end or the line is held still for a moment, the map shows the route
+as it would be if you let go there, and the box at the top says it in words:
+where it would end, along what, and how much longer or shorter it gets. Where
+it cannot be done, it says "Not here" and why. Nothing is changed until you
+let go.
+
+**What the pointer means.** A spot on the map means what lies under the
+pointer, as wide as it is (about 14 pixels, never less than 10 m or more than
+50 m): a junction or an arrival point first, then a stretch of yours, then a
+mapped path or road. Zoom in to point more exactly. What lies further off is
+not meant: an end let go 100 m beside a path does not jump to the path.
+
 **Fixing the line itself** is asked for ("Fix the line itself"), because a
 stretch is shared by every route on it. A badge on the map says so while it
 is on.
@@ -299,8 +311,25 @@ follow. It ends at a place's arrival point or a junction of yours if one lies
 where it was dropped. Whether the new stretches are marked and signed is not
 known until you say so.
 
+**Straight, over a short gap.** Where the mapped paths and roads do not lead
+there either (none at the end, none where you let go, the two not joined, or
+joined only far round) and the spot is no more than 500 m off, the route goes
+straight to it, as a way laid out between two points does: one new stretch
+"in the terrain", for you to say what it is. That is how an end is taken the
+last metres to a hut's arrival point, or over a gap in what is mapped.
+Further than 500 m it is refused: over open ground or ice a route is laid out
+between points. Let go on an arrival point that lies beside the route's end
+with no stretch to it, the route is carried on to it the same way.
+
+(Over the API and for an assistant, a position given with no `reach_m` is not
+pointed at but stated: a stretch within 300 m or a mapped line within 150 m
+of it is what is meant, as before.)
+
 The same holds for the line: dragged to a spot that no stretch leads to, the
-route goes there along the mapped paths and roads. From the spot the mapped
+route goes there along the mapped paths and roads. That is also tried where
+the junction nearest the spot is one the route passes already: the mapped
+line under the pointer is what was meant, and "the route already goes there"
+is said only when it does. From the spot the mapped
 lines are followed towards each end of the route until they meet it; between
 those two meeting points the route takes the new way, and before and after it
 runs as it did. The stretches it leaves stay for the routes that share them.

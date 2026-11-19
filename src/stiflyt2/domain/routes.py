@@ -1607,9 +1607,14 @@ class _Net:
             for edge in _segment_edges(conn, author, "t.id = %(id)s", segment):
                 self.fresh[edge] = segment
 
-    def stop(self, x: float, y: float, reach: float, what: str = "that point") -> str:
-        """The junction a point means: one within reach, else the spot on the nearest stretch, divided there."""
-        here = {"x": x, "y": y, "reach": reach, "far": max(reach, WAY_LINE_M)}
+    def stop(self, x: float, y: float, reach: float, what: str = "that point", far: float | None = None) -> str:
+        """The junction a point means: one within reach, else the spot on the nearest stretch, divided there.
+
+        How far off a stretch may lie and still be meant: 300 m for a point given by its position (a hut
+        beside the path), or `far` where the point was pointed at on the map and means what is under it.
+        """
+        far = max(reach, WAY_LINE_M) if far is None else far
+        here = {"x": x, "y": y, "reach": reach, "far": far}
         node = self.conn.execute(f"""
             SELECT n.id::text FROM (SELECT ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 25833) AS g) p, core.node n
             WHERE n.status = 'active' AND ST_DWithin(n.geom, p.g, %(reach)s) AND EXISTS (
@@ -1624,7 +1629,7 @@ class _Net:
             WHERE {_WALKED} AND ST_DWithin(r.geom, p.g, %(far)s)
             ORDER BY r.geom <-> p.g LIMIT 1""", here).fetchone()
         if not line:
-            raise NoWay(f"no stretch within {WAY_LINE_M} m of {what}")
+            raise NoWay(f"no stretch within {far:.0f} m of {what}")
         if line[1] > reach:
             # The point was not put on a stretch. Where a mapped path or road lies clearly nearer
             # it than any stretch does, that is what was pointed at.
@@ -2030,13 +2035,20 @@ def _draw_along(conn, author: str, found: list, from_node: str, from_xy: tuple |
     return made
 
 
-def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, to: tuple, reach: float) -> dict:
+def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, to: tuple, reach: float,
+                   mapped_reach: float = MAPPED_REACH_M) -> dict:
     """Carry a route on from an end to a spot where no stretch leads: along the mapped paths and roads.
 
     The way becomes new stretches of yours, one for each run of paths and each
     run of roads, drawn along the mapped lines. It ends at a place's arrival
     point or a junction of yours if one lies where it was dropped, else on the
     mapped line nearest that spot.
+
+    Where the mapped lines do not lead there either (none at the end, none at
+    the spot, the two not joined, or joined only far round) and the spot is no
+    further off than a hop, the route goes straight to it, as a way laid out
+    between two points does: one stretch in the terrain, for a person to say
+    what it is.
     """
     nodes, edges, rest, pieces = _piece_of(conn, route_id, end_node)
     a = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = %s", (end_node,)).fetchone()
@@ -2045,17 +2057,22 @@ def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, t
         raise Invalid("that is more than 30 km away: carry the route on in steps")
     paths = _Paths.near(conn, f"SRID=25833;LINESTRING({a[0]:.1f} {a[1]:.1f},{to[0]:.1f} {to[1]:.1f})",
                         margin=max(400.0, 0.75 * straight))
-    start, end = paths.attach(a, REACH_M), paths.attach(to, MAPPED_REACH_M)
-    if not start["tied"]:
-        raise NoWay(f"no stretch leads there, and no mapped path or road lies within {REACH_M} m of that end of the route")
-    if not end["tied"]:
-        raise NoWay(f"no stretch leads there, and no mapped path or road lies within {MAPPED_REACH_M} m "
-                    f"of where the end was dropped")
-    found = paths.parts(start, end)
-    if not found:
-        raise NoWay("neither your stretches nor the mapped paths and roads join that end to where it was dropped")
-    metres = sum(_Paths.along(part) for part, _ in found)
-    if metres > 4 * straight + 500:
+    start, end = paths.attach(a, REACH_M), paths.attach(to, mapped_reach)
+    found = paths.parts(start, end) if start["tied"] and end["tied"] else None
+    metres = sum(_Paths.along(part) for part, _ in found) if found else 0.0
+    hop = not found or metres > 4 * straight + 500
+    if hop and straight > HOP_M:
+        further = f": that is further than the {HOP_M} m a route goes straight where nothing leads"
+        if not start["tied"]:
+            raise NoWay(f"no stretch leads there, and no mapped path or road lies within {REACH_M} m of that end "
+                        f"of the route{further}")
+        if not end["tied"]:
+            raise NoWay(f"no stretch leads there, and no mapped path or road lies within {mapped_reach:.0f} m "
+                        f"of where the end was dropped{further}. Over open ground or ice, lay the route out "
+                        f"between points instead")
+        if not found:
+            raise NoWay("neither your stretches nor the mapped paths and roads join that end to where it was "
+                        f"dropped{further}")
         raise Invalid(f"the mapped way there is {metres / 1000:.1f} km for {straight / 1000:.1f} km as the crow flies: "
                       f"carry the route on in steps")
     # Where it ends: an arrival point or a junction of yours at the spot, else the mapped line there.
@@ -2067,8 +2084,20 @@ def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, t
               WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node) AND e.id <> ALL(%(fresh)s::uuid[])))
         ORDER BY n.place_id IS NULL, n.geom <-> p.g LIMIT 1""",
         {"x": to[0], "y": to[1], "from": end_node, "reach": max(reach, WAY_NODE_M), "fresh": list(net.fresh)}).fetchone()
-    last = at[0] if at else _node_at(conn, f"SRID=25833;POINT({end['foot'][0]:.2f} {end['foot'][1]:.2f})")
+    tip = (at[1], at[2]) if at else tuple(end["foot"]) if end["tied"] else to
+    last = at[0] if at else _node_at(conn, f"SRID=25833;POINT({tip[0]:.2f} {tip[1]:.2f})")
     round_trip = last == nodes[0] and pieces == 1
+    if hop:
+        line = _line(conn, [tuple(a), tip])
+        if last == end_node or line["planar"] < NODE_M:
+            raise Invalid("the route already ends there")
+        made = [_new_edge(conn, author, "ST_SetSRID(ST_GeomFromText(%(wkt)s), 25833)", {"wkt": line["wkt"]},
+                          end_node, last, "off_trail", "drawn", None, None)]
+        _relay(conn, route_id, edges + made + rest, pieces, round_trip)
+        told = net.told(edges + made + rest, [nodes[0], last])
+        told.update(cut_m=0, added=1, dropped=0, segments=[], mapped_m=0, straight_m=round(line["planar"]),
+                    round_trip=round_trip, joined=pieces > 1 and _graph(conn, route_id)["shape"] == "line")
+        return told
     if round_trip:
         # Back to its own start: by another way than it came, or it is no round trip.
         way = _line(conn, [c for part, _ in found for c in part])
@@ -2098,20 +2127,35 @@ def _end(conn, route_id: str, author: str, end_node: str, lon: float, lat: float
     ex, ey = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = %s", (end_node,)).fetchone()
     net = _Net(conn, author, [(ex, ey), (x, y)], only)
     reach = min(reach_m or WAY_NODE_M, 500)
+    # With a reach, the spot was pointed at on a map: it means what lies under the pointer, as wide as that
+    # is, and nothing further off. Without, it is a position somebody gave, and a line near it is meant.
+    pointed = reach_m is not None
     try:
         # Finding the spot may divide a stretch. Where no way is found, that is not to stay.
         with conn.transaction():
-            return _end_over_stretches(conn, net, route_id, end_node, x, y, reach)
+            return _end_over_stretches(conn, net, route_id, end_node, x, y, reach, reach if pointed else None)
     except NoWay:
-        return _onward_mapped(conn, net, route_id, author, end_node, (x, y), reach)
+        return _onward_mapped(conn, net, route_id, author, end_node, (x, y), reach,
+                              reach if pointed else MAPPED_REACH_M)
 
 
-def _end_over_stretches(conn, net: _Net, route_id: str, end_node: str, x: float, y: float, reach: float) -> dict:
-    to = net.stop(x, y, reach, "where the end was dropped")
+def _end_over_stretches(conn, net: _Net, route_id: str, end_node: str, x: float, y: float, reach: float,
+                        far: float | None = None) -> dict:
+    to = net.stop(x, y, reach, "where the end was dropped", far)
     # Again: finding the spot may have divided a stretch. Walked from the end that stays; of a
     # route in pieces, the piece that has this end, with the other pieces left as they are.
     nodes, edges, rest, pieces = _piece_of(conn, route_id, end_node)
     if to == end_node:
+        # The end itself is the nearest junction with a stretch. Let go on another mark right there (an arrival
+        # point beside it that no stretch leads to), that mark is what was meant: it is carried on to it.
+        if conn.execute("""
+                SELECT 1 FROM core.node n WHERE n.status = 'active' AND n.id <> %(end)s
+                  AND ST_DWithin(n.geom, ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 25833), %(near)s)
+                  AND (n.place_id IS NOT NULL OR EXISTS (
+                      SELECT 1 FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
+                      WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node)))""",
+                {"end": end_node, "x": x, "y": y, "near": ALREADY_M}).fetchone():
+            raise NoWay("no stretch leads to the mark the end was dropped on")
         raise Invalid("the route already ends there")
     net.load()
     round_trip = to == nodes[0] and pieces == 1
@@ -2170,6 +2214,7 @@ def move_end(conn, route_id: str, version: int, author: str, end_node: str, lon:
                                                      round(told["stops"][-1]["lat"], 5)],
                 "added": told["added"], "dropped": told["dropped"], "metres": told["length_m"],
                 **({"along_mapped_m": told["mapped_m"]} if told["mapped_m"] else {}),
+                **({"straight_m": told["straight_m"]} if told.get("straight_m") else {}),
                 **({"joined": True} if told.get("joined") else {}),
                 **({"round_trip": True} if told.get("round_trip") else {})})
         _touch(conn, route_id, author)
@@ -2178,9 +2223,11 @@ def move_end(conn, route_id: str, version: int, author: str, end_node: str, lon:
 
 JOINS_M = 30       # a mapped way this near the route has come back to it, where the way round is a wide one
 ALREADY_M = 5      # a spot this near the route is on it
+_GOES_THERE = "the route already goes there"
 
 
-def _via_mapped(conn, net: _Net, route_id: str, author: str, to: tuple) -> dict:
+def _via_mapped(conn, net: _Net, route_id: str, author: str, to: tuple,
+                mapped_reach: float = MAPPED_REACH_M) -> dict:
     """Send a route by way of a spot that no stretch leads to: along the mapped paths and roads.
 
     The spot lies on a mapped line. That line is followed from the spot in
@@ -2201,9 +2248,9 @@ def _via_mapped(conn, net: _Net, route_id: str, author: str, to: tuple) -> dict:
         own += part if a_node == nodes[i] else part[::-1]
     far = math.dist(_between(own, _locate(own, to), _locate(own, to))[0], to)
     paths = _Paths.near(conn, f"SRID=25833;POINT({to[0]:.1f} {to[1]:.1f})", margin=max(600.0, 2.5 * far + 500))
-    spot = paths.attach(to, MAPPED_REACH_M)
+    spot = paths.attach(to, mapped_reach)
     if not spot["tied"]:
-        raise NoWay(f"no stretch leads there, and no mapped path or road lies within {MAPPED_REACH_M} m "
+        raise NoWay(f"no stretch leads there, and no mapped path or road lies within {mapped_reach:.0f} m "
                     f"of where the line was dropped")
     off = math.dist(_between(own, _locate(own, spot["foot"]), _locate(own, spot["foot"]))[0], spot["foot"])
     if off <= ALREADY_M:
@@ -2296,20 +2343,32 @@ def _via(conn, route_id: str, author: str, edge_id: str, lon: float, lat: float,
     ends = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = ANY(%s::uuid[])",
                         ([before, after],)).fetchall()
     net = _Net(conn, author, [ends[0], (x, y), ends[-1]], only)
+    reach, pointed = min(reach_m or WAY_NODE_M, 500), reach_m is not None      # as for an end that is moved
     try:
         # Finding the spot may divide a stretch. Where no way is found, that is not to stay.
         with conn.transaction():
-            return _via_over_stretches(conn, net, route_id, before, after, x, y, min(reach_m or WAY_NODE_M, 500))
-    except NoWay:
-        return _via_mapped(conn, net, route_id, author, (x, y))
+            return _via_over_stretches(conn, net, route_id, before, after, x, y, reach, reach if pointed else None)
+    except NoWay as first:
+        try:
+            return _via_mapped(conn, net, route_id, author, (x, y), reach if pointed else MAPPED_REACH_M)
+        except NoWay as second:
+            if str(first) == _GOES_THERE and "no mapped path or road lies within" in str(second):
+                raise Invalid(_GOES_THERE) from None
+            raise
 
 
 def _via_over_stretches(conn, net: _Net, route_id: str, before: str, after: str, x: float, y: float,
-                        reach: float) -> dict:
-    to = net.stop(x, y, reach, "where the line was dropped")
+                        reach: float, far: float | None = None) -> dict:
+    to = net.stop(x, y, reach, "where the line was dropped", far)
     nodes, edges = _in_order(conn, route_id)        # again: finding the spot may have divided a stretch
     if to in nodes:
-        raise Invalid("the route already goes there")
+        # The nearest junction is one the route passes already. Let go right on it, there is nothing to do.
+        # Let go beside it, what was pointed at may be a mapped path or road there: that is tried instead.
+        off = conn.execute("SELECT ST_Distance(geom, ST_SetSRID(ST_MakePoint(%s, %s), 25833)) FROM core.node "
+                           "WHERE id = %s", (x, y, to)).fetchone()[0]
+        if off > ALREADY_M:
+            raise NoWay(_GOES_THERE)
+        raise Invalid(_GOES_THERE)
     head, tail = edges[:nodes.index(before)], edges[nodes.index(after):]
     net.load()
     there = net.shortest(before, {to}, frozenset(head + tail))[0]

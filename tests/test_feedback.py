@@ -50,6 +50,9 @@ def test_what_the_tool_refuses_is_kept_with_what_was_asked_and_about_which_route
     # Looking at something that is gone is what a page does after an undo: not kept.
     assert client.get(f"{V1}/owned/routes/{nobody}").status_code == 404
     assert client.get(f"{V1}/areas").status_code == 200
+    # What the page asks while something is dragged, to show what letting go would give: nobody met that refusal.
+    assert client.post(f"{V1}/owned/routes/{nobody}/end", json={"version": 1, "end": nobody, "lon": 7.0, "lat": 61.5,
+                       "dry_run": True}, headers={**VIEWER, "X-Stiflyt-Preview": "1"}).status_code == 404
 
     first, second = since(conn, start)
     assert (first["kind"], first["through"], first["who"], first["status"]) == (

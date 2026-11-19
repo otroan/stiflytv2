@@ -94,6 +94,9 @@ class Collect:
                                      "".join(traceback.format_exception(e)))
             raise
         kind = kind_of(scope["method"], status) if status else None
+        # What a look ahead while something is dragged is refused, the person never asked for: not kept.
+        if kind == "refused" and any(k == b"x-stiflyt-preview" for k, _ in scope.get("headers") or ()):
+            kind = None
         if kind:
             await to_thread.run_sync(self.keep, scope, bytes(asked), kind, status,
                                      told(status, bytes(answer)), None)
