@@ -283,6 +283,38 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         with write.connection() as conn:
             return undo.undo(conn, author, body.txid)
 
+    @app.get("/api/v1/undo/recent")
+    def latest_changes(request: Request) -> list[dict]:
+        """Your latest changes that stand, newest first: any of them can be gone back to in one go."""
+        who = auth.person_of(request)
+        if not who.edits:
+            return []
+        with read.connection() as conn:
+            return undo.recent(conn, (who.name, who.through))
+
+    @app.post("/api/v1/undo/back")
+    def take_back_to(body: Undo, author: Editor) -> dict:
+        """Take back one of your latest changes and every change of yours after it."""
+        if body.txid is None:
+            raise routes.Invalid("say down to which change")
+        with write.connection() as conn:
+            return undo.back_to(conn, author, body.txid)
+
+    @app.get("/api/v1/redo")
+    def redoable(request: Request) -> dict | None:
+        """What you took back last, while nothing of yours has come in its place: what a redo would bring back."""
+        who = auth.person_of(request)
+        if not who.edits:
+            return None
+        with read.connection() as conn:
+            return undo.undone_last(conn, (who.name, who.through))
+
+    @app.post("/api/v1/redo")
+    def redo_last(body: Undo, author: Editor) -> dict:
+        """Bring back what was taken back last."""
+        with write.connection() as conn:
+            return undo.redo(conn, author, body.txid)
+
     @app.post("/api/v1/findings/accepted", status_code=204)
     def accept(body: Finding, author: Editor) -> Response:
         """A person has looked at a network finding and it is right as it is: do not list it again."""

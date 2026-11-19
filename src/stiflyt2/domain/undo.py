@@ -17,6 +17,14 @@ particular asks, it is the latest change of anybody's.
 
 What is never taken away: events and edge revisions. The history shows the
 change and that it was undone. A row the action added is marked `undone`.
+
+What was taken back can be brought back (redo, d0016): when an action is
+taken back, the rows as they stood are kept too. Redo is for the one who took
+it back, for what they took back last, and in the order it was taken back in
+reverse; a change they make after it takes its place, and then there is
+nothing to bring back. To get out of a row of changes that went wrong, all of
+one's latest changes down to one of them can be taken back in one go, and
+brought back one by one.
 """
 from __future__ import annotations
 
@@ -108,19 +116,24 @@ def whose(author) -> tuple[str, str] | None:
     return (str(author), through) if through else None
 
 
-def last(conn, mine: tuple[str, str] | None = None) -> dict | None:
-    """The latest action that has not been undone: what an undo would take back.
-
-    Given whose (a name, and how the changes came in), the latest of theirs.
-    """
-    found = _rows(conn, f"""
+def _standing(conn, mine: tuple[str, str] | None, most: int) -> list[dict]:
+    """The latest actions that have not been taken back, newest first: anybody's, or those of one person and way in."""
+    return _rows(conn, f"""
         SELECT txid, at, author, through, rows FROM (
             SELECT u.txid, min(u.at) AS at, {WHO} AS author, coalesce({HOW}, %(map)s) AS through,
                    count(*)::int AS rows
             FROM core.undo_log u WHERE u.undone_at IS NULL GROUP BY u.txid) t
         WHERE %(who)s::text IS NULL OR (author = %(who)s AND through = %(how)s)
-        ORDER BY txid DESC LIMIT 1""",
-        {"map": MAP, "who": mine and mine[0], "how": mine and mine[1]})
+        ORDER BY txid DESC LIMIT %(most)s""",
+        {"map": MAP, "who": mine and mine[0], "how": mine and mine[1], "most": most})
+
+
+def last(conn, mine: tuple[str, str] | None = None) -> dict | None:
+    """The latest action that has not been undone: what an undo would take back.
+
+    Given whose (a name, and how the changes came in), the latest of theirs.
+    """
+    found = _standing(conn, mine, 1)
     if not found:
         return None
     late = _in_the_way(conn, [found[0]["txid"]]) if mine else None
@@ -149,7 +162,14 @@ def undo(conn, author: str, txid: int | None = None) -> dict:
     _take_back(conn, author, latest["txid"], latest["what"])
     if mine:
         _nothing_left_hanging(conn, touched)
-    return {"undone": latest["what"], "next": last(conn, mine)}
+    return {"undone": latest["what"], "next": last(conn, mine), "again": undone_last(conn, mine)}
+
+
+def _image(conn, table: str, cols: list[str], where: str, params: dict):
+    """A row as it stands, as the log keeps rows: with its geometry as text, which comes back exactly."""
+    geom = " || jsonb_build_object('geom', t.geom::text)" if "geom" in cols else ""
+    row = conn.execute(f"SELECT to_jsonb(t){geom} FROM core.{table} t WHERE {where}", params).fetchone()
+    return row[0] if row else None
 
 
 def _take_back(conn, author: str, txid: int, what: str) -> None:
@@ -166,6 +186,10 @@ def _take_back(conn, author: str, txid: int, what: str) -> None:
         cols = columns.setdefault(table, _columns(conn, table))
         where = " AND ".join(f"t.{k} = %(k_{k})s" for k in key)
         params = {f"k_{k}": v for k, v in key.items()}
+        if row["op"] != "D":        # the row as it stands, to bring the action back with
+            now = _image(conn, table, cols, where, params)
+            conn.execute("UPDATE core.undo_log SET new = %s::jsonb WHERE id = %s",
+                         (json.dumps(now) if now is not None else None, row["id"]))
         if row["op"] == "I":
             if table in _STATUS:
                 conn.execute(f"UPDATE core.{table} t SET status = 'undone' WHERE {where}", params)
@@ -181,7 +205,8 @@ def _take_back(conn, author: str, txid: int, what: str) -> None:
             conn.execute(f"INSERT INTO core.{table} SELECT * FROM "
                          f"jsonb_populate_record(NULL::core.{table}, %(old)s::jsonb)",
                          {"old": json.dumps(row["old"])})
-    conn.execute("UPDATE core.undo_log SET undone_at = now() WHERE txid = %s", (latest["txid"],))
+    conn.execute("UPDATE core.undo_log SET undone_at = now(), undone_by = %s, undone_through = %s WHERE txid = %s",
+                 (str(author), getattr(author, "through", None), latest["txid"]))
     conn.execute("SELECT set_config('stiflyt2.undoing', 'off', true)")
     # The history keeps the change, and says that it was taken back.
     conn.execute("""
@@ -254,7 +279,146 @@ def back(conn, author: str, route_id: str, txid: int) -> dict:
         _take_back(conn, author, t, what)
         told.append(what)
     _nothing_left_hanging(conn, touched)
-    return {"undone": told, "next": last(conn, whose(author))}
+    return {"undone": told, "next": last(conn, whose(author)), "again": undone_last(conn, whose(author))}
+
+
+def recent(conn, mine: tuple[str, str] | None = None) -> list[dict]:
+    """Your latest changes that stand, newest first: what can be taken back in one go, down to any of them.
+
+    Each with how many changes go with it, and what stands in the way: a later
+    change of somebody else's, or of yours made another way, to the same
+    stretches or junctions.
+    """
+    found = _standing(conn, mine, MOST)
+    for i, f in enumerate(found):
+        f["what"] = _describe(conn, f["txid"])
+        f["with"] = i + 1
+        late = _in_the_way(conn, [g["txid"] for g in found[:i + 1]])
+        f["in_the_way"] = _describe(conn, late) if late else None
+    return found
+
+
+def back_to(conn, author: str, txid: int) -> dict:
+    """Take back one of your latest changes and every change of yours after it, in one go.
+
+    For when a row of changes went wrong. What others did in between stays;
+    where that touches the same stretches or junctions, nothing is done.
+    Each can be brought back afterwards, the earliest first.
+    """
+    mine = whose(author)
+    going = [f["txid"] for f in _standing(conn, mine, MOST)]
+    if txid not in going:
+        raise Conflict("that change is not among your latest: look again")
+    going = going[:going.index(txid) + 1]      # newest first
+    late = _in_the_way(conn, going)
+    if late:
+        raise Conflict(f"{_describe(conn, late)} came after, and touches the same stretches or junctions: "
+                       "take that back first")
+    touched = _touched(conn, going)
+    told = []
+    for t in going:
+        what = _describe(conn, t)
+        _take_back(conn, author, t, what)
+        told.append(what)
+    if mine:
+        _nothing_left_hanging(conn, touched)
+    return {"undone": told, "next": last(conn, mine), "again": undone_last(conn, mine)}
+
+
+def undone_last(conn, mine: tuple[str, str] | None = None) -> dict | None:
+    """What a redo would bring back: the action you took back last, while nothing of yours has come in its place.
+
+    Of several taken back in one go, the earliest first, so that they come
+    back in the order they were made. An action taken back before changes
+    could be brought back (d0016) is not among them.
+    """
+    found = _rows(conn, """
+        SELECT u.txid, max(u.undone_at) AS undone_at, count(*)::int AS rows
+        FROM core.undo_log u
+        WHERE u.undone_at IS NOT NULL AND u.undone_by IS NOT NULL
+          AND (%(who)s::text IS NULL OR (u.undone_by = %(who)s AND coalesce(u.undone_through, %(map)s) = %(how)s))
+        GROUP BY u.txid ORDER BY max(u.undone_at) DESC, u.txid LIMIT 1""",
+        {"map": MAP, "who": mine and mine[0], "how": mine and mine[1]})
+    if not found:
+        return None
+    since = _standing(conn, mine, 1)
+    if since and since[0]["at"] > found[0]["undone_at"]:
+        return None         # something was changed after it was taken back: that stands in its place
+    # What it would be brought back over: a later change to the same stretches or junctions that stands,
+    # or an earlier one that was taken back after it (by somebody else: one's own come back first).
+    late, earlier = conn.execute("""
+        SELECT max(o.txid) FILTER (WHERE o.undone_at IS NULL AND o.at > s.undone_at),
+               max(o.txid) FILTER (WHERE o.txid < s.txid AND o.undone_at > s.undone_at)
+        FROM core.undo_log s JOIN core.undo_log o ON o.tbl = s.tbl AND o.key = s.key
+        WHERE s.txid = %(t)s AND o.txid <> s.txid""", {"t": found[0]["txid"]}).fetchone()
+    return {**found[0], "what": _describe(conn, found[0]["txid"]),
+            "in_the_way": f"{_describe(conn, late)} came after it was taken back" if late
+            else f"{_describe(conn, earlier)} was taken back after it" if earlier else None}
+
+
+def redo(conn, author: str, txid: int | None = None) -> dict:
+    """Bring back the action that was taken back last. Given a txid, only if that is it."""
+    mine = whose(author)
+    again = undone_last(conn, mine)
+    if not again:
+        raise Conflict("there is nothing to bring back: only what you took back last can be, "
+                       "until you change something else")
+    if txid is not None and txid != again["txid"]:
+        raise Conflict("something else has been changed since: look again at what would be brought back")
+    if again["in_the_way"]:
+        raise Conflict(f"{again['in_the_way']}, and touches the same stretches or junctions: "
+                       "it cannot be brought back over that")
+    _bring_back(conn, author, again["txid"], again["what"])
+    return {"redone": again["what"], "next": last(conn, mine), "again": undone_last(conn, mine)}
+
+
+def _bring_back(conn, author: str, txid: int, what: str) -> None:
+    """Put the rows of one action as they stood when it was taken back, in the order they were changed."""
+    rows = _rows(conn, """SELECT id, tbl, op, key, new FROM core.undo_log
+                          WHERE txid = %(t)s AND undone_at IS NOT NULL ORDER BY id FOR UPDATE""", {"t": txid})
+    changeset = current_changeset(conn, author)
+    conn.execute("SELECT set_config('stiflyt2.undoing', 'on', true)")
+    columns: dict[str, list[str]] = {}
+    for row in rows:
+        table, key = row["tbl"], row["key"]
+        cols = columns.setdefault(table, _columns(conn, table))
+        where = " AND ".join(f"t.{k} = %(k_{k})s" for k in key)
+        params = {f"k_{k}": v for k, v in key.items()}
+        if row["op"] == "D":
+            conn.execute(f"DELETE FROM core.{table} t WHERE {where}", params)
+        elif row["new"] is None:
+            continue        # the row was not there when the action was taken back
+        elif row["op"] == "I" and table not in _STATUS:
+            # With the number it had: a row that others point at by it comes back as itself.
+            conn.execute(f"INSERT INTO core.{table} OVERRIDING SYSTEM VALUE SELECT * FROM "
+                         f"jsonb_populate_record(NULL::core.{table}, %(new)s::jsonb)", {"new": json.dumps(row["new"])})
+        else:
+            listed = ", ".join(cols)
+            conn.execute(
+                f"""UPDATE core.{table} t SET ({listed}) =
+                        (SELECT {listed} FROM jsonb_populate_record(NULL::core.{table}, %(new)s::jsonb))
+                    WHERE {where}""", {**params, "new": json.dumps(row["new"])})
+    conn.execute("""UPDATE core.undo_log SET undone_at = NULL, new = NULL, undone_by = NULL, undone_through = NULL
+                    WHERE txid = %s""", (txid,))
+    conn.execute("SELECT set_config('stiflyt2.undoing', 'off', true)")
+    # Nothing it stands on may be gone: a junction or stretch that somebody else took back in between.
+    edges = [r["key"]["id"] for r in rows if r["tbl"] == "edge"]
+    routes = sorted({r["key"]["route_id"] for r in rows if r["tbl"] == "route_leg"})
+    hanging = conn.execute("""
+        SELECT (SELECT count(*) FROM core.edge e JOIN core.edge_revision v ON v.id = e.current_revision_id
+                JOIN core.node n ON n.id IN (v.a_node, v.b_node)
+                WHERE e.id = ANY(%(e)s::uuid[]) AND e.status = 'active' AND n.status = 'undone')
+             + (SELECT count(*) FROM core.route_leg l JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                JOIN core.edge e ON e.id = l.edge_id
+                WHERE l.route_id = ANY(%(r)s::uuid[]) AND e.status = 'undone')""",
+        {"e": edges, "r": routes}).fetchone()[0]
+    if hanging:
+        raise Conflict("it stands on a stretch or junction that has been taken back since: bring that back first")
+    conn.execute("""
+        INSERT INTO history.event (changeset_id, author, type, subject_type, subject_id, payload)
+        SELECT DISTINCT ON (e.subject_type, e.subject_id) %s, %s, 'redone', e.subject_type, e.subject_id,
+               jsonb_build_object('what', %s::text)
+        FROM history.event e WHERE e.txid = %s""", (changeset, author, what, txid))
 
 
 def _touched(conn, txids: list[int]) -> list[dict]:

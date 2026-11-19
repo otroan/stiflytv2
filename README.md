@@ -188,6 +188,10 @@ In both:
   latest change back, whatever it was: a pulled line, joined junctions, a
   route made, a batch of approved proposals. Pressed again it goes further
   back. It is kept on the server, so it works after the page is loaded again.
+  **Redo** beside it (Ctrl or Cmd with Shift and Z) brings back what was taken
+  back last, and **Latest changes** lists your changes so that you can go
+  back to before any of them in one go: see "Getting out of changes that
+  went wrong".
 - **Done with this route** says the route is right as it is, and closes it.
   Nothing else marks a route done: changing it does not.
 
@@ -627,6 +631,26 @@ that is not published
 - is otherwise a route like any other: in the list (with "Not published"), on
   the map, in the network checks and the to-do list, and it can be done.
 
+### Getting out of changes that went wrong
+
+Three things, all at the top of the map:
+
+- **Undo** takes your latest change back; again, the one before.
+- **Latest changes** lists your changes in the map that stand, newest first,
+  with the time of each. "Back to before this" on one of them takes it and
+  every change of yours after it back, in one go. What others changed in
+  between stays; where one of their changes touches the same stretches or
+  junctions, the list says so and nothing is taken back from there.
+- **Redo** brings back what you took back last, one change at a time and in
+  the order they were made, so going back too far costs nothing. Once you
+  change something else, that stands in its place and there is nothing left
+  to bring back. A change is not brought back over a later change by someone
+  else to the same stretches or junctions.
+
+Over the API: `GET /api/v1/undo/recent`, `POST /api/v1/undo/back` with the
+`txid` to go back before, `GET` and `POST /api/v1/redo`. A change taken back
+before 2026-11-19 cannot be brought back: nothing was kept for it.
+
 ### Putting a route back as it was
 
 Undo at the top of the map takes back the latest change, whatever it was and
@@ -719,7 +743,7 @@ tab's, a stripe says so for as long as it lasts, and it only ever goes
 downwards. Programs with a token are not affected.
 
 **Undo is your own.** Undo in the map takes back your latest change made in
-the map. What others have done since stays, and so does what an assistant did
+the map, and Redo brings back what you took back. What others have done since stays, and so does what an assistant did
 in your name: the assistant takes that back, or the route is put back from
 its history. Where a later change by someone else touches the same stretches,
 the undo is refused and says what stands in the way.
@@ -775,7 +799,8 @@ The tools call the same domain functions as the map (`src/stiflyt2/api/mcp.py`):
   `describe_route`, `lay_on_mapped`, `set_state`, `approve_proposal`,
   `make_place`.
 - **Taking back and telling**: `undo_last` (the assistant's own latest
-  change), `put_back` (a route, to before one of its changes), `report_gap`.
+  change), `redo_last` (what it took back last), `put_back` (a route, to
+  before one of its changes), `report_gap`.
 
 A tool that changes takes `dry_run`, true unless said otherwise: it says what
 it would do and keeps nothing. `set_state` (done, discontinued, not published,

@@ -31,15 +31,23 @@
           border-right: 1px solid var(--line); overflow: hidden; }
   #mapwrap { flex: 1; min-width: 0; position: relative; }
   #map { position: absolute; inset: 0; }
-  #undo { position: absolute; top: 12px; left: 12px; z-index: 2; max-width: 42%; text-align: left; font: inherit; cursor: pointer;
+  #undobar { position: absolute; top: 12px; left: 12px; z-index: 2; max-width: 62%; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+  #undobar > button { text-align: left; font: inherit; cursor: pointer; max-width: 100%;
           background: #fff; color: var(--ink); border: 1.5px solid var(--sign); border-radius: 4px; padding: 7px 12px;
           box-shadow: 0 1px 4px #0003; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #undo strong { color: var(--sign); margin-right: 6px; }
+  #undobar > button strong { color: var(--sign); margin-right: 6px; }
+  #undobar > button:hover, #undobar > button:focus-visible { background: var(--wash); }
+  #undobar > button:disabled { opacity: 0.6; cursor: wait; }
+  #latest { flex-basis: 100%; max-width: 440px; max-height: 60vh; overflow: auto; background: #fff; border: 1.5px solid var(--sign);
+          border-radius: 4px; box-shadow: 0 2px 8px #0004; padding: 10px 12px; }
+  #latest h2 { margin: 0 0 2px; font-size: 15px; }
+  #latest ol { list-style: none; margin: 8px 0 0; padding: 0; }
+  #latest li { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  #latest li .when { color: var(--muted); font-size: 13px; }
+  #latest li .sub { grid-column: 2 / -1; }
   #mode { position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
           background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
   #mode button { margin-left: 10px; }
-  #undo:hover, #undo:focus-visible { background: var(--wash); }
-  #undo:disabled { opacity: 0.6; cursor: wait; }
   #hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
           background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
   header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
@@ -164,7 +172,12 @@
 </div>
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section><div id="hint" hidden role="status"></div>
-  <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
+  <div id="undobar">
+    <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
+    <button id="redo" hidden title="Brings back what you took back last. Ctrl or Cmd with Shift and Z does the same. Once you change something else, that stands in its place."></button>
+    <button id="morelatest" hidden aria-expanded="false" aria-controls="latest" title="Your latest changes in the map: go back to before any of them in one go."><strong>Latest changes</strong></button>
+    <section id="latest" hidden aria-label="Your latest changes"></section>
+  </div>
   <div id="mode" hidden role="status"></div></div>
 
 <script>
@@ -1072,34 +1085,94 @@ async function refreshOwned() {
 }
 // ---- Undo: your own latest change made here in the map, whatever it was. What others have done, or an
 // assistant acting for you, is not what this takes back. The server keeps what every change replaced. ----
-const undoButton = document.getElementById("undo");
-let undoNext = null;
+const undoButton = document.getElementById("undo"), redoButton = document.getElementById("redo");
+const moreLatest = document.getElementById("morelatest"), latestBox = document.getElementById("latest");
+let undoNext = null, redoNext = null;
 async function refreshUndo() {
-  try { undoNext = EDITOR ? await get("undo") : null; } catch { undoNext = null; }
-  undoButton.hidden = !undoNext;
+  try { showUndo(...(EDITOR ? await Promise.all([get("undo"), get("redo")]) : [null, null])); } catch { showUndo(null, null); }
+}
+function showUndo(next, again) {
+  [undoNext, redoNext] = [next, again];
+  undoButton.hidden = moreLatest.hidden = !undoNext;
+  redoButton.hidden = !redoNext;
   if (undoNext) undoButton.replaceChildren(el("strong", {}, "Undo"), undoNext.what);
+  if (redoNext) redoButton.replaceChildren(el("strong", {}, "Redo"), redoNext.what);
+  if (!undoNext) showLatest(false); else if (!latestBox.hidden) showLatest(true);
+}
+// After something was taken back or brought back: the map, the open route and the lists as they are now.
+async function afterTakingBack(note) {
+  closePopups();
+  await refreshOwned();
+  if (openRoute) {
+    try { renderOwnedRoute(await get(`owned/routes/${openRoute.id}`), null, note); }
+    catch { clearRoute(); }      // the route itself was what was taken back
+  }
+  if (!placeBox.hidden) closePlace();
+  refreshArea();
 }
 async function undoLast() {
   if (!undoNext || undoButton.disabled) return;
   undoButton.disabled = true;
   try {
     const r = await send("POST", "undo", { txid: undoNext.txid });
-    closePopups();
-    await refreshOwned();
-    if (openRoute) {
-      try { renderOwnedRoute(await get(`owned/routes/${openRoute.id}`), null, `Taken back: ${r.undone}.`); }
-      catch { clearRoute(); }      // the route itself was what was taken back
-    }
-    if (!placeBox.hidden) closePlace();
-    refreshArea();
+    showUndo(r.next, r.again);      // at once: pressed again right away, it is the next one that goes
+    await afterTakingBack(`Taken back: ${r.undone}.`);
   } catch (err) { alert(`Could not undo: ${err.message}`); }
   undoButton.disabled = false;
   refreshEditing();
 }
+async function redoLast() {
+  if (!redoNext || redoButton.disabled) return;
+  redoButton.disabled = true;
+  try {
+    const r = await send("POST", "redo", { txid: redoNext.txid });
+    showUndo(r.next, r.again);
+    await afterTakingBack(`Brought back: ${r.redone}.`);
+  } catch (err) { alert(`Could not bring it back: ${err.message}`); }
+  redoButton.disabled = false;
+  refreshEditing();
+}
+// Your latest changes, newest first: any of them can be gone back to, which takes it and all after it back.
+async function showLatest(open) {
+  if (open && latestBox.hidden) latestBox.replaceChildren(el("div", { class: "sub" }, "Reading your changes…"));     // not the list as it was last time
+  latestBox.hidden = !open;
+  moreLatest.setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  let list;
+  try { list = await get("undo/recent"); } catch (err) { latestBox.replaceChildren(el("div", { class: "error" }, `Could not read your changes: ${err.message}`)); return; }
+  const time = at => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const today = at => new Date(at).toDateString() === new Date().toDateString();
+  latestBox.replaceChildren(
+    el("h2", {}, "Your latest changes in the map"),
+    el("div", { class: "sub" }, "Go back to before any of them: it and every change of yours after it are taken back, in one go. Redo brings them back, one at a time. What others changed in between stays."),
+    el("ol", {}, ...list.map(c => el("li", {},
+      el("span", { class: "when" }, today(c.at) ? time(c.at) : new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })),
+      el("span", {}, c.what),
+      c.in_the_way ? "" : el("button", { class: "btn", onclick: e => backTo(c, e.target) }, c.with === 1 ? "Take back" : `Back to before this (${c.with})`),
+      c.in_the_way ? el("span", { class: "sub" }, `Cannot be taken back from here: ${c.in_the_way} came after and touches the same stretches or junctions.`) : ""))),
+    el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => showLatest(false) }, "Close")));
+}
+async function backTo(change, button) {
+  if (change.with > 3 && !confirm(`Take back your ${change.with} latest changes, back to before “${change.what}”? Redo brings them back one at a time.`)) return;
+  button.disabled = true;
+  try {
+    const r = await send("POST", "undo/back", { txid: change.txid });
+    showUndo(r.next, r.again);
+    showLatest(false);
+    await afterTakingBack(r.undone.length === 1 ? `Taken back: ${r.undone[0]}.` : `Taken back, ${r.undone.length} changes: ${r.undone.join("; ")}. Redo brings them back one at a time.`);
+  } catch (err) { alert(`Could not go back: ${err.message}`); button.disabled = false; }
+  refreshEditing();
+}
 undoButton.addEventListener("click", undoLast);
+redoButton.addEventListener("click", redoLast);
+moreLatest.addEventListener("click", () => showLatest(latestBox.hidden));
 document.addEventListener("keydown", e => {
-  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); undoLast(); }
+  if (!(e.metaKey || e.ctrlKey) || ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  const key = e.key.toLowerCase();
+  if (key === "z" && !e.shiftKey) { e.preventDefault(); undoLast(); }
+  else if ((key === "z" && e.shiftKey) || key === "y") { e.preventDefault(); redoLast(); }
 });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !latestBox.hidden) { e.stopImmediatePropagation(); showLatest(false); } }, true);
 async function refreshEditing() {
   const footer = document.getElementById("editing");
   try {
@@ -1318,6 +1391,7 @@ const ROUTE_EVENT = {
   "route.sent_via": p => `Sent by way of ${typeof p.via === "string" ? p.via : "another spot"}: ${p.added} stretches in place of ${p.dropped}` + (p.along_mapped_m ? `, ${p.along_mapped_m} m of it new along mapped paths and roads` : ""),
   "route.joined_into": p => `Taken into ${p.into}`,
   "undone": p => `Taken back: ${p.what}`,
+  "redone": p => `Brought back: ${p.what}`,
   "route.piece_added": p => `Part ${p.candidate} added`,
   "route.crossing_added": p => `Joined ${{ water: "over water", glacier: "over a glacier", connector: "on foot", other: "by a crossing" }[p.kind]}, ${p.metres} m`,
   "route.leg_removed": () => "A stretch taken out",

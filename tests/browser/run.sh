@@ -5,7 +5,7 @@
 #
 # Starts a viewer there on the test database (port 8101, local, no sign-in), makes the clean
 # route candidates of one area yours in it, opens a tunnel, walks through the pages in Chrome on
-# this machine, and stops the viewer again. Run it after pytest, not during: pytest makes the test
+# this machine (changing a route's name there to try undo and redo), and stops the viewer again. Run it after pytest, not during: pytest makes the test
 # database anew. STIFLYT2_DIR is the checkout on the server (stiflytv2), AREA the area (bre).
 set -u
 : "${STIFLYT2_SSH:?name the server: STIFLYT2_SSH=<user>@<server>}"
@@ -35,4 +35,4 @@ REMOTE
 ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -L "$port:127.0.0.1:8101" "$STIFLYT2_SSH" &
 tunnel=$!
 sleep 2
-node "$here/smoke.mjs" "http://localhost:$port/"
+STIFLYT2_EDIT=1 node "$here/smoke.mjs" "http://localhost:$port/"

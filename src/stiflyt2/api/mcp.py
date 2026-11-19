@@ -82,8 +82,8 @@ plainly, and say what it rests on.
 - A description of a route is written from `route_facts` and nothing else: what the data does not say (what the \
 path is like underfoot, exposure, fords, most bridges) is asked of the person, not made up. It is a draft until \
 they have read it; `on_utno` gives what UT.no already has.
-- `undo` takes back your own latest change, not the person's. `put_back` takes a route back to before one of \
-its changes.
+- `undo_last` takes back your own latest change, not the person's, and `redo_last` brings back what you took \
+back last. `put_back` takes a route back to before one of its changes.
 - When you cannot do what was asked, had to go round, or the person says something is wrong or missing in the \
 tool, call `report_gap` with their words. That is how the tool gets better.
 
@@ -875,6 +875,17 @@ def undo_last(c: Call, a: Undo) -> dict:
     if a.dry_run:
         return {"would_take_back": undo.last(c.conn, mine)}
     return undo.undo(c.conn, c.author)
+
+
+@tool("Bring back what you took back last", changes=True)
+def redo_last(c: Call, a: Undo) -> dict:
+    """Bring back the change that was taken back last through an assistant in this person's name, as long as
+    nothing has been changed through an assistant since. Several taken back in a row come back in the order
+    they were made. Dry, it says what it would bring back."""
+    mine = undo.whose(c.author)
+    if a.dry_run:
+        return {"would_bring_back": undo.undone_last(c.conn, mine)}
+    return undo.redo(c.conn, c.author)
 
 
 class Back(Args):

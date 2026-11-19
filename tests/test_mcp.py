@@ -63,7 +63,7 @@ def test_it_speaks_the_protocol_a_client_expects(client):
 
     tools = {t["name"]: t for t in rpc(client, "tools/list")["result"]["tools"]}
     assert {"find", "route", "areas", "area", "checks", "turrutebasen", "what_is_here", "mapped_way", "plan_way",
-            "move_end", "send_via", "lay_out_again", "set_stretch", "set_state", "undo_last", "put_back",
+            "move_end", "send_via", "lay_out_again", "set_stretch", "set_state", "undo_last", "redo_last", "put_back",
             "report_gap"} <= set(tools)
     for t in tools.values():
         assert t["description"] and t["inputSchema"]["type"] == "object" and t["inputSchema"]["additionalProperties"] is False

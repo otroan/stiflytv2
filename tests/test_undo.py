@@ -86,9 +86,17 @@ def test_every_kind_of_change_is_taken_back_exactly(conn):
         offered = undo.last(conn)
         if told not in ("a spot made a place", "a route laid out"):
             assert told in offered["what"], (told, offered["what"])
+        after = state(conn)
         done = act(conn, lambda: undo.undo(conn, AUTHOR))
         assert state(conn) == before, told
         assert done["next"]["what"] == "bre18 made yours"
+        # And brought back exactly, and taken back once more.
+        assert done["again"]["what"] == offered["what"] and done["again"]["in_the_way"] is None
+        again = act(conn, lambda: undo.redo(conn, AUTHOR))
+        assert state(conn) == after, told
+        assert (again["redone"], again["again"], again["next"]["txid"]) == (offered["what"], None, offered["txid"])
+        act(conn, lambda: undo.undo(conn, AUTHOR))
+        assert state(conn) == before, told
     # The route is usable as before: changing it again works, with a revision number that is free.
     act(conn, lambda: routes.bend(conn, longest, AUTHOR, (mid_lon, mid_lat), (lon, lat)))
     assert conn.execute("""SELECT r.rev_no > 2 FROM core.edge e JOIN core.edge_revision r
@@ -253,3 +261,74 @@ def test_undo_takes_back_the_askers_own_latest_change_made_the_way_they_ask(conn
     assert undo.last(conn, undo.whose(ola))["what"] != "bre14 withdrawn"
     assert act(conn, lambda: undo.undo(conn, kari))["undone"] == "bre14 withdrawn"
     assert routes.detail(conn, c)["code"] == "bre14"
+
+
+def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(conn):
+    """A row of changes that went wrong: all of them taken back in one go, and brought back one by one."""
+    from stiflyt2.api.auth import Author
+
+    ola, kari = Author("Ola Nordmann", "viewer"), Author("Kari Nordmann", "viewer")
+    mine = undo.whose(ola)
+    a = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), ola))
+
+    def change(who=ola, **what):
+        act(conn, lambda: routes.update(conn, a, routes.detail(conn, a)["version"], who, **what))
+
+    states = [state(conn)]
+    for what in ({"name": "One"}, {"grading": "B"}, {"name": "Three"}):
+        change(**what)
+        states.append(state(conn))
+    listed = undo.recent(conn, mine)
+    assert [(c["what"], c["with"], c["in_the_way"]) for c in listed] == [
+        ("bre18 renamed", 1, None), ("the grading of bre18 changed", 2, None), ("bre18 renamed", 3, None),
+        ("bre18 made yours", 4, None)]
+    assert undo.recent(conn, undo.whose(kari)) == [] and undo.undone_last(conn, mine) is None
+    with pytest.raises(undo.Conflict, match="there is nothing to bring back"):
+        undo.redo(conn, ola)
+    with pytest.raises(undo.Conflict, match="not among your latest"):
+        undo.back_to(conn, kari, listed[2]["txid"])
+
+    # Back to before the first of the three, in one go.
+    told = act(conn, lambda: undo.back_to(conn, ola, listed[2]["txid"]))
+    assert told["undone"] == ["bre18 renamed", "the grading of bre18 changed", "bre18 renamed"]
+    assert state(conn) == states[0] and told["next"]["txid"] == listed[3]["txid"]
+    assert (told["again"]["txid"], told["again"]["what"]) == (listed[2]["txid"], "bre18 renamed")
+    # Bringing back is for the one who took it back.
+    with pytest.raises(undo.Conflict, match="there is nothing to bring back"):
+        undo.redo(conn, kari)
+    with pytest.raises(undo.Conflict, match="something else has been changed since"):
+        undo.redo(conn, ola, listed[0]["txid"])
+    # One by one they come back, in the order they were made.
+    for i in (1, 2, 3):
+        back = act(conn, lambda: undo.redo(conn, ola))
+        assert state(conn) == states[i]
+    assert back["again"] is None and back["next"]["txid"] == listed[0]["txid"]
+    assert [c["what"] for c in undo.recent(conn, mine)] == [c["what"] for c in listed]
+    assert [h["type"] for h in routes.detail(conn, a)["history"][:3]] == ["redone", "redone", "redone"]
+
+    # One taken back, and something else changed: that stands in its place, and there is nothing to bring back.
+    act(conn, lambda: undo.undo(conn, ola))
+    assert undo.undone_last(conn, mine)["what"] == "bre18 renamed"
+    change(name="Another")
+    assert undo.undone_last(conn, mine) is None
+    with pytest.raises(undo.Conflict, match="until you change something else"):
+        undo.redo(conn, ola)
+
+    # Taken back, and somebody else changes the same route before it is brought back: not over that.
+    act(conn, lambda: undo.undo(conn, ola))
+    change(kari, name="Hers")
+    assert undo.undone_last(conn, mine)["in_the_way"] == "bre18 renamed came after it was taken back"
+    before = state(conn)
+    with pytest.raises(undo.Conflict, match="bre18 renamed came after it was taken back"):
+        act(conn, lambda: undo.redo(conn, ola))
+    assert state(conn) == before and routes.detail(conn, a)["name"] == "Hers"
+
+    # She takes hers back, and he could bring his back again. But then the route itself is taken back, by
+    # somebody else: what he took back was a change to a route that is no longer there.
+    act(conn, lambda: undo.undo(conn, kari))
+    assert undo.undone_last(conn, mine)["in_the_way"] is None
+    while (latest := undo.last(conn)) and latest["txid"] >= listed[3]["txid"]:
+        act(conn, lambda: undo.undo(conn, AUTHOR))
+    assert undo.undone_last(conn, mine)["in_the_way"] == "the grading of bre18 changed was taken back after it"
+    with pytest.raises(undo.Conflict, match="was taken back after it, and touches the same"):
+        act(conn, lambda: undo.redo(conn, ola))

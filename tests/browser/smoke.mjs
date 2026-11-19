@@ -1,5 +1,7 @@
 // A walk through both pages in a real browser, with real clicks: the front page (areas, an area, a route,
 // the signs) and the route editor. It changes nothing: every request but GET is stopped before it leaves.
+// With STIFLYT2_EDIT=1, and only then, it goes on to change a route's name and take that back and bring it
+// back, to try undo and redo: for a viewer on the test database (run.sh asks for it), never the real one.
 //
 //   node tests/browser/smoke.mjs http://localhost:8113/
 //
@@ -12,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const HOME = new URL(process.argv[2] || "http://localhost:8100/").href, TOKEN = process.env.STIFLYT2_TOKEN || "";
+const EDIT = process.env.STIFLYT2_EDIT === "1" && !TOKEN;
+let editing = false;
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9400 + Math.floor(Math.random() * 500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -23,18 +27,20 @@ if (!target) { console.error("Chrome did not start"); process.exit(2); }
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise(r => ws.addEventListener("open", r));
 let seq = 0;
-const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [], asked = [];
+const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [], asked = [], said = [];
 const send = (method, params = {}) => new Promise(r => { waiting.set(++seq, r); ws.send(JSON.stringify({ id: seq, method, params })); });
 ws.addEventListener("message", m => {
   const d = JSON.parse(m.data);
   if (d.id && waiting.has(d.id)) { waiting.get(d.id)(d.result); waiting.delete(d.id); }
+  // A box the page puts up (alert, confirm) would stop everything here: it is answered yes, and told of below.
+  if (d.method === "Page.javascriptDialogOpening") { said.push(d.params.message); send("Page.handleJavaScriptDialog", { accept: true }); }
   if (d.method === "Runtime.exceptionThrown") thrown.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
   if (d.method === "Network.responseReceived" && d.params.response.url.startsWith(HOME) && d.params.response.status >= 400 && !d.params.response.url.endsWith("/favicon.ico"))
     refused.push(`${d.params.response.status} ${d.params.response.url.slice(HOME.length - 1)}`);
   if (d.method === "Fetch.requestPaused") {
     const q = d.params.request;
     asked.push(q.url.slice(HOME.length - 1));
-    if (q.method !== "GET") { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
+    if (q.method !== "GET" && !editing) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
 });
@@ -46,7 +52,7 @@ const centre = async sel => JSON.parse(await js(`(() => { const e = ${sel}; if (
 const clickOn = async sel => { const at = await centre(sel); if (!at) return false; await click(at); return true; };
 const text = sel => js(`(document.querySelector(${JSON.stringify(sel)}) || {}).innerText || ""`);
 const onMap = expr => js(`(() => { const c = ${expr}; if (!c) return "null"; const p = map.project(c), r = document.getElementById("map").getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + p.x), y: Math.round(r.top + p.y) }); })()`).then(JSON.parse);
-const check = (what, ok, said = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${what}${said ? `: ${String(said).replace(/\s+/g, " ").slice(0, 110)}` : ""}`); if (!ok) failed.push(what); };
+const check = (what, ok, said = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${what}${said ? `: ${String(said).replace(/\s+/g, " ").slice(0, ok ? 110 : 500)}` : ""}`); if (!ok) failed.push(what); };
 const open = async address => { await send("Page.navigate", { url: new URL(address, HOME).href }); };
 
 await send("Runtime.enable"); await send("Page.enable"); await send("Network.enable");
@@ -139,7 +145,35 @@ check("the editor opens one of your routes from its address", await until(`[...d
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
+// Changing things, where that was asked for: a name changed three times, taken back and brought back.
+if (EDIT) {
+  editing = true;
+  const id = await js("openRoute.id"), was = await js("openRoute.name"), named = n => `Boolean(openRoute) && openRoute.name === ${JSON.stringify(n)}`;
+  const trial = ["one", "two", "three"].map(n => `Trial ${n} ${Date.now() % 100000}`);     // never a name it has already
+  for (const name of trial)
+    await js(`(async () => { await send("PATCH", "owned/routes/${id}", { version: openRoute.version, name: ${JSON.stringify(name)} }); renderOwnedRoute(await get("owned/routes/${id}")); await refreshUndo(); return true; })()`);
+  check("Undo offers the latest change, and there is nothing to bring back yet", await until(`/renamed/.test(document.getElementById("undo").textContent) && document.getElementById("redo").hidden && !document.getElementById("morelatest").hidden`), await text("#undobar"));
+  await clickOn(`document.getElementById("undo")`);
+  check("Undo takes it back, and Redo offers to bring it back", await until(`${named(trial[1])} && /Redo.*renamed/.test(document.getElementById("redo").textContent)`), await text("#undobar"));
+  await clickOn(`document.getElementById("redo")`);
+  check("Redo brings it back, and has nothing more", await until(`${named(trial[2])} && document.getElementById("redo").hidden`), await text("#undobar"));
+  await clickOn(`document.getElementById("morelatest")`);
+  check("the latest changes are listed, newest first", await until(`document.querySelectorAll("#latest li").length >= 3 && /Back to before this \\(3\\)/.test(document.querySelectorAll("#latest li")[2].textContent)`), (await text("#latest ol")).slice(0, 400));
+  await clickOn(`document.querySelectorAll("#latest li button")[2]`);
+  check("going back to before the first of them takes all three back in one go", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)} && document.getElementById("latest").hidden && !document.getElementById("redo").hidden`), await js("openRoute && openRoute.name"));
+  const key = type => send("Input.dispatchKeyEvent", { type, modifiers: 10, key: "Z", code: "KeyZ", windowsVirtualKeyCode: 90 });
+  await js(`document.activeElement && document.activeElement.blur()`);
+  for (const name of trial) { await key("keyDown"); await key("keyUp"); await until(`${named(name)} && !document.getElementById("redo").disabled`, 10); }
+  check("Ctrl, Shift and Z bring them back one at a time, in the order they were made", await js(named(trial[2])), await js("openRoute && openRoute.name"));
+  await clickOn(`document.getElementById("morelatest")`);
+  await until(`document.querySelectorAll("#latest li button").length >= 3`);
+  await clickOn(`document.querySelectorAll("#latest li button")[2]`);
+  check("and the route is left as it was found", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)}`), await js("openRoute && openRoute.name"));
+  editing = false;
+} else console.log("    (not asked to change anything: undo and redo are not tried)");
+
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
+check("and put up no box to say that something went wrong", said.length === 0, said.join(" | "));
 const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo"));      // that one was asked for as a reader, to be refused
 check("the service answered every request of its own", unasked.length === 0, unasked.join(" | "));
 check("nothing was changed", stopped.length === 0, stopped.join(" | "));
