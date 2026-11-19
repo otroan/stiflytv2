@@ -373,6 +373,19 @@ are clean lines, and making each by hand was the bottleneck.
     `d0016`), so that the one who took it back can bring it back, until
     they change something else; and all of one's latest changes down to
     one of them can be taken back in one go.
+38. **A changeset is an item of work, saved or discarded as a whole**
+    (decided 2026-11-19; domain migration `d0017`). A changeset was one per
+    person and in practice never closed. It is now what a person has changed
+    since they last saved, one per person and way in: usually one route,
+    and more when the work spans routes (two that are joined), which the
+    person says when they go from one to the next ("same job"). Save closes
+    it and names it after what it changed; Discard takes back every change
+    in it that stands, by the undo log, and leaves it open, so that what is
+    brought back is unsaved again. Leaving a route asks which. It is not a
+    draft: every change is in the data, for everybody, when it is made, and
+    others are told who has unsaved changes to a route. A change made with
+    no route open is saved as it is made. Signs are to get the same, with
+    the sign site as the item; not built.
 
 ## Built so far, and not yet
 

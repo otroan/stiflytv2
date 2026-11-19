@@ -26,10 +26,10 @@ nothing to bring back. To get out of a row of changes that went wrong, all of
 one's latest changes down to one of them can be taken back in one go, and
 brought back one by one.
 
-Saving and discarding is a mark on top of this, kept by the page: what you
-have changed since you last saved (`since`) is discarded as a whole or said
-to stay. Nothing is held back until it is saved: a change is in the data, for
-everybody, the moment it is made.
+Saving and discarding is on top of this. What a person has changed since
+they last saved is an item of work: their open changeset (`item`). `save`
+closes it; `discard` takes all of it back. Nothing is held back until it is
+saved: a change is in the data, for everybody, the moment it is made.
 """
 from __future__ import annotations
 
@@ -309,20 +309,80 @@ def recent(conn, mine: tuple[str, str] | None = None) -> list[dict]:
     return found
 
 
-def since(conn, mine: tuple[str, str] | None, txid: int) -> dict:
-    """Your changes that stand and were made after one of them: one sitting, to be saved or discarded as a whole.
+def _open_item(conn, who: str, how: str):
+    return conn.execute("""SELECT id FROM core.changeset WHERE author = %s AND coalesce(through, '') = %s AND state = 'open'
+                           ORDER BY created_at DESC LIMIT 1""", (who, how)).fetchone()
 
-    Every change is kept the moment it is made. A sitting is what the page
-    counts from where the person last said "save": discarding it takes all of
-    it back (`back_to` the first), saving it only moves the mark. With what
-    stands in the way of discarding it: a later change by somebody else, or
-    by you another way, to the same stretches or junctions.
+
+def item(conn, mine: tuple[str, str]) -> dict:
+    """The item of work a person has open, one way in: what they have changed since they last saved, and stands.
+
+    Every change is in the data the moment it is made; the item is the open
+    changeset it was made in (d0017). Saving closes it, discarding takes all
+    of it back. With the routes it changed, and what stands in the way of
+    discarding it: a later change by somebody else, or by the same person
+    another way in, to the same stretches or junctions.
     """
-    found = [f for f in _standing(conn, mine, SITTING) if f["txid"] > txid]
-    for f in found:
+    found = _open_item(conn, mine[0], mine[1])
+    if not found:
+        return {"changes": [], "in_the_way": None, "routes": []}
+    made = {t for (t,) in conn.execute(
+        "SELECT DISTINCT txid FROM history.event WHERE changeset_id = %s AND type NOT IN ('undone', 'redone')",
+        (found[0],))}
+    # (Where no way in is known, from the command line, the changeset alone says whose they are.)
+    changes = [f for f in _standing(conn, mine if mine[1] else None, SITTING) if f["txid"] in made]
+    for f in changes:
         f["what"] = _describe(conn, f["txid"])
-    late = _in_the_way(conn, [f["txid"] for f in found]) if found else None
-    return {"changes": found, "in_the_way": _describe(conn, late) if late else None}
+    txids = [f["txid"] for f in changes]
+    late = _in_the_way(conn, txids) if txids else None
+    routes = _rows(conn, """
+        SELECT DISTINCT r.id::text AS id, r.code FROM history.event e JOIN core.route r ON r.id = e.subject_id
+        WHERE e.changeset_id = %(c)s AND e.subject_type = 'route' AND e.txid = ANY(%(t)s) AND r.status = 'active'
+        ORDER BY r.code""", {"c": found[0], "t": txids})
+    return {"changes": changes, "in_the_way": _describe(conn, late) if late else None, "routes": routes}
+
+
+def save(conn, author: str) -> dict:
+    """Say that the item of work is to stay: it is closed, and named after what it changed. The next change opens another."""
+    mine = whose(author) or (str(author), "")
+    found = _open_item(conn, mine[0], mine[1])
+    if not found:
+        return {"saved": 0}
+    now = item(conn, mine)
+    n = len(now["changes"])
+    title = (", ".join(r["code"] for r in now["routes"][:6]) or "Changes") + f": {n} change{'' if n == 1 else 's'}"
+    conn.execute("UPDATE core.changeset SET state = 'closed', closed_at = now(), title = %s WHERE id = %s",
+                 (title, found[0]))
+    return {"saved": n, "title": title}
+
+
+def discard(conn, author: str) -> dict:
+    """Take back all of the item of work, in one go. It stays open: what is brought back is in it again."""
+    mine = whose(author) or (str(author), "")
+    now = item(conn, mine)
+    if not now["changes"]:
+        raise Conflict("there is nothing that is not saved")
+    if now["in_the_way"]:
+        raise Conflict(f"{now['in_the_way']} came after, and touches the same stretches or junctions: "
+                       "it cannot be discarded as a whole")
+    return back_to(conn, author, now["changes"][-1]["txid"])
+
+
+def open_items(conn, but: tuple[str, str] | None = None) -> list[dict]:
+    """The items of work that are open with changes in them, of everybody but one: who is at what, not yet saved.
+
+    Of people working in the map only. What an assistant or a script changes is never said to be saved by
+    anybody, and is not something that waits.
+    """
+    told = []
+    for who, how in conn.execute("""SELECT DISTINCT author, coalesce(through, '') FROM core.changeset
+                                    WHERE state = 'open' AND through = %s ORDER BY 1, 2""", (MAP,)).fetchall():
+        if (who, how) == but or who.startswith("Stiflyt ("):
+            continue
+        now = item(conn, (who, how))
+        if now["changes"]:
+            told.append({"author": who, "through": how or MAP, "changes": len(now["changes"]), "routes": now["routes"]})
+    return told
 
 
 def back_to(conn, author: str, txid: int) -> dict:

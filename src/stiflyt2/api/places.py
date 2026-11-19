@@ -70,7 +70,7 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return {"editor": None, "changeset": None,
                     **({"reader": who.name, "sign_in": True} if auth.signed_in() else {})}
         with read.connection() as conn:
-            return {"editor": who.name, "changeset": places.changeset_status(conn, who.name),
+            return {"editor": who.name, "changeset": places.changeset_status(conn, who.name, who.through),
                     **({"sign_in": True} if auth.signed_in() else {})}
 
     @app.post(f"{V1}/changeset/close", status_code=204)

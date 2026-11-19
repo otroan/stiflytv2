@@ -698,31 +698,42 @@ that is not published
 - is otherwise a route like any other: in the list (with "Not published"), on
   the map, in the network checks and the to-do list, and it can be done.
 
-### Save or discard
+### Save or discard: an item of work
 
 Every change goes to the server the moment it is made, and is there for
-others too. On top of that the page keeps count of what you have changed in
-the map since you last saved, in a yellow box at the top of the map: "3
-changes not saved", with the latest of them. It lights up each time a change
-has taken, so a pulled line that did nothing is seen to have done nothing.
+others too. What you have changed in the map since you last saved is your
+**item of work**: usually one route, sometimes two that are joined or share a
+junction. A yellow box at the top of the map counts it ("3 changes not saved,
+to jot116/1 and jot116/2") and lights up each time a change has taken, so a
+pulled line that did nothing is seen to have done nothing.
 
-- **Save** says the changes are to stay, and starts the count again. Nothing
-  more happens to the data: it was there already. "Done with this route"
-  saves too.
-- **Discard** takes all of them back in one go, as "Back to before this" on
-  the first of them would. Redo brings them back one at a time. Where
-  somebody else has since changed the same stretches or junctions, the box
-  says so and they cannot be discarded as a whole.
+- **Save** says the changes are to stay, and ends the item. "Done with this
+  route" saves too.
+- **Discard** takes all of it back in one go. Redo brings the changes back
+  one at a time, and they are then not saved again. Where somebody else (or
+  an assistant in your name) has since changed the same stretches or
+  junctions, the box says so and the item cannot be discarded as a whole.
+- **Leaving the route** (the list, previous and next, a search, a click on
+  another route's line, Close, the way to the front page) asks which: save
+  and go on, discard and go on, **same job: keep going**, or stay. "Same
+  job" is for work that spans routes: what you change on the next route is
+  counted with the rest, and saved or discarded as one.
+- A change made with no route open and nothing else waiting (a place
+  renamed, proposals approved, a route made yours) is no item to come back
+  to: it is saved as it is made. Undo takes it back all the same.
 
-After a change the page reads anew only the stretches that changed (each has
-a mark, `GET /api/v1/owned/routes.marks`, that is another when anything the
-map says of it is), not every line of every area.
-
-It is a mark, not a draft: nothing is held back until you save, and where
-you last saved is kept in the browser you work in. Click the count to see
-the changes one by one. Going to another route by a click on its line asks
-what is to become of them first. Over the API:
-`GET /api/v1/undo/since?txid=…`.
+It is not a draft: nothing is held back until you save. The item is your open
+changeset on the server (`core.changeset`, one per person and way in: the
+map, an assistant and a script each have their own, as each has its own
+undo). So it is there after the page is loaded again and in another browser;
+a route's panel says when somebody else has changes to it that are not saved;
+and a saved item is named after what it changed ("jot116/1, jot116/2: 4
+changes"). Click the count to see the changes one by one. After a change the
+page reads anew only the stretches that changed (each has a mark,
+`GET /api/v1/owned/routes.marks`, that is another when anything the map says
+of it is), not every line of every area. Over the API: `GET /api/v1/work`,
+`POST /api/v1/work/save`, `POST /api/v1/work/discard`,
+`GET /api/v1/work/others`.
 
 ### Getting out of changes that went wrong
 

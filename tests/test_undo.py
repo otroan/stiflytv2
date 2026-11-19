@@ -283,11 +283,14 @@ def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(con
         ("bre18 renamed", 1, None), ("the grading of bre18 changed", 2, None), ("bre18 renamed", 3, None),
         ("bre18 made yours", 4, None)]
     assert undo.recent(conn, undo.whose(kari)) == [] and undo.undone_last(conn, mine) is None
-    # What he has changed since the route was made: the three, to be discarded as a whole or left to stay.
-    sitting = undo.since(conn, mine, listed[3]["txid"])
-    assert [c["txid"] for c in sitting["changes"]] == [c["txid"] for c in listed[:3]] and sitting["in_the_way"] is None
-    assert undo.since(conn, mine, listed[0]["txid"]) == {"changes": [], "in_the_way": None}
-    assert undo.since(conn, undo.whose(kari), 0)["changes"] == []
+    # All of it is his item of work: he has not saved since he began. Others can see that he is at it.
+    work = undo.item(conn, mine)
+    assert [c["txid"] for c in work["changes"]] == [c["txid"] for c in listed] and work["in_the_way"] is None
+    assert [r["code"] for r in work["routes"]] == ["bre18"]
+    assert undo.item(conn, undo.whose(kari)) == {"changes": [], "in_the_way": None, "routes": []}
+    assert [(o["changes"], [r["code"] for r in o["routes"]]) for o in undo.open_items(conn, undo.whose(kari))
+            if o["author"] == "Ola Nordmann"] == [(4, ["bre18"])]
+    assert not [o for o in undo.open_items(conn, mine) if o["author"] == "Ola Nordmann"]
     with pytest.raises(undo.Conflict, match="there is nothing to bring back"):
         undo.redo(conn, ola)
     with pytest.raises(undo.Conflict, match="not among your latest"):
@@ -337,3 +340,46 @@ def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(con
     assert undo.undone_last(conn, mine)["in_the_way"] == "the grading of bre18 changed was taken back after it"
     with pytest.raises(undo.Conflict, match="was taken back after it, and touches the same"):
         act(conn, lambda: undo.redo(conn, ola))
+
+
+def test_an_item_of_work_is_saved_or_discarded_as_a_whole(conn):
+    """What a person has changed since they last saved: said to stay, or all of it taken back in one go."""
+    from stiflyt2.api.auth import Author
+
+    per, assistant, mine = Author("Per Nordmann", "viewer"), Author("Per Nordmann", "mcp"), ("Per Nordmann", "viewer")
+    a = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), per))
+
+    def change(who=per, **what):
+        act(conn, lambda: routes.update(conn, a, routes.detail(conn, a)["version"], who, **what))
+
+    # Saved: the item is closed and named after what it changed, and the next change opens another.
+    assert act(conn, lambda: undo.save(conn, per)) == {"saved": 1, "title": "bre18: 1 change"}
+    assert conn.execute("SELECT title, state, through FROM core.changeset WHERE author = 'Per Nordmann' "
+                        "ORDER BY created_at DESC LIMIT 1").fetchone() == ("bre18: 1 change", "closed", "viewer")
+    assert undo.item(conn, mine)["changes"] == [] and act(conn, lambda: undo.save(conn, per)) == {"saved": 0}
+    saved = state(conn)
+    change(name="One")
+    change(grading="B")
+    work = undo.item(conn, mine)
+    assert [c["what"] for c in work["changes"]] == ["the grading of bre18 changed", "bre18 renamed"]
+    assert [r["code"] for r in work["routes"]] == ["bre18"] and work["in_the_way"] is None
+
+    # An assistant acting as him has an item of its own. What it changes on top stands in the way of his discarding.
+    change(assistant, name="By the assistant")
+    assert [c["what"] for c in undo.item(conn, ("Per Nordmann", "mcp"))["changes"]] == ["bre18 renamed"]
+    assert len(undo.item(conn, mine)["changes"]) == 2 and undo.item(conn, mine)["in_the_way"] == "bre18 renamed"
+    with pytest.raises(undo.Conflict, match="bre18 renamed came after.*cannot be discarded as a whole"):
+        act(conn, lambda: undo.discard(conn, per))
+    act(conn, lambda: undo.undo(conn, assistant))
+
+    # Discarded: all of it is taken back in one go, and the route is as it was saved.
+    told = act(conn, lambda: undo.discard(conn, per))
+    assert told["undone"] == ["the grading of bre18 changed", "bre18 renamed"] and state(conn) == saved
+    assert undo.item(conn, mine)["changes"] == []
+    with pytest.raises(undo.Conflict, match="nothing that is not saved"):
+        undo.discard(conn, per)
+    # What is brought back is in the item again, not saved; and saved, it is not his to discard any more.
+    act(conn, lambda: undo.redo(conn, per))
+    assert [c["what"] for c in undo.item(conn, mine)["changes"]] == ["bre18 renamed"]
+    assert act(conn, lambda: undo.save(conn, per))["saved"] == 1 and undo.item(conn, mine)["changes"] == []
+    assert routes.detail(conn, a)["name"] == "One"

@@ -46,26 +46,34 @@ def _rows(conn, sql: str, params: dict) -> list[dict]:
 
 
 def current_changeset(conn, author: str) -> str:
-    """The author's open changeset, opened now if there is none."""
+    """The author's open changeset for the way they came in, opened now if there is none.
+
+    It is their item of work (d0017): what they have changed since they last
+    saved. The map, an assistant and a script each have their own, as each has
+    its own undo.
+    """
     # For the undo log and the history: whose change this is, and how it came in (the map, an assistant).
+    through = getattr(author, "through", "") or ""
     conn.execute("SELECT set_config('stiflyt2.author', %s, true), set_config('stiflyt2.through', %s, true)",
-                 (str(author), getattr(author, "through", "") or ""))
+                 (str(author), through))
     row = conn.execute(
-        """SELECT id FROM core.changeset WHERE author = %s AND state = 'open'
-           ORDER BY created_at DESC LIMIT 1""", (author,)).fetchone()
+        """SELECT id FROM core.changeset WHERE author = %s AND coalesce(through, '') = %s AND state = 'open'
+           ORDER BY created_at DESC LIMIT 1""", (str(author), through)).fetchone()
     if row:
         return str(row[0])
     return str(conn.execute(
-        "INSERT INTO core.changeset (title, author) VALUES (%s, %s) RETURNING id",
-        (f"Changes {date.today().isoformat()}", author)).fetchone()[0])
+        "INSERT INTO core.changeset (title, author, through) VALUES (%s, %s, nullif(%s, '')) RETURNING id",
+        (f"Changes {date.today().isoformat()}", str(author), through)).fetchone()[0])
 
 
-def changeset_status(conn, author: str) -> dict | None:
+def changeset_status(conn, author: str, through: str | None = None) -> dict | None:
+    """The open changeset of an author for one way in (as `current_changeset` finds it), with how much is in it."""
     found = _rows(conn, """
         SELECT c.id, c.title, c.created_at,
                (SELECT count(*) FROM history.event e WHERE e.changeset_id = c.id)::int AS changes
-        FROM core.changeset c WHERE c.author = %(a)s AND c.state = 'open'
-        ORDER BY c.created_at DESC LIMIT 1""", {"a": author})
+        FROM core.changeset c WHERE c.author = %(a)s AND coalesce(c.through, '') = %(t)s AND c.state = 'open'
+        ORDER BY c.created_at DESC LIMIT 1""",
+        {"a": str(author), "t": through if through is not None else getattr(author, "through", "") or ""})
     return found[0] if found else None
 
 

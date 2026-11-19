@@ -281,8 +281,9 @@ if (EDIT) {
   const rename = name => js(`(async () => { await send("PATCH", "owned/routes/${here}", { version: openRoute.version, name: ${JSON.stringify(name)} }); await reloadOpen(); return true; })()`);
   const press = label => clickOn(`[...document.querySelectorAll("#unsaved button")].find(b => b.textContent === ${JSON.stringify(label)})`);
   await js(`saveAll()`); await until(`document.getElementById("unsaved").hidden`, 10);
+  const code = await js("openRoute.code");
   await rename(stays);
-  check("a change is seen to take: it is counted as not saved", await until(`/^1 change not saved/.test(document.getElementById("unsaved").textContent) && !document.getElementById("unsaved").hidden`, 15), await text("#unsaved"));
+  check("a change is seen to take: it is counted as not saved, and to which route", await until(`document.getElementById("unsaved").textContent.startsWith("1 change not saved, to " + ${JSON.stringify(code)}) && !document.getElementById("unsaved").hidden`, 15), await text("#unsaved"));
   await press("Save");
   check("Save says it stays, and the count starts again", await until(`/^Saved: 1 change/.test(document.getElementById("unsaved").textContent)`, 10) && await until(`document.getElementById("unsaved").hidden`, 10), await text("#unsaved"));
   await rename(goes); await rename(`${goes} again`);
@@ -309,20 +310,23 @@ if (EDIT) {
     await until(`unsaved.changes.length === 1`, 15);
     await click(await show(back));
     const asks = `[...document.querySelectorAll("#leave button")]`;
-    check("with a change not saved, it asks first what is to become of it", await until(`document.getElementById("leave").open && /1 change not saved/.test(document.getElementById("leave").textContent) && ${asks}.length === 3`, 15), await text("#leave"));
+    check("with a change not saved, it asks first what is to become of it", await until(`document.getElementById("leave").open && /1 change not saved, to /.test(document.getElementById("leave").textContent) && ${asks}.length === 4`, 15), await text("#leave"));
     check("and the route is still the one that was open", await js(isOpen(b)));
-    await clickOn(`${asks}.find(x => x.textContent === "Discard, and go on")`);
-    check("Discard, and go on: the change is taken back and the other route is open", await until(`${isOpen(a)} && unsaved.changes.length === 0 && !document.getElementById("leave").open`, 20) && await js(`get("owned/routes/${b.id}").then(r => r.name === ${JSON.stringify(was)})`), await js("openRoute && openRoute.code"));
-    // The same question from the list of routes, and Stay leaves all as it is.
+    await clickOn(`${asks}.find(x => x.textContent === "Same job: keep going")`);
+    check("Same job, keep going: the other route is open, and the change is still not saved", await until(`${isOpen(a)} && unsaved.changes.length === 1 && !document.getElementById("leave").open`, 20), await text("#unsaved"));
+    // A change to the second route is part of the same item of work: one count, both routes named.
+    const wasA = await js("openRoute.name");
     await js(`(async () => { await send("PATCH", "owned/routes/${a.id}", { version: openRoute.version, name: ${JSON.stringify(trial)} }); await reloadOpen(); return true; })()`);
-    await until(`unsaved.changes.length === 1`, 15);
+    check("what is changed on the next route belongs to the same item of work", await until(`unsaved.changes.length === 2 && unsaved.routes.length === 2 && /^2 changes not saved, to .+ and .+/.test(document.getElementById("unsaved").textContent)`, 15), await text("#unsaved"));
+    check("and it is kept on the server, not in the browser", await js(`get("work").then(w => w.changes.length === 2 && w.routes.length === 2)`));
     await clickOn(`[...document.querySelectorAll("#selected .backbar button")].find(x => x.textContent.includes("All routes"))`);
     check("back to the list asks the same", await until(`document.getElementById("leave").open`, 10), await text("#leave"));
     await clickOn(`${asks}.find(x => x.textContent.startsWith("Stay on "))`);
-    check("Stay: the route is open as it was, with its change", await until(`!document.getElementById("leave").open`, 5) && await js(`${isOpen(a)} && unsaved.changes.length === 1`));
+    check("Stay: the route is open as it was, with the changes", await until(`!document.getElementById("leave").open`, 5) && await js(`${isOpen(a)} && unsaved.changes.length === 2`));
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await sleep(300);
     check("Escape does not close the route", await js(isOpen(a)));
-    await clickOn(`[...document.querySelectorAll("#unsaved button")].find(x => x.textContent === "Discard")`); await until(`unsaved.changes.length === 0`, 15);
+    await clickOn(`[...document.querySelectorAll("#unsaved button")].find(x => x.textContent === "Discard")`);
+    check("Discard takes back the whole item: both routes are as they were", await until(`unsaved.changes.length === 0`, 20) && await js(`Promise.all([get("owned/routes/${a.id}"), get("owned/routes/${b.id}")]).then(([x, y]) => x.name === ${JSON.stringify(wasA)} && y.name === ${JSON.stringify(was)})`));
     check("the panel has carrying on along another line as a tool of its own", await js(`[...document.querySelectorAll("#selected button")].some(x => x.textContent === "Carry it on along another line…")`));
   } else console.log("    (no two routes with a stretch of their own each: going from one to the other is not tried)");
   editing = false;

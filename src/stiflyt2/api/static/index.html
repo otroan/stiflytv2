@@ -1169,59 +1169,56 @@ function showUndo(next, again) {
   if (!undoNext) showLatest(false); else if (!latestBox.hidden) showLatest(true);
   refreshUnsaved();
 }
-// ---- Save or discard. Every change is in the data the moment it is made; what is counted here is what you
-// have changed since you last saved. Save says it stays; Discard takes all of it back in one go. The mark of
-// where you last saved is kept in this browser, so it is still there after the page is loaded again. ----
+// ---- Save or discard: an item of work. Every change is in the data the moment it is made, for others too.
+// What you have changed since you last saved is your item of work, kept on the server (your open changeset):
+// usually one route, sometimes two that are joined. Save says it stays; Discard takes all of it back in one go.
+// Leaving a route asks which, or whether the next route is part of the same job (`beforeLeaving`). ----
 const unsavedBox = document.getElementById("unsaved");
-const savedKey = () => `stiflyt2.saved.${EDITOR}`;
-let unsaved = { changes: [], in_the_way: null }, unsavedAsked = 0;
-let saveWithNext = false;       // "Done with this route" says its changes stay, too
-function savedAt() {
-  let at = localStorage.getItem(savedKey());
-  if (at === null) { at = String(undoNext ? undoNext.txid : 0); localStorage.setItem(savedKey(), at); }      // the first time here: all that is there is saved
-  return Number(at);
-}
+let unsaved = { changes: [], in_the_way: null, routes: [] }, unsavedAsked = 0, unsavedRead = false;
+const countOf = n => `${n} change${n === 1 ? "" : "s"}`;
+const toRoutes = routes => routes.length ? `, to ${routes.slice(0, 3).map(r => r.code).join(routes.length === 2 ? " and " : ", ")}${routes.length > 3 ? ` and ${routes.length - 3} more` : ""}` : "";
 async function refreshUnsaved(said) {
   if (!EDITOR) { unsavedBox.hidden = true; return; }
   const asked = ++unsavedAsked;
   let found;
-  try { found = await get(`undo/since?txid=${savedAt()}`); } catch { return; }
+  try { found = await get("work"); } catch { return; }
   if (asked !== unsavedAsked) return;
-  if (saveWithNext && found.changes.length) {
-    saveWithNext = false;
-    localStorage.setItem(savedKey(), String(found.changes[0].txid));
-    said = `Saved: ${found.changes.length} change${found.changes.length === 1 ? "" : "s"}.`;
-    found = { changes: [], in_the_way: null };
+  // A change made with no route open, and nothing else waiting (a place renamed, proposals approved, a route
+  // made yours), is no item of work to come back to: it is saved as it is made. Undo still takes it back.
+  if (unsavedRead && found.changes.length && !unsaved.changes.length && !openRoute) {
+    try { await send("POST", "work/save"); } catch { /* it stays as not saved, and is shown */ }
+    if (asked !== unsavedAsked) return;
+    try { found = await get("work"); } catch { return; }
   }
+  unsavedRead = true;
   const more = found.changes.length > unsaved.changes.length || (found.changes[0] && unsaved.changes[0] && found.changes[0].txid !== unsaved.changes[0].txid && found.changes.length >= unsaved.changes.length);
   unsaved = found;
   const n = found.changes.length;
   unsavedBox.hidden = !n && !said;
   if (!n) { unsavedBox.replaceChildren(said || ""); if (said) setTimeout(() => { if (!unsaved.changes.length) unsavedBox.hidden = true; }, 2500); return; }
   unsavedBox.replaceChildren(
-    el("button", { class: "count", title: "Show them", onclick: () => showLatest(true) }, `${n} change${n === 1 ? "" : "s"} not saved`),
+    el("button", { class: "count", title: "Show them", onclick: () => showLatest(true) }, `${countOf(n)} not saved${toRoutes(found.routes)}`),
     el("span", { class: "last" }, `latest: ${found.changes[0].what}`),
-    el("button", { class: "btn main", title: "Says these changes are to stay. They are in the data already, for others too: saving only starts the count again.", onclick: saveAll }, "Save"),
+    el("button", { class: "btn main", title: "Says these changes are to stay, and ends this item of work. They are in the data already, for others too.", onclick: saveAll }, "Save"),
     found.in_the_way
       ? el("span", { class: "sub" }, `Cannot be discarded as a whole: ${found.in_the_way} came after.`)
       : el("button", { class: "btn", title: "Takes all of them back, in one go. Redo brings them back one at a time.", onclick: discardAll }, "Discard"));
   if (more) { unsavedBox.classList.remove("new"); void unsavedBox.offsetWidth; unsavedBox.classList.add("new"); }      // seen to take
 }
-function saveAll() {
-  const n = unsaved.changes.length;
-  if (n) localStorage.setItem(savedKey(), String(unsaved.changes[0].txid));
-  refreshUnsaved(`Saved: ${n} change${n === 1 ? "" : "s"}.`);
+async function saveAll() {
+  try { const r = await send("POST", "work/save"); await refreshUnsaved(`Saved: ${countOf(r.saved)}.`); return true; }
+  catch (err) { sayTop(`Could not save: ${err.message}`); return false; }
 }
 async function discardAll() {
   const n = unsaved.changes.length;
   if (!n) return true;
-  if (n > 3 && !confirm(`Discard your ${n} changes since you last saved? Redo brings them back one at a time.`)) return false;
+  if (n > 3 && !confirm(`Discard your ${n} changes since you last saved${toRoutes(unsaved.routes)}? Redo brings them back one at a time.`)) return false;
   for (const b of unsavedBox.querySelectorAll("button")) b.disabled = true;
   let done = true;
   try {
-    const r = await send("POST", "undo/back", { txid: unsaved.changes[n - 1].txid });
+    const r = await send("POST", "work/discard");
     showUndo(r.next, r.again);
-    await afterTakingBack(`Discarded ${n} change${n === 1 ? "" : "s"}: ${r.undone.slice(0, 4).join("; ")}${n > 4 ? "…" : ""}. Redo brings ${n === 1 ? "it" : "them"} back.`);
+    await afterTakingBack(`Discarded ${countOf(n)}: ${r.undone.slice(0, 4).join("; ")}${n > 4 ? "…" : ""}. Redo brings ${n === 1 ? "it" : "them"} back.`);
   } catch (err) { done = false; sayTop(`Could not discard them: ${err.message}`); }
   refreshEditing();
   return done;
@@ -1309,9 +1306,7 @@ async function refreshEditing() {
     const out = e.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     if (!EDITOR) { footer.replaceChildren(e.sign_in ? `Signed in as ${e.reader}, to look. Changing routes needs the editor role. ` : "Read-only: no editor is set on the server.", out); return; }
     if (!tellBox.hasChildNodes()) { renderTell(); lookAtNight(); }
-    const c = e.changeset;
-    footer.replaceChildren((e.sign_in ? `Signed in as ${EDITOR}. Your changes are recorded under that name` : `Changes are recorded as ${EDITOR}`) + (c ? ` in “${c.title}” (${c.changes} so far). ` : ". "),
-      c ? el("button", { class: "link", onclick: async () => { await send("POST", "changeset/close"); refreshEditing(); } }, "Close this changeset") : "", c && out ? " " : "", out);
+    footer.replaceChildren((e.sign_in ? `Signed in as ${EDITOR}. Your changes are recorded under that name. ` : `Changes are recorded as ${EDITOR}. `), out);
   } catch { footer.textContent = ""; }
   refreshUndo();
 }
@@ -2107,17 +2102,20 @@ async function makeRouteYours(candidateId, code) {
 }
 // Leaving the route that is open, whichever way: with changes not saved, it is asked first what is to become of them.
 const leaveBox = document.getElementById("leave");
+for (const home of document.querySelectorAll('header a[href="/"]'))
+  home.addEventListener("click", e => { if (openRoute && unsaved.changes.length) { e.preventDefault(); beforeLeaving(() => { location.href = "/"; }); } });
 function beforeLeaving(go) {
   const n = unsaved.changes.length;
   if (!openRoute || !n) { go(); return; }
   const left = openRoute.code, close = () => leaveBox.close();
   leaveBox.replaceChildren(
-    el("h2", { style: "margin:0 0 4px;font-size:17px" }, `${n} change${n === 1 ? "" : "s"} not saved`),
+    el("h2", { style: "margin:0 0 4px;font-size:17px" }, `${countOf(n)} not saved${toRoutes(unsaved.routes)}`),
     el("div", { class: "sub" }, `You are leaving ${left}. The latest: ${unsaved.changes[0].what}.`),
     el("div", { class: "actions", style: "flex-direction:column;align-items:stretch;margin-top:12px" },
-      el("button", { class: "btn main", onclick: () => { close(); saveAll(); go(); } }, "Save, and go on"),
-      unsaved.in_the_way ? "" : el("button", { class: "btn", onclick: async () => { close(); if (await discardAll()) go(); } }, "Discard, and go on"),
-      el("button", { class: "btn", onclick: close }, `Stay on ${left}`)));
+      el("button", { class: "btn main", title: "The changes stay, and this item of work is done", onclick: async () => { close(); if (await saveAll()) go(); } }, "Save, and go on"),
+      unsaved.in_the_way ? "" : el("button", { class: "btn", title: "All of them are taken back, in one go", onclick: async () => { close(); if (await discardAll()) go(); } }, "Discard, and go on"),
+      el("button", { class: "btn", title: "What you do next belongs to the same piece of work: two routes that are joined, a junction they share. It is saved or discarded as one.", onclick: () => { close(); go(); } }, "Same job: keep going"),
+      el("button", { class: "btn quiet", onclick: close }, `Stay on ${left}`)));
   leaveBox.showModal();
 }
 function openOwnedRoute(id, show) {
@@ -2380,8 +2378,15 @@ function renderOwnedRoute(route, problem, note) {
   const unpublish = was => { const why = prompt(`Why is ${route.code} not to be published? It stays a route of yours, and is left out of what is handed to UT.no${route.sources.length ? "; Kartverket is asked to take its number off what Turrutebasen has of it" : ""}.`, was || "Kept for its history");
     if (why && why.trim() && why.trim() !== was) change(() => send("POST", `owned/routes/${route.id}/unpublished`, { version: route.version, why: why.trim() })); };
 
+  // Who else has changed this route and not saved yet: said, so that two do not work on it without knowing.
+  const othersAt = el("div", {});
+  get("work/others").then(items => {
+    const at = items.filter(i => i.routes.some(r => r.id === route.id));
+    if (at.length && othersAt.isConnected) othersAt.replaceChildren(...at.map(i => el("div", { class: "said", style: "border-left-color:#b07d00;background:#fff7dc" },
+      `${i.author}${i.through === "mcp" ? " (through an assistant)" : i.through === "api" ? " (through a script)" : ""} has ${countOf(i.changes)} to this route that ${i.changes === 1 ? "is" : "are"} not saved yet.`)));
+  }).catch(() => {});
   const done = async () => {
-    try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); saveWithNext = true; clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
+    try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); await send("POST", "work/save"); clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
     catch (err) { renderOwnedRoute(route, err.message); }
   };
   selected.replaceChildren(
@@ -2402,6 +2407,7 @@ function renderOwnedRoute(route, problem, note) {
       can ? el("button", { class: "link", onclick: () => change(() => send("POST", `owned/routes/${route.id}/review`, { version: route.version, done: false })) }, "Not done after all") : "") : "",
     problem ? el("div", { class: "error", role: "alert" }, `That change was not saved: ${problem}`) : "",
     note ? el("div", { class: "said", role: "status" }, note) : "",
+    othersAt,
     tools,
     can ? el("div", { class: "actions" },
       !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: done }, "Done with this route") : "",
