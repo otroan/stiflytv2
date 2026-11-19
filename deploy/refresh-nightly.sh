@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Nightly check of every imported source, run from cron:
-#   30 4 * * * $HOME/stiflytv2/deploy/refresh-nightly.sh
+#   0 7 * * * $HOME/stiflytv2/deploy/refresh-nightly.sh
+# After 06:30 UTC: Kartverket makes the Turrutebasen file between 04:40 and 06:25,
+# and a run before that is a day behind.
 # Appends to var/log/refresh.log. Exits with the status of `stiflyt2 refresh`:
 # 1 when a delivery was refused or a source could not be checked.
 cd "$(dirname "$0")/.." || exit 1

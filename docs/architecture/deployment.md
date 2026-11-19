@@ -25,7 +25,9 @@ started at boot from the crontab, and reached through an SSH tunnel. It is not
 behind the reverse proxy yet: see the next section.
 
 One scheduled job exists, in that user's crontab since 2026-11-14:
-`deploy/refresh-nightly.sh` at 04:30 UTC. It checks every loaded source and
+`deploy/refresh-nightly.sh` at 07:00 UTC (04:30 until 2026-11-19: Kartverket
+makes the Turrutebasen file between 04:40 and 06:25 UTC, so the earlier run
+always fetched the file of the day before). It checks every loaded source and
 imports what changed, logging to `var/log/refresh.log` and to
 `import_control.check_log`. Original delivery files are kept for the newest
 14 snapshots per source and scope; the database keeps every version. Nothing

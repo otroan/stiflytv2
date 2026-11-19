@@ -84,8 +84,8 @@ one is refused and changes nothing; `refresh` then exits with status 1.
 search and, later, the API and map read. It is derived data: `stiflyt2 index
 build --force` rebuilds all of it from the stored snapshots.
 
-On the server `deploy/refresh-nightly.sh` runs `refresh` from cron at 04:30
-UTC. An OpenStreetMap box checked within the last seven days is left alone
+On the server `deploy/refresh-nightly.sh` runs `refresh` from cron at 07:00
+UTC, after Kartverket has made the day's Turrutebasen file. An OpenStreetMap box checked within the last seven days is left alone
 unless `refresh osm` asks for it by name. `refresh` also removes the original files of all but the newest 14
 snapshots per source and scope (`STIFLYT2_KEEP_ARTIFACTS`; 0 keeps all). The
 database keeps every snapshot in full.
