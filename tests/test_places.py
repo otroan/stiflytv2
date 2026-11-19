@@ -291,6 +291,8 @@ def test_two_places_that_are_one_are_made_one_and_what_lies_round_a_place_is_lis
     now = places.detail(conn, hut)
     assert {str(a["id"]) for a in now["access_points"]} == {beside, end["id"]} and len(now["connectors"]) == 1
     assert str(next(a for a in now["access_points"] if a["is_primary"])["id"]) == beside
+    # Each arrival point says which of your routes come there, as they are now.
+    assert {str(a["id"]): a["routes"] for a in now["access_points"]} == {beside: [], end["id"]: ["bre18"]}
     assert now["history"][0]["type"] == "place.merged" and now["history"][0]["payload"]["taken_in"] == by_hand
     assert one(conn, "SELECT status FROM core.place WHERE id = %s", by_hand) == "retired"
     assert identity.current(conn, "place", by_hand)["now"] == [hut]

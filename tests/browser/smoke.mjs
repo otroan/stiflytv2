@@ -205,6 +205,14 @@ if (EDIT) {
     await mouse("mousePressed", from.x, from.y, 1);
     for (let i = 1; i <= 12; i++) { await mouse("mouseMoved", from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12, 1); await sleep(30); }
     check("held still, an end says what letting go there would give, before anything is changed", await until(`/^Let go: .* ends .*cut back by \\d+ stretch/.test(document.getElementById("hint").textContent) && openRoute.length.legs === ${legs}`, 15), await text("#hint"));
+    check("and what it says is not hidden behind Undo", await js(`document.getElementById("hint").getBoundingClientRect().top >= document.getElementById("undobar").getBoundingClientRect().bottom && !document.getElementById("hint").hidden`));
+    await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    check("Escape lets go of what is held: nothing is changed, and the route stays open", await until(`drag === null && document.getElementById("hint").hidden && Boolean(openRoute) && openRoute.length.legs === ${legs}`, 5));
+    await mouse("mouseReleased", to.x, to.y); await sleep(300);
+    await mouse("mouseMoved", from.x, from.y); await sleep(150);
+    await mouse("mousePressed", from.x, from.y, 1);
+    for (let i = 1; i <= 12; i++) { await mouse("mouseMoved", from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12, 1); await sleep(30); }
+    await sleep(700);
     await mouse("mouseReleased", to.x, to.y);
     check("let go, the route is cut back to there", await until(`Boolean(openRoute) && openRoute.length.legs < ${legs}`, 20), await js("openRoute && openRoute.length.legs"));
     await until(`/end of .* moved/.test(document.getElementById("undo").textContent)`, 10);

@@ -31,7 +31,9 @@
           border-right: 1px solid var(--line); overflow: hidden; }
   #mapwrap { flex: 1; min-width: 0; position: relative; }
   #map { position: absolute; inset: 0; }
-  #undobar { position: absolute; top: 12px; left: 12px; z-index: 2; max-width: 62%; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+  #top { position: absolute; top: 12px; left: 12px; right: 56px; z-index: 2; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; pointer-events: none; }
+  #top > * { pointer-events: auto; }
+  #undobar { max-width: 72%; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
   #undobar > button { text-align: left; font: inherit; cursor: pointer; max-width: 100%;
           background: #fff; color: var(--ink); border: 1.5px solid var(--sign); border-radius: 4px; padding: 7px 12px;
           box-shadow: 0 1px 4px #0003; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -56,7 +58,7 @@
   #mode { position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
           background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
   #mode button { margin-left: 10px; }
-  #hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: 80%;
+  #hint { max-width: min(80%, 620px);
           background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
   header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
   h1 { font: 600 20px/1.1 var(--tight); margin: 0 0 10px; }
@@ -179,14 +181,14 @@
   <footer><div id="editing"></div><div id="others" role="status"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Signs and operations</a></div><div id="status">Loading…</div></footer>
 </div>
 <div id="mapwrap"><div id="map"></div>
-  <section id="report" hidden aria-labelledby="reporttitle"></section><div id="hint" hidden role="status"></div>
-  <div id="undobar">
+  <section id="report" hidden aria-labelledby="reporttitle"></section>
+  <div id="top"><div id="undobar">
     <div id="unsaved" hidden role="status"></div>
     <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
     <button id="redo" hidden title="Brings back what you took back last. Ctrl or Cmd with Shift and Z does the same. Once you change something else, that stands in its place."></button>
     <button id="morelatest" hidden aria-expanded="false" aria-controls="latest" title="Your latest changes in the map: go back to before any of them in one go."><strong>Latest changes</strong></button>
     <section id="latest" hidden aria-label="Your latest changes"></section>
-  </div>
+  </div><div id="hint" hidden role="status"></div></div>
   <div id="mode" hidden role="status"></div></div>
 
 <script>
@@ -1221,11 +1223,11 @@ async function showLatest(open) {
   latestBox.replaceChildren(
     el("h2", {}, "Your latest changes in the map"),
     el("div", { class: "sub" }, "Go back to before any of them: it and every change of yours after it are taken back, in one go. Redo brings them back, one at a time. What others changed in between stays."),
-    el("ol", {}, ...list.map(c => el("li", {},
+    el("ol", {}, ...list.map((c, i) => el("li", { style: c.in_the_way ? "color:var(--muted)" : "" },
       el("span", { class: "when" }, today(c.at) ? time(c.at) : new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })),
       el("span", {}, c.what),
       c.in_the_way ? "" : el("button", { class: "btn", onclick: e => backTo(c, e.target) }, c.with === 1 ? "Take back" : `Back to before this (${c.with})`),
-      c.in_the_way ? el("span", { class: "sub" }, `Cannot be taken back from here: ${c.in_the_way} came after and touches the same stretches or junctions.`) : ""))),
+      c.in_the_way && !(list[i - 1] || {}).in_the_way ? el("span", { class: "sub" }, `From here on they cannot be taken back in one go: ${c.in_the_way} came after, by somebody else or another way in, and touches the same stretches or junctions.`) : ""))),
     el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => showLatest(false) }, "Close")));
 }
 async function backTo(change, button) {
@@ -1347,6 +1349,7 @@ function endDraw() {
 function finishDraw() { const d = draft; endDraw(); d.done(d.points, d.follow); }
 document.addEventListener("keydown", e => {
   const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName);
+  if (e.key === "Escape" && drag) { endDrag(); return; }       // what is held is let go where it was: nothing is changed
   if (e.key === "Escape" && !pick && !routing && !draft && !typing && !selected.hidden) {
     if (document.querySelector(".maplibregl-popup")) closePopups(); else if (fixing) setFixing(false); else clearRoute();
     return;
@@ -1409,7 +1412,7 @@ function renderPlace(place, problem) {
 
   const points = el("ul", {}, ...place.access_points.map(p => el("li", { class: "point" },
     el("div", {}, p.is_primary ? el("span", { class: "tag yours" }, "Primary") : "", p.is_primary ? " " : "",
-      el("span", { class: "routes" }, p.routes.length ? p.routes.join(", ") : "No route ends here yet")),
+      el("span", { class: "routes" }, p.routes.length ? p.routes.join(", ") : "No route comes here yet")),
     el("span", { class: "num" }, p.is_primary ? "" : `${p.from_primary_m} m away`),
     el("div", { class: "actions", style: "grid-column:1/-1;margin:0" },
       el("button", { class: "btn quiet", onclick: () => go([p.lon, p.lat], 16) }, "Show"),

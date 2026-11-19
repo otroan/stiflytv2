@@ -81,6 +81,9 @@ _WHAT = {
     "place.retired": "a place withdrawn",
     "place.renamed": "a place renamed",
     "place.reviewed": "a place reviewed",
+    "place.moved": "the building mark of a place moved",
+    "place.kind_changed": "the kind of a place changed",
+    "place.primary_changed": "another arrival point of a place made the primary one",
     "place.access_point_removed": "an arrival point taken out of a place",
     "place.access_point_added": "an arrival point added to a place",
 }

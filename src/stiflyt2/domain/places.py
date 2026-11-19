@@ -682,7 +682,12 @@ def detail(conn, place_id: str) -> dict:
                round(ST_Distance(n.geom, p.geom))::int AS from_reference_m,
                round(ST_Distance(n.geom, (SELECT geom FROM core.node
                                           WHERE id = p.primary_node_id)))::int AS from_primary_m,
-               coalesce((SELECT sr.detail->'routes' FROM core.source_reference sr
+               coalesce((SELECT jsonb_agg(DISTINCT rt.code ORDER BY rt.code) FROM core.route_leg l
+                         JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
+                         JOIN core.edge e ON e.id = l.edge_id AND e.status = 'active'
+                         JOIN core.edge_revision v ON v.id = e.current_revision_id
+                         WHERE n.id IN (v.a_node, v.b_node)),
+                        (SELECT sr.detail->'routes' FROM core.source_reference sr
                          WHERE sr.subject_type = 'node' AND sr.subject_id = n.id LIMIT 1),
                         '[]') AS routes
         FROM core.node n JOIN core.place p ON p.id = n.place_id
