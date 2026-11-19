@@ -145,6 +145,21 @@ check("the editor opens one of your routes from its address", await until(`[...d
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
+check("the editor has read the lines of your routes by itself, when the page opened", await until(`ownedLines.features.length > 0`, 30));
+
+// Where several routes run on one line, a click asks which, by code and name.
+const shared = await js(`(() => { const f = ownedLines.features.find(f => f.properties.routes.length >= 2 && f.geometry.coordinates.length > 3);
+  return f ? JSON.stringify({ at: f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)], routes: f.properties.routes.map(r => ({ id: r.id, code: r.code })) }) : null; })()`);
+if (shared) {
+  const { at, routes: sharing } = JSON.parse(shared), wasOpen = await js("openRoute.id");
+  await js(`(() => { clearRoute(); map.jumpTo({ center: ${JSON.stringify(at)}, zoom: 14 }); })()`); await until(`map.loaded() && !map.isMoving()`, 15); await sleep(900);
+  await click(await onMap(JSON.stringify(at)));
+  const names = JSON.parse(await js(`namesOf(${JSON.stringify(sharing.map(r => r.id))}).then(JSON.stringify)`));
+  const wanted = sharing.map((r, i) => r.code + (names[i] ? " " + names[i] : "")).sort();
+  check("several routes on one line: the chooser gives each by code and name", await until(`JSON.stringify([...document.querySelectorAll(".maplibregl-popup button[data-route]")].map(b => b.textContent).sort()) === ${JSON.stringify(JSON.stringify(wanted))}`, 15), `${await text(".maplibregl-popup")} (wanted ${wanted.join(" | ")})`);
+  await js(`(() => { closePopups(); return openOwnedRoute(${JSON.stringify(wasOpen)}); })()`); await until(`Boolean(openRoute) && openRoute.id === ${JSON.stringify(wasOpen)}`, 20);
+} else console.log("    (no line that two routes share: the chooser is not tried)");
+
 check("a place says what lies round it", await js(`(async () => { const all = await get("places.geojson"), one = all.features.find(f => f.properties.type === "place"); if (!one) return true;
   const found = await get("places/" + one.properties.id + "/around"); return Array.isArray(found.ends) && Array.isArray(found.places); })()`));
 
