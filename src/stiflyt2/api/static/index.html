@@ -544,7 +544,7 @@ async function chooseWho(name) {
   try { sideBySide = await get("report", name ? { maintainer: name } : {}); } catch { sideBySide = null; }
   listAreas();
   othersToo = false;
-  if (areaSelect.value) loadArea(true);       // the list of the area that is open follows the choice
+  if (areaSelect.value) loadArea(true, true);       // the list of the area that is open follows the choice
   if (!reportBox.hidden) showReport();
 }
 function closeReport() { reportBox.hidden = true; document.getElementById("openreport").focus(); }
@@ -625,6 +625,7 @@ function showArea() {
 }
 // After a change to a route or place the area's numbers and to-do list are stale: work them out again, a moment later.
 let areaTimer = null, areaSeq = 0, areaFilter = "all";
+let areaGot = null;         // the area as it was last fetched: { area, got: [anchors, report] }
 let othersToo = false;      // list the routes of an area that the chosen maintainer does not look after, too
 let mappedSeen = null;    // the area's routes compared with the mapped paths: { area, found }. Kept, since it takes a while.
 function refreshArea() {
@@ -632,7 +633,7 @@ function refreshArea() {
   clearTimeout(areaTimer);
   areaTimer = setTimeout(() => loadArea(true), 1200);
 }
-async function loadArea(quiet) {
+async function loadArea(quiet, again) {      // again: what was fetched last is shown anew, as when only what is listed of it changes
   const seq = ++areaSeq;
   const folded = s => s.textContent.replace(/\(\d+\).*/, "").trim();
   const wasOpen = quiet ? new Set([...areaRoutes.querySelectorAll("details[open] > summary")].map(folded)) : null;
@@ -644,7 +645,8 @@ async function loadArea(quiet) {
   if (!quiet) areaRoutes.append(el("li", { class: "empty" }, "Working out where the area stands…"));
   try {
     const area = areaSelect.value;
-    const [anchors, report] = await Promise.all([get("anchors", { area }), get(`areas/${area}/report`)]);
+    const [anchors, report] = again && areaGot && areaGot.area === area ? areaGot.got : await Promise.all([get("anchors", { area }), get(`areas/${area}/report`)]);
+    areaGot = { area, got: [anchors, report] };
     areaSpots = { area: area.toLowerCase(), found: anchors };
     if (areaSelect.value !== area || seq !== areaSeq) return;
     const reload = () => loadArea(false);
@@ -710,7 +712,7 @@ async function loadArea(quiet) {
     const routesBox = el("li", {}, mapData,
       el("div", { class: "sub", style: "padding-top:8px" }, counts.done === all.length ? "Every route here is done." : `${counts.done} of ${all.length} routes are done. Open one to change it on the map; say “Done” when it is right.`),
       hidden ? el("div", { class: "sub", style: "padding-top:4px" }, othersToo ? `${hidden} of them ${hidden === 1 ? "is" : "are"} not maintained by ${whose.replace(/^.*\| /, "")}. ` : `${hidden} more ${hidden === 1 ? "route" : "routes"} here ${hidden === 1 ? "is" : "are"} not maintained by ${whose.replace(/^.*\| /, "")}, and ${hidden === 1 ? "is" : "are"} not listed. `,
-        el("button", { class: "link", onclick: () => { othersToo = !othersToo; loadArea(true); } }, othersToo ? "Leave them out" : "List them too")) : "",
+        el("button", { class: "link", onclick: () => { othersToo = !othersToo; loadArea(true, true); } }, othersToo ? "Leave them out" : "List them too")) : "",
       filter, list,
       EDITOR ? el("div", { class: "actions" },
         el("button", { class: "btn", title: "Click where it starts and where it goes: it is laid along the shortest way over your stretches and Turrutebasen's", onclick: () => startRouting() }, "New route between points"),

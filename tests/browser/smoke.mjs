@@ -179,8 +179,11 @@ if (whoIs) {
   const { w, n, every } = JSON.parse(whoIs), more = `[...document.querySelectorAll("#arearoutes button.link")].find(b => /List them too|Leave them out/.test(b.textContent))`;
   if (n < every) {
     check(`with a maintainer chosen, the list of the area has only their routes (${n} of ${every})`, await js(`/not maintained by .*not listed/.test(document.getElementById("arearoutes").textContent) && Boolean(${more})`), w);
+    const held = await js("openRoute && openRoute.id");        // the list is put aside while a route is open: it is closed for the click
+    await js("clearRoute()"); await sleep(300);
     await clickOn(more);
-    check("and the others are listed too when asked for", await until(`document.querySelectorAll("#routelist li.hit").length === ${every} && (${more} || {}).textContent === "Leave them out"`, 30));
+    check("and the others are listed too when asked for", await until(`document.querySelectorAll("#routelist li.hit").length === ${every} && (${more} || {}).textContent === "Leave them out"`, 30), await js(`document.querySelectorAll("#routelist li.hit").length + " listed, of " + ${every} + "; the button says: " + ((${more} || {}).textContent || "nothing") + "; others too: " + othersToo`));
+    if (held) { await js(`openOwnedRoute(${JSON.stringify(held)})`); await until(`Boolean(openRoute) && openRoute.id === ${JSON.stringify(held)}`, 20); }
   } else console.log(`    (every route of the area is maintained by each who can be chosen: the narrowing of the list is not tried)`);
   await js(`chooseWho(${JSON.stringify(await js("localStorage.getItem(WHOSE) || ''"))})`);
 }
