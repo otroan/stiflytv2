@@ -4,6 +4,72 @@ What is wanted and not built, by part. Each entry says who asked for it and
 when, and what has to be settled before it can be built. What is being worked
 on now is in `STATUS.md`; what is decided is in the ADRs.
 
+## The order to build in (agreed 2026-11-19)
+
+The route responsible listed what is missing and agreed to this order. Each
+step is still started on their word; the details of each are further down.
+
+1. **The route editor.**
+   - *One way of snapping*, whatever is dragged (an end, the line, a new
+     point): to a stretch of ours first, then a mapped path, then a road,
+     shown before the pointer is let go. Today an end, a way round and a
+     lay-out between points each have their own rules, and what the editor
+     refused in use was each time one of them being stricter than the others:
+     an end dropped 6 m from a mapped path with a short hop to it (feedback
+     1), a way round that meets the route at one spot only (4), "the route
+     already goes there" and "already ends there" (22, 25), a lay-out that
+     would walk a stretch twice (13), a point 280 m from a path that was
+     pulled onto it (14).
+   - *A new route from A to B* exists ("New route between points"). Left:
+     points to go by, and dragging the proposed line to another way before
+     it is kept.
+   - *Small gaps*: making two places one in the page (feedback 23), a button
+     for taking away a stretch no route uses, the route panel listing the
+     stretches that say otherwise than the route.
+   - *The other areas* (ron, har, ska, fem, hul, osl) made ours in bulk.
+     Operations is of little use where the routes are not ours yet.
+2. **One table for what happens on a route** (the pattern of ADR-004). An
+   issue, "cut here", "replace this sign or post", a diary entry, a report
+   from a work party and an inspection are one kind of thing: an entry with
+   a kind, what it is about (a spot or a span along a route, a sign, a post,
+   a route), a state, who and when. First: issues marked on the map, with
+   replacing a sign tied to the sign order. Then reports as entries that
+   close issues. The diary is the timeline of a route.
+3. **Photos and GPX.** A photo is placed by the position in its file and can
+   hang on an entry or a sign site. A GPX track is a layer and something to
+   compare a route with. Whether a route may be laid on tracks is not
+   decided.
+4. **The route card**: a page to print with what a work party needs, from
+   all of the above: map cut-outs, profile, open work, signs, heritage
+   sites.
+5. **Who owns the ground.** v1 has the access and a module for it: to be
+   read, rewritten and taken in. Seeing it is a role of its own (decided
+   2026-11-19): owners' names are personal data. v2 needs its own access to
+   the cadastre set up by whoever has the agreement; v1's settings are not
+   read.
+6. **A route planner**, in two forms (wanted 2026-11-19):
+   - *For a walker*: a way from A to B anywhere in the country, preferring
+     DNT's routes, by huts that are open and where the summer bridges are
+     out, in days of a sensible length. Needs a graph of the whole country
+     (Turrutebasen's segments with the mapped paths and roads, ours where we
+     have them), and which huts are open and which bridges are out, which
+     UT.no has and we do not (the API client asked for below).
+   - *For work*, through the assistant: "these routes are to be inspected:
+     propose a trip that covers them". Covering given stretches with the
+     least walked twice, in days that end at a hut. Needs only what is ours
+     already, so it can come before the walker's.
+
+Beside the steps, as the answers come: handing changes on to Kartverket and
+to UT.no ("Handing the changes on" below). Without an answer: a work sheet
+per correction for Rett i kartet and a mark that it is reported. For the
+descriptions: whether UT-admin can export routes as a file, which beats one
+page per route.
+
+Before more is kept in operations: a command to put the second nightly copy
+back (`tool.dump`: access, feedback and all of `ops`). The copy itself is
+pushed off the server every night and was read back from a fresh clone on
+2026-11-19.
+
 ## Routes and the graph
 
 ### The graph, as it stood on 2026-11-16 (the priorities: correct graphs, connected routes, signs to the edge of a glacier, every place named)
