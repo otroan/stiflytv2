@@ -19,7 +19,8 @@ from dataclasses import dataclass, replace
 
 from psycopg.rows import dict_row
 
-from stiflyt2.features import FEATURES, STATES
+from stiflyt2 import features as known_features
+from stiflyt2.features import STATES
 
 # A reader looks. Operations changes what is kept about signs and work, and not the routes. An
 # editor, the route responsible, changes the routes, and may do what operations does.
@@ -83,7 +84,7 @@ def looking_as(person: Person | None, role: str | None) -> Person | None:
 def _bundles(conn) -> tuple[dict[str, str], dict[str, frozenset]]:
     """How each feature stands as a whole, and what each role is a bundle of."""
     said = dict(conn.execute("SELECT key, state FROM access.feature").fetchall())
-    states = {key: said.get(key, f.state) for key, f in FEATURES.items()}
+    states = {key: said.get(key, f.state) for key, f in known_features.load().items()}
     roles = {name: frozenset(features) for name, features in conn.execute("SELECT name, features FROM access.role")}
     return states, roles
 
@@ -180,9 +181,9 @@ def roles(conn) -> list[dict]:
 
 
 def _known(features: list[str]) -> list[str]:
-    unknown = sorted(set(features) - set(FEATURES))
+    unknown = sorted(set(features) - set(known_features.load()))
     if unknown:
-        raise Refused(f"no such feature: {', '.join(unknown)}. There are: {', '.join(sorted(FEATURES))}")
+        raise Refused(f"no such feature: {', '.join(unknown)}. There are: {', '.join(sorted(known_features.load()))}")
     return sorted(set(features))
 
 
@@ -214,7 +215,7 @@ def features(conn) -> list[dict]:
              "roles": sorted(name for name, bundle in bundles.items() if key in bundle),
              "given": [a["name"] for a in apart if a["feature"] == key and a["given"]],
              "denied": [a["name"] for a in apart if a["feature"] == key and not a["given"]]}
-            for key, f in sorted(FEATURES.items())]
+            for key, f in sorted(known_features.load().items())]
 
 
 def set_state(conn, key: str, state: str, by: str) -> None:
@@ -251,7 +252,7 @@ def why(conn, email: str) -> list[dict]:
     own = dict(conn.execute("SELECT feature, given FROM access.person_feature WHERE email = %s", (email,)).fetchall())
     role = found[0]["role"]
     told = []
-    for key in sorted(FEATURES):
+    for key in sorted(known_features.load()):
         if states[key] == "off":
             has, because = False, "the feature is off for everybody"
         elif states[key] == "all":

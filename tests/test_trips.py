@@ -1,4 +1,7 @@
 """Trips for work: every stretch that is asked for is walked, with little walked twice, in days that end at huts."""
+import subprocess
+import sys
+
 import psycopg
 import pytest
 from conftest import TEST_DB, role_dsn
@@ -177,3 +180,10 @@ def test_the_planner_is_a_feature_of_its_own_and_is_refused_and_hidden_without_i
             owner.execute("DELETE FROM access.feature WHERE key = 'trips'")
             while (latest := client.get(f"{V1}/undo").json()) and latest["txid"] > start:
                 assert client.post(f"{V1}/undo", json={"txid": latest["txid"]}).status_code == 200
+
+
+def test_the_command_line_knows_the_feature_though_it_loads_no_part_of_the_service():
+    """Asked which features there are, the modules that are features are loaded: one can be given from the command line."""
+    said = subprocess.run([sys.executable, "-c", "from stiflyt2 import features; print(sorted(features.load()))"],
+                          capture_output=True, text=True, check=True).stdout
+    assert said.strip() == "['routes', 'signs', 'trips']"

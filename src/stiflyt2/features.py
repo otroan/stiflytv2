@@ -14,6 +14,7 @@ feature for the looking too.
 """
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 
 STATES = ("off", "given", "all")      # for nobody; for those whose role or own list has it; for everybody let in
@@ -36,6 +37,18 @@ def feature(key: str, title: str, ask: str, state: str = "given") -> Feature:
         raise ValueError(f"a feature is one of: {', '.join(STATES)}")
     FEATURES[key] = Feature(key, title, ask, state)
     return FEATURES[key]
+
+
+# The modules that are features. Each names itself when it is loaded; listed here so that whoever asks which
+# features there are (the command line, which loads none of them for its own sake) finds them all.
+MODULES = ("stiflyt2.ops.trips",)
+
+
+def load() -> dict[str, Feature]:
+    """Every feature there is, with the modules that are features loaded so that each has named itself."""
+    for name in MODULES:
+        importlib.import_module(name)
+    return FEATURES
 
 
 # The two there were before features had names. The roles that had them are bundles of them now.
