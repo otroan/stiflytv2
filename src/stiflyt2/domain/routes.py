@@ -670,18 +670,22 @@ class _Paths:
                 self._link(u, v, part, ref)
 
     @classmethod
-    def near(cls, conn, geom, margin: float = CORRIDOR_M) -> _Paths:
-        """The mapped lines within the margin of a geometry."""
+    def near(cls, conn, geom, margin: float = CORRIDOR_M, lines: str | None = None, join_m: float = NODE_M) -> _Paths:
+        """The mapped lines within the margin of a geometry.
+
+        `lines` is SQL for (source, id, geom) of other lines than those a route can be laid onto; `join_m`, how
+        near the end of one line must lie to another for the two to join.
+        """
         rows = conn.execute(f"""
             WITH net AS MATERIALIZED (
-                SELECT m.source, m.id, m.geom FROM {mapped_lines(conn)} m
+                SELECT m.source, m.id, m.geom FROM {lines or mapped_lines(conn)} m
                 WHERE ST_DWithin(m.geom, %s::geometry, %s) AND GeometryType(m.geom) = 'LINESTRING')
             SELECT a.source, a.id, ST_AsGeoJSON(a.geom)::json,
                    (SELECT json_agg(json_build_array(ST_LineLocatePoint(a.geom, e.pt),
                                                      ST_X(e.pt), ST_Y(e.pt)))
                     FROM net b, LATERAL (VALUES (ST_StartPoint(b.geom)), (ST_EndPoint(b.geom))) e(pt)
                     WHERE (b.source, b.id) <> (a.source, a.id) AND ST_DWithin(a.geom, e.pt, %s))
-            FROM net a""", (geom, margin, NODE_M)).fetchall()
+            FROM net a""", (geom, margin, join_m)).fetchall()
         return cls([((source, pid), [tuple(c[:2]) for c in g["coordinates"]], cuts or [])
                     for source, pid, g, cuts in rows])
 

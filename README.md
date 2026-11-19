@@ -1216,14 +1216,23 @@ Sognefjellsvegen, the road Fortunsdalen and a path to Ormeli". What is
 walked a second time is dashed on the map, and the GPX file carries the
 instructions too.
 
-**Between routes** (on unless unticked) it may also go along mapped paths
-(FKB) and roads (NVDB): from where it begins to the routes, and from the end
-of one route to another, where that saves walking back the same way. They
-are looked for only within 1.5 km of the routes of the trip and of straight
-lines between their ends, and not at all in trips of more than 150 km of
-route (a whole area). A path or road that lies along a route is the route
-itself, mapped: the route is walked there. Their heights are not known, and
-they are timed as flat ground. OpenStreetMap is not used (ODbL).
+**Between routes** (on unless unticked) it may also go along whatever other
+paths and roads are loaded: FKB paths, NVDB roads, and OpenStreetMap's
+paths, tracks and footways (not via ferratas, nor what OSM calls demanding
+or difficult alpine walking). That is from where it begins to the routes,
+and from the end of one route to another, where that saves walking back the
+same way. Lines from different sources are joined where an end lies within
+10 m of another line. They are looked for only within 1.5 km of the routes
+of the trip and of straight lines between their ends, and not at all in
+trips of more than 150 km of route (a whole area). A path or road that lies
+along a route is the route itself, mapped: the route is walked there. Their
+heights are not known, and they are timed as flat ground.
+
+A plan is worked out and kept nowhere, so what of OpenStreetMap is in it is
+a produced work under ODbL, which may be shown and handed out with a credit:
+each plan lists the sources of what it walks off the routes (`credits`), in
+the page and in the GPX file. Laying or snapping your own routes onto
+OpenStreetMap is another matter, and is still not done (`docs/TODO.md`).
 
 How it is worked out (`src/stiflyt2/ops/trips.py`): the stretches to cover
 are joined into one piece along the shortest ways between them; junctions

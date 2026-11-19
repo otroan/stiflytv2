@@ -26,7 +26,8 @@ function showDays(days) {
 // A day, or all of them, as a GPX file to walk by.
 function tripGpx(days) {
   const safe = s => String(s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
-  const text = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Stiflyt" xmlns="http://www.topografix.com/GPX/1/1">\n`
+  const credit = trip && trip.credits && trip.credits.length ? `<metadata><copyright author="${safe(trip.credits.join(". "))}"/></metadata>\n` : "";
+  const text = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Stiflyt" xmlns="http://www.topografix.com/GPX/1/1">\n${credit}`
     + days.map(d => `<trk><name>${safe(`Day ${d.day}: ${placeOf(d.from)} – ${placeOf(d.to)}`)}</name><desc>${safe(d.steps.map(s => `${s.says}, ${km(s.metres / 1000)}`).join(". "))}.</desc><trkseg>\n`
       + d.coords.map(c => `<trkpt lat="${c[1]}" lon="${c[0]}"/>`).join("\n") + "\n</trkseg></trk>").join("\n") + "\n</gpx>\n";
   const link = el("a", { href: URL.createObjectURL(new Blob([text], { type: "application/gpx+xml" })),
@@ -61,7 +62,7 @@ function renderTrips() {
     el("label", {}, "It begins at ", el("input", { type: "text", list: "tripplaces", value: tripAsk.start, placeholder: "wherever the least is walked twice", maxlength: 120, oninput: e => { tripAsk.start = e.target.value; } })),
     el("datalist", { id: "tripplaces" }, ...(tripPlaces || []).map(name => el("option", { value: name }))),
     el("label", {}, "A day is ", el("input", { type: "number", min: 3, max: 14, step: 0.5, value: tripAsk.hours, style: "width:5em", oninput: e => { tripAsk.hours = Number(e.target.value) || 7; } }), " hours of walking, with no rests"),
-    ...[["mapped", "Between routes, also along mapped paths and roads"], ["tent", "With a tent: a day may end anywhere"], ["ice", "Over glaciers too"], ["back", "It ends where it began"]].map(([key, says]) =>
+    ...[["mapped", "Between routes, also along other paths and roads (FKB, NVDB, OpenStreetMap)"], ["tent", "With a tent: a day may end anywhere"], ["ice", "Over glaciers too"], ["back", "It ends where it began"]].map(([key, says]) =>
       el("label", {}, el("input", { type: "checkbox", checked: tripAsk[key] ? "" : false, onchange: e => { tripAsk[key] = e.target.checked; } }), ` ${says}`)),
     el("div", { class: "actions" }, plan));
   const told = [];
@@ -73,6 +74,7 @@ function renderTrips() {
         + (T.twice_m > 50 ? `${km(T.twice_m / 1000)} of it is walked twice, or to get from one route to the next` : "Nothing is walked twice")
         + (T.back_m > 50 ? `; ${km(T.back_m / 1000)} back the same way` : "") + (T.off_route_m > 50 ? `; ${km(T.off_route_m / 1000)} along paths and roads off your routes` : "") + "."),
       ...(trip.notes || []).map(n => el("div", { class: "sub" }, n)),
+      trip.credits && trip.credits.length ? el("div", { class: "sub" }, `${trip.credits.join(". ")}.`) : "",
       el("div", { class: "sub" }, "On the map each day is a line in its colour and ends at its number; S is where the trip begins. What is walked a second time is dashed."),
       trip.left_out.length ? el("div", { class: "sub" }, `Left out, as no way on foot leads there from the rest: ${trip.left_out.join(", ")}.`) : "",
       trip.not_on_foot.length ? el("div", { class: "sub" }, `Not walked where they go ${[...new Set(trip.not_on_foot.map(x => x.what))].join(" or ")}: ${trip.not_on_foot.map(x => x.code).join(", ")}.`) : "",

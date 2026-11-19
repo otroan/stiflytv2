@@ -104,6 +104,12 @@ def test_between_routes_it_may_go_along_a_road_and_says_so():
     assert [s["says"] for s in told["days"][0]["steps"]] == [
         "Along r1 to the end of r1", "Along Fjellvegen to the end of r2", "Along r2 to Hut Q"]
     assert told["total"]["off_route_m"] == 4030 and told["total"]["twice_m"] == 4050     # (the hop back onto r2 goes with r2)
+    assert told["credits"] == ["Roads: NVDB Vegnett Pluss, Kartverket, CC BY 4.0"]
+    # The same along a path from OpenStreetMap: named so, and credited.
+    osm = trips._links(_Paths([(("osm", "w1"), [(0.0, 0.0), (4000.0, 0.0)], [])]), [("A", (0.0, 30.0)), ("B", (4000.0, -20.0))])
+    told = trips.plan({**{k: v for k, v in net.items() if k in ("pa", "bq")}, **osm}, near, {"pa": {"r1"}, "bq": {"r2"}}, start="P", hours=10)
+    assert told["days"][0]["steps"][1]["says"] == "Along an OpenStreetMap path to the end of r2"
+    assert told["credits"] == ["Paths: © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright)"]
     # Without the road, the second route cannot be reached from the first, and is left out.
     alone = trips.plan({k: v for k, v in net.items() if k in ("pa", "bq")}, near, {"pa": {"r1"}, "bq": {"r2"}}, start="P")
     assert alone["left_out"] == ["r2"]
@@ -114,6 +120,20 @@ def test_between_routes_it_may_go_along_a_road_and_says_so():
     assert {(x.kind, x.twin) for x in kept.values() if x.metres > 100} == {("path", True), ("road", False)}
     side = trips.plan({**{k: v for k, v in net.items() if k in ("pa", "bq")}, **kept}, near, {"bq": {"r2"}}, start="P")
     assert "Along r1" in side["days"][0]["steps"][0]["says"]
+
+
+def test_lines_that_meet_within_a_few_metres_are_joined():
+    """A path that ends 6 m from a road, on its middle, and one that ends 6 m from the road's end."""
+    road = (("vegnett", "r"), [(0.0, 0.0), (1000.0, 0.0)])
+    side = (("osm", "a"), [(500.0, 6.0), (500.0, 400.0)])
+    on = (("fkb_wfs", "b"), [(1006.0, 0.0), (1400.0, 0.0)])
+    far = (("osm", "c"), [(0.0, 50.0), (0.0, 400.0)])
+    joined = trips._joined([road, side, on, far], 10)
+    cuts = {ref: sorted((round(f, 3), x, y) for f, x, y in c) for ref, _, c in joined}
+    assert cuts[("vegnett", "r")] == [(0.5, 500.0, 6.0), (1.0, 1006.0, 0.0)] and cuts[("osm", "c")] == []
+    net = _Paths(joined)
+    a, b = net.attach((500.0, 390.0), 20), net.attach((1390.0, 0.0), 20)
+    assert net.parts(a, b) is not None and net.parts(a, net.attach((0.0, 390.0), 20)) is None
 
 
 def test_routes_apart_are_joined_by_the_way_between_them_and_what_cannot_be_reached_is_left_out():

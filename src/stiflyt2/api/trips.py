@@ -48,7 +48,8 @@ class PlanTrip(mcp.Args):
     over_ice: bool = Field(False, description="True: stretches over a glacier are walked too")
     back_to_start: bool = Field(False, description="True: the trip ends where it began")
     mapped: bool = Field(True, description="True: between the routes, and from where it begins, it may also go along "
-                                           "mapped paths (FKB) and roads (NVDB). False: only along the routes")
+                                           "other paths and roads: FKB paths, NVDB roads, OpenStreetMap paths. False: only "
+                                           "along the routes")
 
 
 @mcp.tool("Plan a trip that covers some routes", feature="trips")
@@ -58,8 +59,9 @@ def plan_trip(c: mcp.Call, a: PlanTrip) -> dict:
     where to where, how far, the climb, the walking time by Naismith's rule with no rests, which of the routes are
     covered that day, whether the day is longer than asked for because no hut lies nearer, and walking
     instructions (`steps`): along which route, path or road to where, and where a part is walked back the same way.
-    Also what was left out: routes that cannot be reached on foot, and what lies over water or ice; and `notes`.
-    Give either `routes` or `area`."""
+    Also what was left out: routes that cannot be reached on foot, and what lies over water or ice; `notes`; and
+    `credits`, the sources of the paths and roads off the routes, which are to be named wherever the plan is
+    passed on (OpenStreetMap's paths under ODbL). Give either `routes` or `area`."""
     told = trips.for_routes(c.conn, routes=a.routes, area=a.area, start=a.start, hours=a.hours, tent=a.tent,
                             over_ice=a.over_ice, back_to_start=a.back_to_start, mapped=a.mapped)
     for day in told["days"]:

@@ -62,8 +62,9 @@ step is still started on their word; the details of each are further down.
      a route, such as when it was last inspected and what is to be mended,
      once that is kept; going by a hut that lies off the way when none lies
      on it; several short trips from where one can park, in place of one
-     long; heights for paths and roads off the routes; OpenStreetMap paths
-     between routes, which waits for a word on ODbL). Through
+     long; heights for paths and roads off the routes. OpenStreetMap paths
+     are walked between routes since the same evening, as a produced work
+     with a credit). Through
      the assistant: "these routes are to be inspected:
      propose a trip that covers them". Covering given stretches with the
      least walked twice, in days that end at a hut. Needs only what is ours
@@ -83,6 +84,18 @@ Before more is kept in operations: a command to put the second nightly copy
 back (`tool.dump`: access, feedback and all of `ops`). The copy itself is
 pushed off the server every night and was read back from a fresh clone on
 2026-11-19.
+
+## OpenStreetMap beyond the trip planner (a task of its own, noted 2026-11-19)
+
+OpenStreetMap's ways are loaded for every DNT Oslo area and shown as a layer.
+The trip planner walks its paths between routes (a produced work, credited).
+What is not settled: whether the route editor may lay or snap your own routes
+onto OSM lines, or a correction to Kartverket draw on them. ODbL is
+share-alike for databases: owned data built from OSM may have to be offered
+under ODbL too, which is at odds with handing it to Kartverket and UT.no
+under their terms. To be looked into as its own question (what counts as a
+derived database here, whether a line traced and then checked in the
+terrain is), not decided by the planner.
 
 ## Routes and the graph
 

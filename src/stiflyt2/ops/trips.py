@@ -22,9 +22,12 @@ How it is worked out, on the stretches of the routes in use as one network:
    at any junction.
 
 Between the routes, and from where a trip begins to them, it may also go
-along mapped paths (FKB) and roads (NVDB), looked for only round the routes
-of the trip and the ways between their ends: a route is preferred where both
-run. Their heights are not known, and they are timed as flat ground.
+along whatever paths and roads are loaded: paths from FKB, roads from NVDB,
+and paths, tracks and footways from OpenStreetMap. They are looked for only
+round the routes of the trip and the ways between their ends, and a route is
+preferred where both run. Their heights are not known, and they are timed as
+flat ground. A plan is computed and kept nowhere: what of OpenStreetMap is
+in it is a produced work under ODbL, and is credited (`credits`).
 
 Each day comes with walking instructions: along which route, path or road to
 where, and where a part is walked back the same way.
@@ -60,6 +63,15 @@ BESIDE_M = 20           # a mapped path or road this near a route for most of it
 TWIN = 3.0              # and counts this much more than the route as long: it is there to join, not to walk instead
 SMALL_M = 15            # a step shorter than this has no instruction of its own: it goes with the next
 SHORT_LEG_M = 100       # nor does a run of steps shorter than this, once the instructions are put together
+JOIN_M = 10             # paths and roads from different sources join where an end lies this near another line
+# What of OpenStreetMap a trip may walk: paths, tracks and footways (its roads are NVDB's), not via ferratas nor
+# what it says is demanding or difficult alpine walking.
+OSM_WALKED = """SELECT 'osm' AS source, id, geom FROM source_index.osm_way
+                WHERE on_foot AND kind <> 'via_ferrata'
+                  AND coalesce(sac_scale, '') NOT IN ('demanding_alpine_hiking', 'difficult_alpine_hiking')"""
+CREDITS = {"fkb_wfs": "Paths: FKB Traktorveg og sti, Kartverket, CC BY 4.0",
+           "vegnett": "Roads: NVDB Vegnett Pluss, Kartverket, CC BY 4.0",
+           "osm": "Paths: © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright)"}
 JOIN_FAR_M = 25_000     # route ends further apart than this are not looked for a way between
 MOST_MAPPED_M = 150_000     # a trip over more route than this does not look for paths and roads between them
 
@@ -79,6 +91,7 @@ class Stretch:
     kind: str = "route"     # route; link (between a place's arrival points); path, road (off the routes); hop (onto one)
     name: str | None = None     # of a road
     twin: bool = False      # a path or road that lies along a route: the route, mapped
+    source: str | None = None   # where a path or road comes from: fkb_wfs, vegnett, osm
 
     def minutes(self, frm: str) -> float:
         return self.there if frm == self.a else self.back
@@ -128,6 +141,39 @@ def _flat(metres: float) -> float:
     return height.minutes(metres, 0.0)
 
 
+def _joined(lines: list, join_m: float) -> list:
+    """Lines (ref, coords) with where the ends of the others lie on them, within join_m: (ref, coords, cuts) as
+    `routes._Paths` takes them. Worked out here on a grid, which is much quicker than in the database for the
+    thousands of lines round a trip."""
+    cell = 50.0
+    grid: dict[tuple, list] = {}
+    for i, (_, coords) in enumerate(lines):
+        for k, (p, q) in enumerate(itertools.pairwise(coords)):
+            for cx in range(int((min(p[0], q[0]) - join_m) // cell), int((max(p[0], q[0]) + join_m) // cell) + 1):
+                for cy in range(int((min(p[1], q[1]) - join_m) // cell), int((max(p[1], q[1]) + join_m) // cell) + 1):
+                    grid.setdefault((cx, cy), []).append((i, k))
+    cuts: dict[int, dict] = {}
+    for j, (_, coords) in enumerate(lines):
+        for end in (coords[0], coords[-1]):
+            for i, k in grid.get((int(end[0] // cell), int(end[1] // cell)), ()):
+                if i == j:
+                    continue
+                p, q = lines[i][1][k], lines[i][1][k + 1]
+                dx, dy = q[0] - p[0], q[1] - p[1]
+                u = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((end[0] - p[0]) * dx + (end[1] - p[1]) * dy) / (dx * dx + dy * dy)))
+                if math.dist(end, (p[0] + u * dx, p[1] + u * dy)) <= join_m:
+                    cuts.setdefault(i, {}).setdefault(end, (j, k, u))
+    out = []
+    for i, (ref, coords) in enumerate(lines):
+        total = owned._Paths.along(coords)
+        said = []
+        for end, (_, k, u) in cuts.get(i, {}).items():
+            at = owned._Paths.along(coords[:k + 1]) + u * math.dist(coords[k], coords[k + 1])
+            said.append((at / total if total else 0.0, end[0], end[1]))
+        out.append((ref, coords, said))
+    return out
+
+
 def _beside(coords, routes, metres: float = BESIDE_M) -> bool:
     """Whether a line lies along the routes (a graph of their lines) for most of its length."""
     along = owned._Paths.along(coords)
@@ -170,7 +216,7 @@ def _links(paths, ties, routes=None) -> dict[str, Stretch]:
                 part = [part[0], part[0]]
             metres = along(part)
             made[f"m{n}:{k}"] = Stretch(f"m{n}:{k}", a, b, metres, _flat(metres), _flat(metres), 0.0, 0.0, (),
-                                        tuple(part), "road" if ref[0] == "vegnett" else "path", ref[1], n in twins)
+                                        tuple(part), "road" if ref[0] == "vegnett" else "path", ref[1], n in twins, ref[0])
     return made
 
 
@@ -204,7 +250,14 @@ def _mapped(conn, stretches: dict[str, Stretch], places: dict[str, dict], cover:
                                                (SELECT ST_ShortestLine(n.geom, c.g) FROM core.node n WHERE n.id = %(b)s::uuid)]))
             FROM cover c""", {"e": [e for e in cover if _uuid(e)], "b": begin,
                               "lines": f"MULTILINESTRING({','.join(x[10:] for x in between)})" if between else "MULTILINESTRING EMPTY"}).fetchone()[0]
-        paths = owned._Paths.near(conn, geom, MAPPED_M)
+        lines = owned.mapped_lines(conn)
+        if conn.execute("SELECT to_regclass('source_index.osm_way') IS NOT NULL").fetchone()[0]:
+            lines = f"({lines[1:-1]} UNION ALL {OSM_WALKED})"
+        found = [((source, pid), [tuple(c[:2]) for c in g["coordinates"]]) for source, pid, g in cur.execute(
+            f"""SELECT m.source, m.id, ST_AsGeoJSON(m.geom)::json FROM {lines} m
+                WHERE ST_DWithin(m.geom, %s::geometry, %s) AND GeometryType(m.geom) = 'LINESTRING'""",
+            (geom, MAPPED_M)).fetchall()]
+        paths = owned._Paths(_joined(found, JOIN_M))
         if not paths.pieces:
             return {}, None
         nodes = sorted({x for s in stretches.values() for x in (s.a, s.b) if _uuid(x)} | set(places))
@@ -456,6 +509,7 @@ def plan(stretches: dict[str, Stretch], places: dict[str, dict], cover: dict[str
                 at["codes"].update(s.codes)
                 at["stretches"] += 1
     seen: set[str] = set()
+    used: set[str] = set()          # where the paths and roads off the routes that are walked come from
     days = []
     for i, j in itertools.pairwise(cuts):
         day = {"day": len(days) + 1, "from": _named(places, nodes[i]), "to": _named(places, nodes[j]),
@@ -480,6 +534,8 @@ def plan(stretches: dict[str, Stretch], places: dict[str, dict], cover: dict[str
             if s.kind in ("path", "road") and s.metres >= SMALL_M:
                 legs[-1]["names"].append(_off_name(s))
                 legs[-1]["kinds"].add(s.kind)
+            if s.source:
+                used.add(s.source)
             legs[-1]["metres"] += s.metres
             legs[-1]["minutes"] += s.minutes(frm)
             legs[-1]["at"][1] = len(day["coords"]) - 1
@@ -502,7 +558,7 @@ def plan(stretches: dict[str, Stretch], places: dict[str, dict], cover: dict[str
     total = {k: sum(d[k] for d in days) for k in ("metres", "up_m", "down_m", "minutes", "new_m", "back_m", "off_route_m")}
     total["twice_m"] = total["metres"] - total["new_m"]
     return {"days": days, "total": total, "covered": sorted({c for e in seen for c in cover[e]}, key=_by_code),
-            "left_out": left_out, "hours": hours, "tent": tent}
+            "left_out": left_out, "hours": hours, "tent": tent, "credits": [CREDITS[k] for k in sorted(used) if k in CREDITS]}
 
 
 def _paired(nodes: list[str], apart) -> list[tuple[str, str]]:
@@ -644,7 +700,7 @@ def _say(kind: str, what: str | None, again: bool, back: bool, to: str, names: l
 def _off_name(s: Stretch) -> str:
     """A path or road off the routes, as an instruction names it."""
     if s.kind == "path":
-        return "a path"
+        return "an OpenStreetMap path" if s.source == "osm" else "a path"
     if not s.name:
         return "a road"
     return s.name if s.name.lower().endswith(_STREETS) else f"the road {s.name}"
