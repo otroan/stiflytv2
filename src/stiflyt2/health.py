@@ -44,7 +44,14 @@ def status(conn, backups: Path, now: datetime | None = None) -> dict:
             FROM import_control.check_log WHERE finished_at > now() - make_interval(hours => 30)
             ORDER BY source_key, scope, finished_at DESC""", {})
         bad = [b for b in bad if b["outcome"] in ("error", "rejected")]
-        if bad:
+        if bad and bad[0]["outcome"] == "rejected":
+            # A delivery that was refused: said as what it means for the one who works here, and without
+            # the way round the check, which is for whoever looks after the server to decide on.
+            why = (bad[0]["detail"] or "").split("; set STIFLYT2_")[0]
+            warnings.append(f"A new delivery of {bad[0]['source_key']} was refused last night, as it looks faulty "
+                            f"({why}). The one before it is still in use, and nothing of yours is changed."
+                            + (f" {len(bad) - 1} more of the sources could not be checked." if len(bad) > 1 else ""))
+        elif bad:
             warnings.append(f"The nightly check failed for {len(bad)} of the sources, first "
                             f"{bad[0]['source_key']} {bad[0]['scope']}: {bad[0]['detail']}")
     copies = sorted(backups.glob(f"overlay-{database}-*.dump")) if backups.is_dir() else []

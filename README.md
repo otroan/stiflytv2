@@ -123,7 +123,7 @@ read-only with a 15 second limit.
 
 The side shows the list of an area's routes, or one route. Opening a route
 puts the list aside; the bar at the top of the route, which stays in view,
-leads back ("All routes", or Escape) to the list where it stood, with the row
+leads back ("All routes") to the list where it stood, with the row
 that was open marked. The two arrows in the bar open the route before and
 after it in the list, as it is filtered.
 
@@ -178,7 +178,15 @@ candidates in pieces or with extra ends, routes lying far from any mapped
 path, routes without a name, temporary codes, and places where routes arrive
 at several spots.
 
-An open route is changed on the map itself. There are two ways, kept apart.
+An open route is changed on the map itself. Its tools are at the top of its
+panel: "Fix the line itself", "Lay it out again between points", "Carry it on
+along another line…", "Done with this route" and the form for its name and
+the rest; what a change did is said right under its name. Leaving the route
+(the list, previous and next, a search, a click on another route's line)
+asks first when changes are not saved. Escape closes a popup, lets go of what
+is held and leaves "Fix the line itself"; it does not close the route.
+
+There are two ways of changing it, kept apart.
 
 **Changing the route** is what a drag does to begin with. It changes only
 which stretches the route uses; no line is moved and no other route changes.
@@ -200,7 +208,8 @@ which stretches the route uses; no line is moved and no other route changes.
   or a line of Turrutebasen): the route is carried on along it. Dragging an
   end onto the line does the same, and shows first what it would give.
 
-While an end or the line is held still for a moment, the map shows the route
+While an end or the line is held still for a moment (and a junction or the
+line in "Fix the line itself"), the map shows the route
 as it would be if you let go there, and the box at the top says it in words:
 where it would end, along what, and how much longer or shorter it gets. Where
 it cannot be done, it says "Not here" and why. Nothing is changed until you
@@ -704,6 +713,10 @@ has taken, so a pulled line that did nothing is seen to have done nothing.
   the first of them would. Redo brings them back one at a time. Where
   somebody else has since changed the same stretches or junctions, the box
   says so and they cannot be discarded as a whole.
+
+After a change the page reads anew only the stretches that changed (each has
+a mark, `GET /api/v1/owned/routes.marks`, that is another when anything the
+map says of it is), not every line of every area.
 
 It is a mark, not a draft: nothing is held back until you save, and where
 you last saved is kept in the browser you work in. Click the count to see

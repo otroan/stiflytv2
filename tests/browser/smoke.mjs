@@ -145,7 +145,23 @@ check("the editor opens one of your routes from its address", await until(`[...d
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
+check("the foot of the side is one line until it is asked for", await js(`!document.getElementById("foot").open && /Signed in as|Changes are recorded as|Read-only/.test(document.getElementById("footwho").textContent) && !document.getElementById("editing").checkVisibility()`), await text("#foot summary"));
+if (await js("Boolean(EDITOR)")) check("the tools of a route are at the top of its panel", await js(`(() => { const b = [...document.querySelectorAll("#selected button")].find(x => x.textContent === "Fix the line itself"); return Boolean(b) && b.getBoundingClientRect().top < 430; })()`), await js(`String(([...document.querySelectorAll("#selected button")].find(x => x.textContent === "Fix the line itself") || { getBoundingClientRect: () => ({ top: "not there" }) }).getBoundingClientRect().top)`));
 check("the editor has read the lines of your routes by itself, when the page opened", await until(`ownedLines.features.length > 0`, 30));
+
+// A stretch of the open route: its popup says how long it is, and offers to divide it without fixing the line.
+const own = await js(`(() => { const f = ownedLines.features.filter(f => f.properties.routes.some(r => r.id === openRoute.id)).sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0];
+  if (!f) return null; const at = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: at, zoom: 14 }); return JSON.stringify(at); })()`);
+if (own) {
+  await until(`map.loaded() && !map.isMoving()`, 15); await sleep(900);
+  await click(await onMap(own));
+  check("a stretch's popup says how long it is" + (await js("Boolean(EDITOR)") ? ", and offers to divide it there" : ""), await until(`/Stretch of .*\\d (m|km)/.test((document.querySelector(".maplibregl-popup") || {}).textContent || "") && (!EDITOR || [...document.querySelectorAll(".maplibregl-popup button")].some(b => b.textContent === "Divide it here"))`, 10), await text(".maplibregl-popup"));
+  await js("closePopups()");
+}
+// Choosing an area shows it on the map.
+const elsewhere = await js(`(() => { const o = [...areaSelect.options].map(x => x.value).filter(Boolean); if (!o.length) return null; map.jumpTo({ center: [18.9, 69.6], zoom: 9 });
+  areaSelect.value = o[0]; areaSelect.dispatchEvent(new Event("change")); return o[0]; })()`);
+if (elsewhere) check("choosing an area moves the map to it", await until(`map.getCenter().lat < 66 && !map.isMoving()`, 40), await js("JSON.stringify(map.getCenter().toArray().map(v => Number(v.toFixed(2))))"));
 
 // Where several routes run on one line, a click asks which, by code and name.
 const shared = await js(`(() => { const f = ownedLines.features.find(f => f.properties.routes.length >= 2 && f.geometry.coordinates.length > 3);
@@ -187,6 +203,7 @@ if (EDIT) {
   await until(`document.querySelectorAll("#latest li button").length >= 3`);
   await clickOn(`document.querySelectorAll("#latest li button")[2]`);
   check("and the route is left as it was found", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)}`), await js("openRoute && openRoute.name"));
+  const fullReads = asked.filter(u => u.endsWith("/owned/routes.geojson")).length;
   // An end dragged with the mouse to the junction before it: what that would give is shown while it is held,
   // it is done when let go, and Undo takes it back.
   const several = await js(`(() => { const n = {}; for (const f of ownedLines.features) for (const r of f.properties.routes) n[r.id] = (n[r.id] || 0) + 1;
@@ -215,17 +232,33 @@ if (EDIT) {
     await sleep(700);
     await mouse("mouseReleased", to.x, to.y);
     check("let go, the route is cut back to there", await until(`Boolean(openRoute) && openRoute.length.legs < ${legs}`, 20), await js("openRoute && openRoute.length.legs"));
+    check("after the change only the stretches that changed were read anew", asked.filter(u => /\/owned\/routes\.geojson\?edges=/.test(u)).length > 0 && asked.filter(u => u.endsWith("/owned/routes.geojson")).length === fullReads, `${asked.filter(u => u.endsWith("/owned/routes.geojson")).length} readings of all lines, ${fullReads} before`);
     await until(`/end of .* moved/.test(document.getElementById("undo").textContent)`, 10);
     await clickOn(`document.getElementById("undo")`);
     check("and Undo puts the end back", await until(`Boolean(openRoute) && openRoute.length.legs === ${legs}`, 20), await text("#undobar"));
+    // The line itself: held still, a pulled line says what it would become. Escape lets go.
+    await js("setFixing(true)"); await sleep(500);
+    const pull = await js(`(() => { const f = ownedLines.features.filter(f => f.properties.routes.some(r => r.id === openRoute.id) && !FREE.includes(f.properties.kind)).sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0];
+      if (!f) return null; const at = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: at, zoom: 15 }); return JSON.stringify(at); })()`);
+    if (pull) {
+      await until(`map.loaded() && !map.isMoving()`, 15); await sleep(900);
+      const g = await onMap(pull);
+      await mouse("mouseMoved", g.x, g.y); await sleep(150); await mouse("mousePressed", g.x, g.y, 1);
+      for (let i = 1; i <= 8; i++) { await mouse("mouseMoved", g.x + 5 * i, g.y - 4 * i, 1); await sleep(30); }
+      check("while the line itself is fixed, a pulled line says what it would become", await until(`/^(Let go: the line (follows|runs straight)|Not here: )/.test(document.getElementById("hint").textContent)`, 15), await text("#hint"));
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await mouse("mouseReleased", g.x + 40, g.y - 32); await sleep(300);
+    }
+    await js("setFixing(false)");
   } else console.log("    (no route of a few stretches in one line was found: dragging an end is not tried)");
   // Two places that are one: a place made where the route ends and one at the junction before it, by the
   // same name. From the panel of the first, the other is taken in; Undo takes that back, and then the two.
-  const twice = await js(`(async () => { const ends = new Set(openRoute.ends.map(e => e.id)), end = openRoute.ends.find(e => !e.place);
-    const inner = end && openRoute.nodes.filter(n => !ends.has(n.id)).sort((p, q) => Math.hypot(p.lon - end.lon, p.lat - end.lat) - Math.hypot(q.lon - end.lon, q.lat - end.lat))[0];
-    if (!end || !inner) return null;
+  const twice = await js(`(async () => { const taken = new Set(openRoute.ends.filter(e => e.place).map(e => e.id)), free = openRoute.nodes.filter(n => !taken.has(n.id));
+    const apart = (p, q) => metresOf([[p.lon, p.lat], [q.lon, q.lat]]);       // the two junctions of the route that lie nearest each other
+    const [end, inner] = free.flatMap((p, i) => free.slice(i + 1).map(q => [p, q])).sort((x, y) => apart(...x) - apart(...y))[0] || [];
+    if (!end || !inner || apart(end, inner) > 2800) return null;
     const name = "Trial hut " + Date.now() % 100000, a = await send("POST", "places/at-junction", { node_id: end.id, name }), b = await send("POST", "places/at-junction", { node_id: inner.id, name });
-    await refreshOwned(); await openPlace(a.id); return JSON.stringify({ a: a.id, b: b.id }); })()`);
+    await refreshOwned(); await refreshUndo(); await openPlace(a.id); return JSON.stringify({ a: a.id, b: b.id }); })()`);
   if (twice && !twice.startsWith("EXCEPTION")) {
     const { a, b } = JSON.parse(twice), take = `[...document.querySelectorAll("#place button")].find(x => x.textContent === "They are one place: take it in")`;
     check("the panel of a place lists another of the same name near it", await until(`/Round this place/.test(document.getElementById("place").textContent) && Boolean(${take})`, 20), (await text("#place")).slice(250, 700));
@@ -233,9 +266,9 @@ if (EDIT) {
     check("taken in, the two are one place with both arrival points", await until(`/Access points \\(2\\)/.test(document.getElementById("place").textContent) && !${take}`, 20), (await text("#place")).slice(0, 160));
     check("and the other is no longer a place", await js(`get("places/${b}").then(() => false, () => true)`));
     check("Undo offers to take that back", await until(`/Undo\\s*two places made one$/.test(document.getElementById("undo").textContent)`, 10), await text("#undo"));
-    for (let i = 0; i < 3; i++) { await clickOn(`document.getElementById("undo")`); await until(`!document.getElementById("undo").disabled`, 10); await sleep(400); }
+    for (let i = 0; i < 3 && await js(`/made a place|two places made one/.test(document.getElementById("undo").textContent)`); i++) { await clickOn(`document.getElementById("undo")`); await until(`!document.getElementById("undo").disabled`, 10); await sleep(500); }
     check("and with the two places taken back as well, nothing of the trial is left", await js(`Promise.all([get("places/${a}").then(() => false, () => true), get("places/${b}").then(() => false, () => true)]).then(gone => gone.every(Boolean))`));
-  } else console.log(`    (no end without a place on a route of several stretches: making two places one is not tried) ${twice || ""}`);
+  } else console.log(`    (no two junctions without a place within 3 km of each other on the open route: making two places one is not tried) ${twice || ""}`);
   // Save or discard: what has been changed since the last save is counted, kept or taken back as a whole.
   const stays = `Stays ${Date.now() % 100000}`, goes = `Goes ${Date.now() % 100000}`, here = await js("openRoute.id"), found = await js("openRoute.name");
   const rename = name => js(`(async () => { await send("PATCH", "owned/routes/${here}", { version: openRoute.version, name: ${JSON.stringify(name)} }); await reloadOpen(); return true; })()`);
@@ -268,12 +301,21 @@ if (EDIT) {
     await js(`(async () => { await send("PATCH", "owned/routes/${b.id}", { version: openRoute.version, name: ${JSON.stringify(trial)} }); await reloadOpen(); return true; })()`);
     await until(`unsaved.changes.length === 1`, 15);
     await click(await show(back));
-    const asks = `[...document.querySelectorAll(".maplibregl-popup button")]`;
-    const called = await js(`namesOf([${JSON.stringify(a.id)}]).then(n => n[0])`);
-    check(`with a change not saved, it asks first, and says what the route is called${called ? "" : " (this one has no name)"}`, await until(`/1 change not saved/.test((document.querySelector(".maplibregl-popup") || {}).textContent || "") && ${asks}.some(x => x.textContent === "Discard, and open " + ${JSON.stringify(a.code + (called ? " " + called : ""))})`, 15), await text(".maplibregl-popup"));
+    const asks = `[...document.querySelectorAll("#leave button")]`;
+    check("with a change not saved, it asks first what is to become of it", await until(`document.getElementById("leave").open && /1 change not saved/.test(document.getElementById("leave").textContent) && ${asks}.length === 3`, 15), await text("#leave"));
     check("and the route is still the one that was open", await js(isOpen(b)));
-    await clickOn(`${asks}.find(x => x.textContent.startsWith("Discard, and open "))`);
-    check("Discard, and open: the change is taken back and the other route is open", await until(`${isOpen(a)} && unsaved.changes.length === 0`, 20) && await js(`get("owned/routes/${b.id}").then(r => r.name === ${JSON.stringify(was)})`), await js("openRoute && openRoute.code"));
+    await clickOn(`${asks}.find(x => x.textContent === "Discard, and go on")`);
+    check("Discard, and go on: the change is taken back and the other route is open", await until(`${isOpen(a)} && unsaved.changes.length === 0 && !document.getElementById("leave").open`, 20) && await js(`get("owned/routes/${b.id}").then(r => r.name === ${JSON.stringify(was)})`), await js("openRoute && openRoute.code"));
+    // The same question from the list of routes, and Stay leaves all as it is.
+    await js(`(async () => { await send("PATCH", "owned/routes/${a.id}", { version: openRoute.version, name: ${JSON.stringify(trial)} }); await reloadOpen(); return true; })()`);
+    await until(`unsaved.changes.length === 1`, 15);
+    await clickOn(`[...document.querySelectorAll("#selected .backbar button")].find(x => x.textContent.includes("All routes"))`);
+    check("back to the list asks the same", await until(`document.getElementById("leave").open`, 10), await text("#leave"));
+    await clickOn(`${asks}.find(x => x.textContent.startsWith("Stay on "))`);
+    check("Stay: the route is open as it was, with its change", await until(`!document.getElementById("leave").open`, 5) && await js(`${isOpen(a)} && unsaved.changes.length === 1`));
+    await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await sleep(300);
+    check("Escape does not close the route", await js(isOpen(a)));
+    await clickOn(`[...document.querySelectorAll("#unsaved button")].find(x => x.textContent === "Discard")`); await until(`unsaved.changes.length === 0`, 15);
     check("the panel has carrying on along another line as a tool of its own", await js(`[...document.querySelectorAll("#selected button")].some(x => x.textContent === "Carry it on along another line…")`));
   } else console.log("    (no two routes with a stretch of their own each: going from one to the other is not tried)");
   editing = false;

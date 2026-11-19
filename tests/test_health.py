@@ -60,6 +60,13 @@ def test_a_night_that_did_not_run_or_went_wrong_is_said_in_words(owner, tmp_path
     checked(owner, 1, source="osm")
     fine = health.status(owner, tmp_path, now)
     assert fine["warnings"] == [] and fine["copies"] == 2 and now - fine["copied_at"] < timedelta(minutes=1)
+    # A delivery refused as faulty: said as what it means to the one who works here, and not how to get round the check.
+    checked(owner, 1, "rejected", "layer ruteinfopunkt: 9724 of 9754 features changed (more than 50%); "
+            "set STIFLYT2_MAX_CHURN=1 to accept this delivery", source="turrutebasen")
+    refused = ("A new delivery of turrutebasen was refused last night, as it looks faulty (layer ruteinfopunkt: 9724 of "
+               "9754 features changed (more than 50%)). The one before it is still in use, and nothing of yours is changed.")
+    assert health.status(owner, tmp_path, now)["warnings"] == [refused]
+    checked(owner, 0)       # and a good one has come since
 
     # A job that failed outright says so itself, until somebody has looked at it.
     owner.execute("""INSERT INTO feedback.entry (kind, through, what, message)

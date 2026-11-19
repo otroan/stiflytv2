@@ -1442,3 +1442,26 @@ def test_two_routes_that_cross_between_the_same_two_junctions_share_the_crossing
         routes.take_away(conn, first, AUTHOR)
     with pytest.raises(places.NotFound):
         routes.take_away(conn, "no-such-stretch", AUTHOR)
+
+
+def test_the_map_reads_anew_only_the_stretches_that_changed(conn):
+    """A mark per stretch, another when anything the map says of it has changed; and the lines by id."""
+    route = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    before = routes.marks(conn)
+    lines = {f["properties"]["edge_id"]: f for f in routes.collection(conn)["features"]}
+    assert set(before) == set(lines)
+    mine = [e for (e,) in conn.execute("SELECT edge_id::text FROM core.route_leg WHERE route_id = %s ORDER BY seq", (route,))]
+    assert routes.collection(conn, [])["features"] == []
+    assert [f["properties"]["edge_id"] for f in routes.collection(conn, mine[:1])["features"]] == mine[:1]
+
+    # What one stretch is: its mark is another, and no other's.
+    routes.set_stretch(conn, mine[0], AUTHOR, marked=False)
+    after = routes.marks(conn)
+    assert {e for e in after if after[e] != before.get(e)} == {mine[0]}
+    # The route's code is on every stretch of it: all of its marks are new, and no others.
+    routes.update(conn, route, routes.detail(conn, route)["version"], AUTHOR, code="bre18x")
+    renamed = routes.marks(conn)
+    assert {e for e in renamed if renamed[e] != after[e]} == set(mine)
+    # A stretch taken out of its only route is on the map no longer.
+    routes.remove_leg(conn, route, routes.detail(conn, route)["version"], mine[-1], AUTHOR)
+    assert mine[-1] not in routes.marks(conn) or mine[-1] in {e for e, f in lines.items() if len(f["properties"]["routes"]) > 1}

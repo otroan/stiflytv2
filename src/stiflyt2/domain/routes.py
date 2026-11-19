@@ -2835,22 +2835,40 @@ def detail(conn, route_id: str) -> dict:
     return route
 
 
-def collection(conn) -> dict:
-    """Every edge used by an active owned route, as GeoJSON lines for the map."""
-    rows = conn.execute("""
-        SELECT ST_AsGeoJSON(ST_Transform(r.geom, 4326), 6)::json,
-               jsonb_build_object('edge_id', e.id, 'kind', r.kind, 'marked', r.marked,
-                                  'signed', r.signed, 'codes', string_agg(rt.code, ', ' ORDER BY rt.code),
-                                  'route_id', min(rt.id::text),
-                                  'rev', r.rev_no,
-                                  'discontinued', bool_and(rt.discontinued_since IS NOT NULL),
-                                  'unpublished', bool_and(rt.unpublished_why IS NOT NULL),
-                                  'routes', jsonb_agg(jsonb_build_object('id', rt.id, 'code', rt.code,
-                                      'in_use', rt.discontinued_since IS NULL AND rt.unpublished_why IS NULL)
-                                                      ORDER BY length(rt.code), rt.code))
-        FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
-        JOIN core.edge e ON e.id = l.edge_id
-        JOIN core.edge_revision r ON r.id = e.current_revision_id
-        GROUP BY e.id, r.id""").fetchall()
+# A stretch as the map shows it: one row per stretch that an active route of yours uses.
+_ON_THE_MAP = """
+    SELECT e.id::text AS edge, {geom} AS geom,
+           jsonb_build_object('edge_id', e.id, 'kind', r.kind, 'marked', r.marked,
+                              'signed', r.signed, 'codes', string_agg(rt.code, ', ' ORDER BY rt.code),
+                              'route_id', min(rt.id::text),
+                              'rev', r.rev_no,
+                              'discontinued', bool_and(rt.discontinued_since IS NOT NULL),
+                              'unpublished', bool_and(rt.unpublished_why IS NOT NULL),
+                              'routes', jsonb_agg(jsonb_build_object('id', rt.id, 'code', rt.code,
+                                  'in_use', rt.discontinued_since IS NULL AND rt.unpublished_why IS NULL)
+                                                  ORDER BY length(rt.code), rt.code)) AS said
+    FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
+    JOIN core.edge e ON e.id = l.edge_id
+    JOIN core.edge_revision r ON r.id = e.current_revision_id
+    {where}
+    GROUP BY e.id, r.id"""
+
+
+def collection(conn, edges: list[str] | None = None) -> dict:
+    """Every edge used by an active owned route, as GeoJSON lines for the map. Or only some of them, by id."""
+    rows = conn.execute(_ON_THE_MAP.format(
+        geom="ST_AsGeoJSON(ST_Transform(r.geom, 4326), 6)::json",
+        where="" if edges is None else "WHERE e.id = ANY(%(e)s::uuid[])"), {"e": edges}).fetchall()
     return {"type": "FeatureCollection",
-            "features": [{"type": "Feature", "geometry": g, "properties": p} for g, p in rows]}
+            "features": [{"type": "Feature", "geometry": g, "properties": p} for _, g, p in rows]}
+
+
+def marks(conn) -> dict[str, str]:
+    """For every stretch on the map, a mark that is another when anything the map says of it has changed.
+
+    A page that holds the lines asks for the marks after a change and reads
+    anew only the stretches whose mark is new to it: its line (a new revision
+    is a new mark), what it is, and which routes use it and what they are.
+    """
+    return dict(conn.execute(
+        f"SELECT edge, md5(said::text) FROM ({_ON_THE_MAP.format(geom='NULL', where='')}) x").fetchall())

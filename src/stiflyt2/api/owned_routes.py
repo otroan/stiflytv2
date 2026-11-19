@@ -106,6 +106,7 @@ class Pull(BaseModel):
     grab: Spot
     drop: Spot
     corner_m: float = Field(25.0, ge=1, le=1000)      # as near a corner of a hand-drawn line as counts as the corner
+    dry_run: bool = False
 
 
 class Along(BaseModel):
@@ -495,9 +496,9 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.post("/api/v1/owned/stretches/{edge_id}/bend")
     def bend(edge_id: str, body: Pull, author: Editor, seen: Seen = None) -> dict:
         """Pull a stretch, where it was grabbed, over to another spot; it follows paths and roads there."""
-        with write.connection() as conn:
-            routes.as_seen(conn, edge_id, seen)
-            return routes.bend(conn, edge_id, author, body.grab, body.drop, corner_m=body.corner_m)
+        with (read if body.dry_run else write).connection() as conn:
+            routes.as_seen(conn, edge_id, None if body.dry_run else seen)
+            return routes.bend(conn, edge_id, author, body.grab, body.drop, dry_run=body.dry_run, corner_m=body.corner_m)
 
     @app.post("/api/v1/owned/stretches/{edge_id}/restore", status_code=204)
     def restore(edge_id: str, body: Revision, author: Editor) -> Response:
@@ -608,10 +609,27 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return routes.detail(conn, route_id)
 
     @app.get(f"{V1}.geojson")
-    def collection() -> dict:
-        """Every stretch used by one of your routes, with its kind and whether it is marked."""
+    def collection(edges: Annotated[str | None, Query(max_length=8000)] = None) -> dict:
+        """Every stretch used by one of your routes, with its kind and whether it is marked.
+
+        With `edges` (ids with commas between, at most 200), only those: what a page reads anew after a change.
+        """
+        wanted = None
+        if edges is not None:
+            wanted = []
+            for one in edges.split(",")[:200]:
+                try:
+                    wanted.append(str(uuid.UUID(one.strip())))
+                except ValueError:
+                    continue
         with read.connection() as conn:
-            return routes.collection(conn)
+            return routes.collection(conn, wanted)
+
+    @app.get(f"{V1}.marks")
+    def marks() -> dict[str, str]:
+        """A mark per stretch on the map that changes when anything the map says of it does."""
+        with read.connection() as conn:
+            return routes.marks(conn)
 
     @app.get(f"{V1}/{{route_id}}")
     def route(route_id: str) -> dict:

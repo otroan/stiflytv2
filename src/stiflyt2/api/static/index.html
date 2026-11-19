@@ -48,6 +48,14 @@
   #unsaved.new { animation: took 0.9s ease-out; }
   @keyframes took { from { background: #ffd24a; box-shadow: 0 0 0 5px #ffd24a88; } to { background: #fff7dc; box-shadow: 0 1px 4px #0003; } }
   @media (prefers-reduced-motion: reduce) { #unsaved.new { animation: none; } }
+  #topsaid { background: #fff; border: 1.5px solid #b00020; border-radius: 4px; padding: 6px 12px; box-shadow: 0 1px 4px #0003; max-width: min(80%, 620px); cursor: pointer; }
+  details.how > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  details.how[open] > summary { margin-bottom: 4px; }
+  .said { background: #eef5ee; border-left: 3px solid #3d7a45; padding: 6px 10px; margin: 6px 0; }
+  dialog#leave { border: 1.5px solid var(--sign); border-radius: 6px; padding: 16px 18px; max-width: 420px; font: inherit; color: var(--ink); }
+  dialog#leave::backdrop { background: #0005; }
+  footer details > summary { cursor: pointer; }
+  #footwarn { color: #b00020; font-weight: 500; }
   #latest { flex-basis: 100%; max-width: 440px; max-height: 60vh; overflow: auto; background: #fff; border: 1.5px solid var(--sign);
           border-radius: 4px; box-shadow: 0 2px 8px #0004; padding: 10px 12px; }
   #latest h2 { margin: 0 0 2px; font-size: 15px; }
@@ -178,7 +186,7 @@
     </details>
     </section>
   </div>
-  <footer><div id="editing"></div><div id="others" role="status"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Signs and operations</a></div><div id="status">Loading…</div></footer>
+  <footer><div id="others" role="status"></div><details id="foot"><summary><span id="footwho">Loading…</span><span id="footwarn"></span></summary><div id="editing"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Signs and operations</a></div><div id="status">Loading…</div></details></footer>
 </div>
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section>
@@ -188,7 +196,8 @@
     <button id="redo" hidden title="Brings back what you took back last. Ctrl or Cmd with Shift and Z does the same. Once you change something else, that stands in its place."></button>
     <button id="morelatest" hidden aria-expanded="false" aria-controls="latest" title="Your latest changes in the map: go back to before any of them in one go."><strong>Latest changes</strong></button>
     <section id="latest" hidden aria-label="Your latest changes"></section>
-  </div><div id="hint" hidden role="status"></div></div>
+  </div><div id="hint" hidden role="status"></div><div id="topsaid" class="error" hidden role="alert" title="Click to put it away"></div></div>
+  <dialog id="leave"></dialog>
   <div id="mode" hidden role="status"></div></div>
 
 <script>
@@ -586,7 +595,7 @@ function showFinding(f, move = true) {
       if (accepted) await send("DELETE", `findings/accepted?key=${encodeURIComponent(f.key)}`);
       else await send("POST", "findings/accepted", { key: f.key, kind: f.kind || "", label: f.label, text: f.text });
       findingPopup.remove(); loadArea(true);
-    } catch (err) { alert(`Not saved: ${err.message}`); }
+    } catch (err) { sayTop(`Not saved: ${err.message}`); }
   };
   findingPopup = new maplibregl.Popup({ maxWidth: "300px" }).setLngLat([f.lon, f.lat])
     .setDOMContent(el("div", { class: "pop" }, el("h3", {}, f.label), el("div", {}, f.text),
@@ -597,7 +606,18 @@ function showFinding(f, move = true) {
   if (move && f.bbox) map.fitBounds([[f.bbox[0], f.bbox[1]], [f.bbox[2], f.bbox[3]]], { padding: 90, maxZoom: 15, animate: !calm });
   else if (move) go([f.lon, f.lat], 15.5);
 }
-areaSelect.addEventListener("change", () => loadArea(false));
+areaSelect.addEventListener("change", () => loadArea(false).then(showArea, () => {}));
+// The area that was chosen, on the map: around its routes of yours and the spots its routes end at.
+let areaSpots = null;
+function showArea() {
+  const area = (areaSelect.value || "").toLowerCase(), spots = [];
+  if (!area) return;
+  for (const f of ownedLines.features) if (f.properties.codes.split(", ").some(c => c.toLowerCase().startsWith(area))) spots.push(f.geometry.coordinates[0], f.geometry.coordinates[f.geometry.coordinates.length - 1]);
+  for (const f of (areaSpots && areaSpots.area === area && areaSpots.found.features) || []) if (f.geometry && f.geometry.type === "Point") spots.push(f.geometry.coordinates);
+  if (!spots.length) return;
+  const lon = spots.map(p => p[0]), lat = spots.map(p => p[1]);
+  map.fitBounds([[Math.min(...lon), Math.min(...lat)], [Math.max(...lon), Math.max(...lat)]], { padding: 50, maxZoom: 13, animate: !calm });
+}
 // After a change to a route or place the area's numbers and to-do list are stale: work them out again, a moment later.
 let areaTimer = null, areaSeq = 0, areaFilter = "all";
 let mappedSeen = null;    // the area's routes compared with the mapped paths: { area, found }. Kept, since it takes a while.
@@ -619,6 +639,7 @@ async function loadArea(quiet) {
   try {
     const area = areaSelect.value;
     const [anchors, report] = await Promise.all([get("anchors", { area }), get(`areas/${area}/report`)]);
+    areaSpots = { area: area.toLowerCase(), found: anchors };
     if (areaSelect.value !== area || seq !== areaSeq) return;
     const reload = () => loadArea(false);
     const open = i => i.about === "network" ? showFinding(i) : i.about === "route" ? openOwnedRoute(i.id) : i.about === "place" ? openPlace(i.id) : selectRoute(i.id);
@@ -663,7 +684,8 @@ async function loadArea(quiet) {
     const cover = v => v.share >= 0.999 ? "the whole area" : v.share <= 0.001 ? "nothing yet" : `${Math.round(v.share * 100)} % of the area`;
     const state = (complete, none) => el("span", { class: complete ? "tag ok" : none ? "tag none" : "tag" }, complete ? "loaded" : none ? "not loaded" : "in part");
     const whole = M.paths.share >= 0.999 && M.osm.share >= 0.999 && towns.length && !lacking.length;
-    const mapData = el("div", { style: "padding-top:8px" },
+    const mapData = el("details", { class: "how", style: "padding-top:8px", open: whole ? false : "" },
+      el("summary", {}, whole ? "Map data: paths, roads and OpenStreetMap are loaded for the whole area" : "Map data: not everything is loaded for this area"),
       el("dl", { style: "grid-template-columns:auto auto 1fr;align-items:baseline;margin:0" },
         el("dt", {}, "Paths"), state(M.paths.share >= 0.999, M.paths.share <= 0.001),
         el("dd", { class: "sub" }, `FKB, Kartverket: ${cover(M.paths)}` + (M.paths.checked ? `, checked ${day(M.paths.checked)}` : "")),
@@ -760,7 +782,7 @@ async function loadArea(quiet) {
         closePopups();
         await refreshOwned(); refreshEditing();
         if (openRoute) await reloadOpen(`${r.done} proposed ${r.done === 1 ? "repair" : "repairs"} carried out.`); else loadArea(true);
-        if (r.failed.length) alert(`${r.failed.length} could not be carried out: ${r.failed[0].why}`);
+        if (r.failed.length) sayTop(`${r.failed.length} could not be carried out: ${r.failed[0].why}`);
       } catch (err) { button.replaceWith(el("span", { class: "error" }, `Not done: ${err.message}`)); }
     };
     const look = p => {
@@ -835,7 +857,8 @@ async function loadArea(quiet) {
 
 // The selected route: drawn with a halo, described in the panel.
 const selected = document.getElementById("selected");
-async function selectRoute(id) {
+async function selectRoute(id, sure) {
+  if (openRoute && unsaved.changes.length && !sure) { beforeLeaving(() => selectRoute(id, true)); return; }
   openRoute = null;
   asideList(id);          // before the panel is shown: showing it moves the list
   selected.hidden = false;
@@ -932,7 +955,7 @@ function backBar(label) {
   const step = by => el("button", { class: "btn", disabled: at < 0 || !rows[at + by], title: by < 0 ? "The route before this one in the list" : "The next route in the list",
     "aria-label": by < 0 ? "Previous route in the list" : "Next route in the list", onclick: () => rows[at + by].click() }, by < 0 ? "‹" : "›");
   return el("div", { class: "backbar" },
-    el("button", { class: "btn", title: "Back to the list of routes. Escape does the same.", onclick: clearRoute }, "‹ All routes"),
+    el("button", { class: "btn", title: "Back to the list of routes", onclick: () => beforeLeaving(clearRoute) }, "‹ All routes"),
     el("span", { class: "grow sub" }, label || ""), step(-1), step(1));
 }
 function clearRoute() {
@@ -1078,17 +1101,33 @@ async function lookForChanges() {
 setInterval(lookForChanges, 8000);
 // What runs by itself at night, and has not: said to whoever works here, since nothing else tells anyone.
 async function lookAtNight() {
-  try { const h = await get("health"); document.getElementById("nightly").replaceChildren(...(EDITOR ? h.warnings : []).map(w => el("div", {}, w))); } catch {}
+  try {
+    const h = await get("health"), told = EDITOR ? h.warnings : [];
+    document.getElementById("nightly").replaceChildren(...told.map(w => el("div", {}, w)));
+    document.getElementById("footwarn").textContent = told.length ? ` · ${told.length} thing${told.length === 1 ? "" : "s"} to know about last night` : "";
+  } catch {}
 }
 setInterval(lookAtNight, 30 * 60 * 1000);
 // The map shows what is yours on top, and hides the proposals it was made from.
 let ownedLines = { features: [] };
+let ownedMarks = null;    // the mark of every stretch as it was last read
 let routeNames = {};      // what routes are called, by id: here, before the first reading of the map's lines empties it
 async function refreshOwned() {
   routeNames = {};      // a route may be called something else after a change
   const data = await get("places.geojson");
   adopted = data.features.filter(f => f.properties.type === "place").flatMap(f => [f.properties.adopted_from, ...(f.properties.taken_in || [])]).filter(Boolean);
-  const lines = ownedLines = await get("owned/routes.geojson");
+  // Every stretch has a mark that is another when anything the map says of it has changed. The first time all
+  // lines are read; after that the marks, and only the stretches whose mark is new. (The marks first: a change
+  // that lands in between leaves a mark that is too old, which the next reading puts right.)
+  const marks = await get("owned/routes.marks"), changed = ownedMarks ? Object.keys(marks).filter(e => ownedMarks[e] !== marks[e]) : null;
+  let lines;
+  if (!changed || changed.length > 150) lines = await get("owned/routes.geojson");
+  else {
+    const fresh = changed.length ? (await get("owned/routes.geojson", { edges: changed.join(",") })).features : [], again = new Set(fresh.map(f => f.properties.edge_id));
+    lines = { type: "FeatureCollection", features: [...ownedLines.features.filter(f => f.properties.edge_id in marks && !again.has(f.properties.edge_id)), ...fresh] };
+  }
+  ownedMarks = marks;
+  ownedLines = lines;
   whenStyled(() => {
     map.getSource("ownedroutes").setData(lines);
     map.getSource("owned").setData(data);
@@ -1099,6 +1138,13 @@ async function refreshOwned() {
 }
 // ---- Undo: your own latest change made here in the map, whatever it was. What others have done, or an
 // assistant acting for you, is not what this takes back. The server keeps what every change replaced. ----
+// What could not be done, said at the top of the map and put away by a click or by itself.
+const topSaid = document.getElementById("topsaid");
+function sayTop(message) {
+  topSaid.textContent = message; topSaid.hidden = false;
+  clearTimeout(sayTop.timer); sayTop.timer = setTimeout(() => { topSaid.hidden = true; }, 15000);
+}
+topSaid.addEventListener("click", () => { topSaid.hidden = true; });
 const undoButton = document.getElementById("undo"), redoButton = document.getElementById("redo");
 const moreLatest = document.getElementById("morelatest"), latestBox = document.getElementById("latest");
 let undoNext = null, redoNext = null;
@@ -1173,7 +1219,7 @@ async function discardAll() {
     const r = await send("POST", "undo/back", { txid: unsaved.changes[n - 1].txid });
     showUndo(r.next, r.again);
     await afterTakingBack(`Discarded ${n} change${n === 1 ? "" : "s"}: ${r.undone.slice(0, 4).join("; ")}${n > 4 ? "…" : ""}. Redo brings ${n === 1 ? "it" : "them"} back.`);
-  } catch (err) { done = false; alert(`Could not discard them: ${err.message}`); }
+  } catch (err) { done = false; sayTop(`Could not discard them: ${err.message}`); }
   refreshEditing();
   return done;
 }
@@ -1195,7 +1241,7 @@ async function undoLast() {
     const r = await send("POST", "undo", { txid: undoNext.txid });
     showUndo(r.next, r.again);      // at once: pressed again right away, it is the next one that goes
     await afterTakingBack(`Taken back: ${r.undone}.`);
-  } catch (err) { alert(`Could not undo: ${err.message}`); }
+  } catch (err) { sayTop(`Could not undo: ${err.message}`); }
   undoButton.disabled = false;
   refreshEditing();
 }
@@ -1206,7 +1252,7 @@ async function redoLast() {
     const r = await send("POST", "redo", { txid: redoNext.txid });
     showUndo(r.next, r.again);
     await afterTakingBack(`Brought back: ${r.redone}.`);
-  } catch (err) { alert(`Could not bring it back: ${err.message}`); }
+  } catch (err) { sayTop(`Could not bring it back: ${err.message}`); }
   redoButton.disabled = false;
   refreshEditing();
 }
@@ -1238,7 +1284,7 @@ async function backTo(change, button) {
     showUndo(r.next, r.again);
     showLatest(false);
     await afterTakingBack(r.undone.length === 1 ? `Taken back: ${r.undone[0]}.` : `Taken back, ${r.undone.length} changes: ${r.undone.join("; ")}. Redo brings them back one at a time.`);
-  } catch (err) { alert(`Could not go back: ${err.message}`); button.disabled = false; }
+  } catch (err) { sayTop(`Could not go back: ${err.message}`); button.disabled = false; }
   refreshEditing();
 }
 undoButton.addEventListener("click", undoLast);
@@ -1256,6 +1302,7 @@ async function refreshEditing() {
   try {
     const e = await get("editing");
     EDITOR = e.editor;
+    document.getElementById("footwho").textContent = EDITOR ? (e.sign_in ? `Signed in as ${EDITOR}` : `Changes are recorded as ${EDITOR}`) : e.sign_in ? `Signed in as ${e.reader}, to look` : "Read-only";
     const out = e.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     if (!EDITOR) { footer.replaceChildren(e.sign_in ? `Signed in as ${e.reader}, to look. Changing routes needs the editor role. ` : "Read-only: no editor is set on the server.", out); return; }
     if (!tellBox.hasChildNodes()) { renderTell(); lookAtNight(); }
@@ -1351,7 +1398,7 @@ document.addEventListener("keydown", e => {
   const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName);
   if (e.key === "Escape" && drag) { endDrag(); return; }       // what is held is let go where it was: nothing is changed
   if (e.key === "Escape" && !pick && !routing && !draft && !typing && !selected.hidden) {
-    if (document.querySelector(".maplibregl-popup")) closePopups(); else if (fixing) setFixing(false); else clearRoute();
+    if (document.querySelector(".maplibregl-popup")) closePopups(); else if (fixing) setFixing(false);      // the route itself stays open: it is closed by its buttons
     return;
   }
   if (e.key === "Escape" && pick) endPick();
@@ -1611,10 +1658,18 @@ async function withdrawRoute(route) {
   catch (err) { renderOwnedRoute(route, err.message); }
 }
 // A click on a stretch: what it is, and what can be done with it.
+// How long a line is on the ground, in metres, from its corners (lon, lat).
+const metresOf = coords => coords.slice(1).reduce((sum, b, i) => { const a = coords[i], r = Math.PI / 180;
+  return sum + 6371008.8 * Math.hypot((b[0] - a[0]) * r * Math.cos((a[1] + b[1]) * r / 2), (b[1] - a[1]) * r); }, 0);
 function stretchPopup(f, at) {
   const st = f.properties, mine = inOpenRoute(f), route = openRoute;
   const what = { trail: "Path", tractor_road: "Tractor road", road: "Road", off_trail: "No path, in terrain", glacier: "Glacier", water: "Water", connector: "Short link", other: "Other" }[st.kind] || st.kind;
-  const facts = [what, st.marked === true ? "marked" : st.marked === false ? "not marked" : "marking not known", st.signed === true ? "signed" : st.signed === false ? "not signed" : ""].filter(Boolean).join(", ");
+  const whole = ownedLines.features.find(g => g.properties.edge_id === st.edge_id), long = whole ? metresOf(whole.geometry.coordinates) : 0;
+  const facts = [what, long ? (long < 1000 ? `${Math.round(long)} m` : km(long / 1000)) : "", st.marked === true ? "marked" : st.marked === false ? "not marked" : "marking not known", st.signed === true ? "signed" : st.signed === false ? "not signed" : ""].filter(Boolean).join(", ");
+  const divide = () => attempt(async () => {
+    await send("POST", `owned/stretches/${st.edge_id}/split`, { lon: at.lng, lat: at.lat }, asSeen(st.edge_id));
+    return "Divided: there is a junction where you clicked, and each part can now be changed on its own.";
+  });
   const act = (label, run, main) => el("button", { class: main ? "btn main" : "btn", onclick: () => { popup.remove(); run(); } }, label);
   const popup = new maplibregl.Popup({ maxWidth: "300px" }).setLngLat(at).setDOMContent(el("div", { class: "pop" },
     el("h3", {}, `Stretch of ${st.codes}`), el("div", {}, facts),
@@ -1632,10 +1687,7 @@ function stretchPopup(f, at) {
         return r.changes ? `Laid on the mapped path or road for ${km(r.followed_m / 1000)} of it: ${r.length_m} m, from ${r.was_m} m. The rest lies as it did.`
                          : "No mapped path or road runs beside it for long enough to follow, where it does not lie on one already.";
       })),
-      act("Divide it here", () => attempt(async () => {
-        await send("POST", `owned/stretches/${st.edge_id}/split`, { lon: at.lng, lat: at.lat }, asSeen(st.edge_id));
-        return "Divided: there is a junction where you clicked, and each part can now be changed on its own.";
-      })),
+      act("Divide it here", divide),
       act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
       act("Draw it by hand", () => startDraw(st.edge_id, (points, follow) => attempt(async () => {
         const r = await send("PUT", `owned/stretches/${st.edge_id}/line`, { points, follow }, asSeen(st.edge_id));
@@ -1649,6 +1701,7 @@ function stretchPopup(f, at) {
             return `Taken out of ${route.code}. The stretch stays for other routes.`;
           })),
       act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
+      act("Divide it here", divide),
       act("Someone else maintains it here", () => maintainerForm(st, at)),
       act("Fix the line itself", () => setFixing(true)),
     ] : [])))).addTo(map);
@@ -1673,19 +1726,8 @@ function chooseRoute(sharing, at) {
     el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" },
       ...sharing.map(r => routeButton(r, () => { popup.remove(); switchTo(r, at); }))))).addTo(map);
 }
-// Open another route. With changes that are not saved, it is asked first what is to become of them.
-function switchTo(r, at) {
-  const n = unsaved.changes.length;
-  if (!openRoute || openRoute.id === r.id || !n) { openOwnedRoute(r.id); return; }
-  const left = openRoute.code, go = () => { popup.remove(); openOwnedRoute(r.id); };
-  const popup = new maplibregl.Popup({ maxWidth: "340px" }).setLngLat(at).setDOMContent(el("div", { class: "pop" },
-    el("h3", {}, `${n} change${n === 1 ? "" : "s"} not saved`),
-    el("div", { class: "sub" }, `You are leaving ${left}. The latest: ${unsaved.changes[0].what}.`),
-    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" },
-      routeButton(r, () => { saveAll(); go(); }, "Save, and open "),
-      unsaved.in_the_way ? "" : routeButton(r, async () => { popup.remove(); if (await discardAll()) openOwnedRoute(r.id); }, "Discard, and open "),
-      el("button", { class: "btn", onclick: () => popup.remove() }, `Stay on ${left}`)))).addTo(map);
-}
+// Open another route. With changes that are not saved, it is asked first what is to become of them (`beforeLeaving`).
+function switchTo(r) { openOwnedRoute(r.id); }
 // Carry the open route on along a line that is not part of it: asked for, then the line is clicked.
 function startCarryingOn() {
   const route = openRoute;
@@ -1902,6 +1944,7 @@ map.on("mousemove", e => {
     : state === "snap" ? `Let go to put ${drag.node ? "it" : "the line"} on the mapped path or road here.`
     : drag.node ? "Let go to move the junction here." : "Let go to pull the line here.";
   hintBox.hidden = false;
+  lookAheadFix(to);
 });
 // Looking ahead: while an end or the line is held still for a moment, the server is asked what letting go
 // there would give, and that is drawn and said before anything is changed. Nothing is kept of the asking.
@@ -1917,6 +1960,40 @@ function wouldBe(route, told, end) {
   if (told.round_trip) return `Let go: ${route.code} becomes a round trip, ${change}.`;
   return `Let go: ${route.code} ${end ? "ends" : "goes by"} ${where ? (end ? `at ${where}` : where) : (end ? "here" : "this spot")}${how ? `, ${how}` : ""}. ${change[0].toUpperCase()}${change.slice(1)}.`;
 }
+// Ask what a change would give, changing nothing: the answer, or why not. Null when the asking itself failed.
+async function askAhead(path, body) {
+  try {
+    const r = await fetch(new URL(path, API), { method: "POST", headers: { "Content-Type": "application/json", "X-Stiflyt-Preview": "1", ...THROUGH }, body: JSON.stringify({ ...body, dry_run: true }) });
+    if (r.ok) return { told: await r.json() };
+    const why = (await r.json().catch(() => ({}))).detail;
+    return { problem: typeof why === "string" ? why : "that cannot be done" };
+  } catch { return null; }
+}
+// The same while the line itself is fixed: a junction that is moved, or a line that is pulled.
+function lookAheadFix(to) {
+  const d = drag;
+  clearTimeout(d.timer);
+  d.asked = (d.asked || 0) + 1;
+  const asked = d.asked;
+  if (d.free) return;       // a line drawn by hand goes exactly where it is put: what is drawn is what it becomes
+  d.timer = setTimeout(async () => {
+    if (drag !== d || d.asked !== asked) return;
+    const got = d.node ? await askAhead(`owned/nodes/${d.node}/move`, { lon: to[0], lat: to[1], snap_m: reachMetres(to[1]) })
+      : await askAhead(`owned/stretches/${d.edge}/bend`, { grab: [d.grab.lng, d.grab.lat], drop: to, corner_m: Math.max(1, Math.min(1000, metresFor(to[1], CORNER_PX))) });
+    if (!got || drag !== d || d.asked !== asked) return;
+    const t = got.told;
+    if (!t) { hold([point(to, "no")]); hintBox.textContent = `Not here: ${got.problem}.`; return; }
+    if (d.node) {
+      const lost = (t.drops || []).map(x => ` The ${x.metres} m stretch between them goes away` + (x.routes ? `, also from ${x.routes}` : "") + ".").join("");
+      hintBox.textContent = t.outcome === "join" ? `Let go: it is joined to ${t.place ? `the arrival point of ${t.place}` : "the junction here"}, and the two become one.${lost}`
+        : t.outcome === "snap" ? "Let go: the junction lands on the mapped path or road here." : "Let go: the junction moves here. No mapped path or road lies under it.";
+    } else {
+      hold([{ type: "Feature", properties: {}, geometry: t.geometry }, point(to, t.followed ? "snap" : "held")]);
+      hintBox.textContent = (t.followed ? "Let go: the line follows the mapped path or road here" : "Let go: the line runs straight to this point, as no mapped path or road joins it up here")
+        + `: ${km(t.length_m / 1000)}, from ${km(t.was_m / 1000)}.`;
+    }
+  }, 220);
+}
 function lookAhead(at, to, place) {
   const d = drag;
   clearTimeout(d.timer);
@@ -1925,12 +2002,10 @@ function lookAhead(at, to, place) {
   d.timer = setTimeout(async () => {
     if (drag !== d || d.asked !== asked) return;
     const spot = place ? place.geometry.coordinates : to;
-    const body = { version: route.version, lon: spot[0], lat: spot[1], reach_m: Math.min(500, Math.max(10, reachMetres(spot[1], 14))), dry_run: true, ...(d.end ? { end: d.end } : { edge_id: d.via }) };
-    let told = null, problem = null;
-    try {
-      const r = await fetch(new URL(`owned/routes/${route.id}/${d.end ? "end" : "via"}`, API), { method: "POST", headers: { "Content-Type": "application/json", "X-Stiflyt-Preview": "1", ...THROUGH }, body: JSON.stringify(body) });
-      if (r.ok) told = await r.json(); else problem = (await r.json().catch(() => ({}))).detail || `${r.status}`;
-    } catch { return; }
+    const body = { version: route.version, lon: spot[0], lat: spot[1], reach_m: Math.min(500, Math.max(10, reachMetres(spot[1], 14))), ...(d.end ? { end: d.end } : { edge_id: d.via }) };
+    const got = await askAhead(`owned/routes/${route.id}/${d.end ? "end" : "via"}`, body);
+    if (!got) return;
+    const told = got.told || null, problem = got.problem || null;
     if (drag !== d || d.asked !== asked) return;     // let go, or moved on, in the meantime
     d.ahead = told ? "yes" : "no";
     if (told) {
@@ -2027,7 +2102,26 @@ async function makeRouteYours(candidateId, code) {
   refreshEditing();
   renderOwnedRoute(route);
 }
-async function openOwnedRoute(id, show) {
+// Leaving the route that is open, whichever way: with changes not saved, it is asked first what is to become of them.
+const leaveBox = document.getElementById("leave");
+function beforeLeaving(go) {
+  const n = unsaved.changes.length;
+  if (!openRoute || !n) { go(); return; }
+  const left = openRoute.code, close = () => leaveBox.close();
+  leaveBox.replaceChildren(
+    el("h2", { style: "margin:0 0 4px;font-size:17px" }, `${n} change${n === 1 ? "" : "s"} not saved`),
+    el("div", { class: "sub" }, `You are leaving ${left}. The latest: ${unsaved.changes[0].what}.`),
+    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch;margin-top:12px" },
+      el("button", { class: "btn main", onclick: () => { close(); saveAll(); go(); } }, "Save, and go on"),
+      unsaved.in_the_way ? "" : el("button", { class: "btn", onclick: async () => { close(); if (await discardAll()) go(); } }, "Discard, and go on"),
+      el("button", { class: "btn", onclick: close }, `Stay on ${left}`)));
+  leaveBox.showModal();
+}
+function openOwnedRoute(id, show) {
+  if (openRoute && openRoute.id !== id && unsaved.changes.length) { beforeLeaving(() => showOwnedRoute(id, show)); return Promise.resolve(); }
+  return showOwnedRoute(id, show);
+}
+async function showOwnedRoute(id, show) {
   asideList(id);          // before the panel is shown: showing it moves the list
   selected.hidden = false;
   if (show) get(`owned/routes/${id}`).then(r => { if (r.bbox) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm }); }).catch(() => {});
@@ -2162,7 +2256,7 @@ function renderOwnedRoute(route, problem, note) {
     }).catch(() => {});
   }
 
-  const hands = can ? el("div", {},
+  const hands = can ? el("details", { class: "how", style: "margin:6px 0" }, el("summary", {}, fixing ? "How the line itself is fixed" : "How to change it on the map"),
     fixing ? el("div", { class: "sub" }, "You are fixing the line itself, which every route on it shares. Drag a white dot to move a junction: it lands on a path or road, ",
         "and joins another junction it is dropped on. Drag the line to pull it onto a path or road. Click a stretch to lay it on the path, divide it or say what it is. ",
         "A stretch drawn by hand, over a glacier or through the terrain, goes straight from corner to corner and is pulled like a rubber band: drag a corner, the small dots, to move it, or the line between two corners to make a new one.")
@@ -2173,12 +2267,12 @@ function renderOwnedRoute(route, problem, note) {
         "None of this moves a line or changes another route. Undo, at the top of the map, takes the latest change back.",
         route.length.glacier_m || ownedLines.features.some(f => FREE.includes(f.properties.kind) && f.properties.codes.split(", ").includes(route.code))
           ? " A stretch drawn by hand, over a glacier or through the terrain, is the exception: it is pulled like a rubber band. Drag a corner, the small dots, to move it, or the line between two corners to make a new one." : ""),
-    note ? el("div", { style: "margin-top:6px" }, note) : "",
-    el("div", { class: "actions" },
+  ) : "";
+  const tools = can ? el("div", { class: "actions", style: "margin-top:8px" },
       fixing ? el("button", { class: "btn main", onclick: () => setFixing(false) }, "Back to the route")
         : el("button", { class: "btn", title: "For when the line lies wrong on the map: move junctions, pull the line onto a path, divide a stretch", onclick: () => setFixing(true) }, "Fix the line itself"),
       fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay it out again between points"),
-      fixing || route.shape === "loop" ? "" : el("button", { class: "btn", title: "Then click a line the route does not use: a stretch of another route, or a line of Turrutebasen. The route is carried on along it from the end it meets.", onclick: startCarryingOn }, "Carry it on along another line…"))) : "";
+      fixing || route.shape === "loop" ? "" : el("button", { class: "btn", title: "Then click a line the route does not use: a stretch of another route, or a line of Turrutebasen. The route is carried on along it from the end it meets.", onclick: startCarryingOn }, "Carry it on along another line…")) : "";
 
   const codeInput = el("input", { type: "text", value: route.code, "aria-label": "Code of the route", maxlength: 40, style: "width:9em" });
   const nameInput = el("input", { type: "text", value: route.name || "", placeholder: route.generated_name || "Named after its end places", "aria-label": "Name of the route", maxlength: 160 });
@@ -2283,6 +2377,10 @@ function renderOwnedRoute(route, problem, note) {
   const unpublish = was => { const why = prompt(`Why is ${route.code} not to be published? It stays a route of yours, and is left out of what is handed to UT.no${route.sources.length ? "; Kartverket is asked to take its number off what Turrutebasen has of it" : ""}.`, was || "Kept for its history");
     if (why && why.trim() && why.trim() !== was) change(() => send("POST", `owned/routes/${route.id}/unpublished`, { version: route.version, why: why.trim() })); };
 
+  const done = async () => {
+    try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); saveWithNext = true; clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
+    catch (err) { renderOwnedRoute(route, err.message); }
+  };
   selected.replaceChildren(
     backBar(route.code),
     el("h2", {}, "Your route"),
@@ -2300,14 +2398,19 @@ function renderOwnedRoute(route, problem, note) {
     route.reviewed ? el("div", {}, el("span", { class: "tag yours" }, "done"), el("span", { class: "sub" }, " You have said this route is right. "),
       can ? el("button", { class: "link", onclick: () => change(() => send("POST", `owned/routes/${route.id}/review`, { version: route.version, done: false })) }, "Not done after all") : "") : "",
     problem ? el("div", { class: "error", role: "alert" }, `That change was not saved: ${problem}`) : "",
+    note ? el("div", { class: "said", role: "status" }, note) : "",
+    tools,
+    can ? el("div", { class: "actions" },
+      !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: done }, "Done with this route") : "",
+      el("button", { class: "btn", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, maintainer, grading or description")) : "",
+    edit, hands,
     route.description ? el("p", { style: "margin:8px 0;white-space:pre-wrap" }, route.description) : "",
     facts, profile, mapped,
     el("h2", { class: "next" }, "Shape"), el("div", {}, shape),
     gaps.length ? el("ul", {}, ...gaps) : "", ends, unnamed, more,
-    can ? el("h2", { class: "next" }, "Change it on the map") : "", hands,
-    can ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, maintainer, grading or description"),
+    can ? el("div", { class: "actions" },
       el("button", { class: "btn", title: "Reads what UT.no says about the route from its page there. Nothing is changed until you take it.", onclick: () => (route.utno_id ? fromUtno() : askUtno()) }, "Fetch the description from UT.no")) : "",
-    edit, utnoBox,
+    utnoBox,
     el("h2", { class: "next" }, "History"),
     el("ol", { class: "log" }, ...route.history.map(e => el("li", {},
       el("span", {}, new Date(e.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
@@ -2315,15 +2418,14 @@ function renderOwnedRoute(route, problem, note) {
     can ? el("div", { class: "actions" }, el("button", { class: "btn", title: "Take back the changes to this route and its line, as far back as you choose. What was done to other routes in between stays.", onclick: showBack }, "Put it back as it was…")) : "",
     backBox,
     el("div", { class: "actions", style: "margin-top:12px" },
-      can && !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: async () => {
-        try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); saveWithNext = true; clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
-        catch (err) { renderOwnedRoute(route, err.message); }
-      } }, "Done with this route") : "",
       el("button", { class: "btn", onclick: () => { if (route.bbox) map.fitBounds([[route.bbox[0], route.bbox[1]], [route.bbox[2], route.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm }); } }, "Show on map"),
-      el("button", { class: "btn", onclick: clearRoute }, can && !route.reviewed ? "Close, not done" : "Close"),
-      can && !D && route.length.legs ? el("button", { class: "btn quiet", title: "Given up in the terrain, and kept here with its history", onclick: () => { discForm.hidden = false; whyInput.focus(); } }, "It is discontinued") : "",
-      can && !U && route.length.legs ? el("button", { class: "btn quiet", title: "Kept here, and not shown to the public", onclick: () => unpublish(null) }, "It is not to be published") : "",
-      can ? el("button", { class: route.length.legs ? "btn quiet" : "btn main", onclick: () => withdrawRoute(route) }, "Withdraw route") : ""),
+      el("button", { class: "btn", onclick: () => beforeLeaving(clearRoute) }, can && !route.reviewed ? "Close, not done" : "Close")),
+    // What ends a route, or takes it out of sight: kept apart from closing its panel.
+    can ? el("details", { class: "how", style: "margin-top:10px", open: route.length.legs ? false : "" }, el("summary", {}, "Discontinued, not to be published, or withdrawn…"),
+      el("div", { class: "actions" },
+        !D && route.length.legs ? el("button", { class: "btn", title: "Given up in the terrain, and kept here with its history", onclick: () => { discForm.hidden = false; whyInput.focus(); } }, "It is discontinued") : "",
+        !U && route.length.legs ? el("button", { class: "btn", title: "Kept here, and not shown to the public", onclick: () => unpublish(null) }, "It is not to be published") : "",
+        el("button", { class: route.length.legs ? "btn" : "btn main", title: "Takes the route out of what is yours. Undo brings it back.", onclick: () => withdrawRoute(route) }, "Withdraw route"))) : "",
     discForm);
   selected.scrollIntoView({ block: "nearest" });
 }
