@@ -69,7 +69,10 @@
   #hint { max-width: min(80%, 620px);
           background: var(--sign); color: #fff; padding: 8px 14px; border-radius: 4px; font-weight: 500; }
   header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
-  h1 { font: 600 20px/1.1 var(--tight); margin: 0 0 10px; }
+  h1 { font: 600 20px/1.1 var(--tight); margin: 0 0 10px; display: flex; align-items: baseline; gap: 8px; }
+  h1 a { color: inherit; text-decoration: none; }
+  h1 .where { font: 400 13px var(--body); color: var(--muted); }
+  h1 a.home { margin-left: auto; font: 500 13px var(--body); color: var(--path); text-decoration: underline; }
   h2 { font: 600 15px/1.3 var(--body); margin: 0 0 6px; }
   h2.next { margin-top: 14px; }
   input[type=search], input[type=text], select { width: 100%; padding: 7px 9px; font: inherit; color: inherit;
@@ -165,7 +168,7 @@
 <body>
 <div id="side">
   <header>
-    <h1>Stiflyt v2</h1>
+    <h1><a href="/" title="To the front page: the areas, the routes and the signs">Stiflyt v2</a><span class="where">Route editor</span><a class="home" href="/">‹ Front page</a></h1>
     <input id="q" type="search" placeholder="Search place or route (e.g. Arentzbu, bre18)" autocomplete="off">
   </header>
   <div id="scroll">
@@ -186,7 +189,7 @@
     </details>
     </section>
   </div>
-  <footer><div id="others" role="status"></div><details id="foot"><summary><span id="footwho">Loading…</span><span id="footwarn"></span></summary><div id="editing"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Signs and operations</a></div><div id="status">Loading…</div></details></footer>
+  <footer><div id="others" role="status"></div><details id="foot"><summary><span id="footwho">Loading…</span><span id="footwarn"></span></summary><div id="editing"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Front page: areas, routes and signs</a></div><div id="status">Loading…</div></details></footer>
 </div>
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section>

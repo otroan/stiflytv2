@@ -145,6 +145,7 @@ check("the editor opens one of your routes from its address", await until(`[...d
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
+check("the way back to the front page is at the top of the side", await js(`(() => { const a = document.querySelector("header a.home"); return Boolean(a) && new URL(a.href).pathname === "/" && a.checkVisibility() && a.getBoundingClientRect().top < 60; })()`), await text("header h1"));
 check("the foot of the side is one line until it is asked for", await js(`!document.getElementById("foot").open && /Signed in as|Changes are recorded as|Read-only/.test(document.getElementById("footwho").textContent) && !document.getElementById("editing").checkVisibility()`), await text("#foot summary"));
 if (await js("Boolean(EDITOR)")) check("the tools of a route are at the top of its panel", await js(`(() => { const b = [...document.querySelectorAll("#selected button")].find(x => x.textContent === "Fix the line itself"); return Boolean(b) && b.getBoundingClientRect().top < 430; })()`), await js(`String(([...document.querySelectorAll("#selected button")].find(x => x.textContent === "Fix the line itself") || { getBoundingClientRect: () => ({ top: "not there" }) }).getBoundingClientRect().top)`));
 check("the editor has read the lines of your routes by itself, when the page opened", await until(`ownedLines.features.length > 0`, 30));
