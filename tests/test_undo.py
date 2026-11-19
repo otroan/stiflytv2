@@ -3,6 +3,9 @@ import psycopg
 import pytest
 from conftest import role_dsn
 
+from stiflyt2.api.auth import (
+    Author,  # here, not in a test: conftest has httpx as it must be by then
+)
 from stiflyt2.domain import places, proposals, routes, undo
 
 AUTHOR = "Test Editor"
@@ -200,8 +203,6 @@ def test_a_route_is_put_back_as_it_was_while_what_was_done_elsewhere_stays(conn)
 
 def test_undo_takes_back_the_askers_own_latest_change_made_the_way_they_ask(conn):
     """Ola in the map, an assistant acting as Ola, and Kari, all at once: each takes back their own."""
-    from stiflyt2.api.auth import Author
-
     ola, assistant, kari = Author("Ola", "viewer"), Author("Ola", "mcp"), Author("Kari", "viewer")
     a = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), ola))
     b = act(conn, lambda: routes.make(conn, candidate(conn, "bre21"), assistant))
@@ -265,8 +266,6 @@ def test_undo_takes_back_the_askers_own_latest_change_made_the_way_they_ask(conn
 
 def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(conn):
     """A row of changes that went wrong: all of them taken back in one go, and brought back one by one."""
-    from stiflyt2.api.auth import Author
-
     ola, kari = Author("Ola Nordmann", "viewer"), Author("Kari Nordmann", "viewer")
     mine = undo.whose(ola)
     a = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), ola))
@@ -344,8 +343,6 @@ def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(con
 
 def test_an_item_of_work_is_saved_or_discarded_as_a_whole(conn):
     """What a person has changed since they last saved: said to stay, or all of it taken back in one go."""
-    from stiflyt2.api.auth import Author
-
     per, assistant, mine = Author("Per Nordmann", "viewer"), Author("Per Nordmann", "mcp"), ("Per Nordmann", "viewer")
     a = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), per))
 
