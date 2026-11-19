@@ -22,11 +22,11 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: q.get("view") === "signs" ? "signs" : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site") };
+  return { view: ["signs", "trips"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site") };
 }
 function addressOf(at) {
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries({ area: at.area, view: at.view === "signs" ? "signs" : null,
+  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips"].includes(at.view) ? at.view : null,
       route: at.view === "routes" && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
@@ -124,13 +124,14 @@ async function change(request) {
 }
 function render() {
   document.body.dataset.view = view;
-  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"]]) {
+  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-trips", "trips"]]) {
     const tab = document.getElementById(id);
     if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
     tab.href = addressOf({ view: is, area }).href;
   }
   if (!area) renderAreas();
   else if (view === "routes") { if (route) renderRoute(); else renderArea(); }
+  else if (view === "trips") renderTrips();
   else if (!found) panel.replaceChildren(foundProblem ? el("div", { class: "error" }, `Could not get the signs: ${foundProblem}`) : el("div", { class: "sub" }, "Working out the signs…"));
   else if (lookingAtAdrift && !open) renderAdrift();
   else { const site = open && found.sites.find(s => s.key === open); if (site) renderSite(site); else renderList(); }
@@ -138,6 +139,7 @@ function render() {
   renderChosen();
   renderBasket();
   drawMap();
+  drawTrip();
   const url = addressOf({ view, area, route, site: open });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

@@ -33,7 +33,8 @@ walked, to write a description from (README, "A route in facts"). And signs:
 `add_sign_destination`, `order_signs` (README, "Operations: signs"), for
 which the operations role is enough; and `signs_adrift`, `settle_adrift` and
 `undo_signs` (ADR-004). And `redo_last`, which brings back what
-`undo_last` took back. 42 tools.
+`undo_last` took back. 42 tools, and one more for whoever has the feature
+`trips`: `plan_trip` (README, "Trips for work").
 
 For a second person, on Windows:
 

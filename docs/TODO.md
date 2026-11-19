@@ -56,7 +56,12 @@ step is still started on their word; the details of each are further down.
      (Turrutebasen's segments with the mapped paths and roads, ours where we
      have them), and which huts are open and which bridges are out, which
      UT.no has and we do not (the API client asked for below).
-   - *For work*, through the assistant: "these routes are to be inspected:
+   - *For work* (built 2026-11-19 as the feature `trips`: README, "Trips
+     for work"; left: planning round what is known of a route, such as when
+     it was last inspected and what is to be mended, once that is kept;
+     going by a hut that lies off the way when none lies on it; several
+     short trips from where one can park, in place of one long). Through
+     the assistant: "these routes are to be inspected:
      propose a trip that covers them". Covering given stretches with the
      least walked twice, in days that end at a hut. Needs only what is ours
      already, so it can come before the walker's.

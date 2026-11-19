@@ -27,6 +27,13 @@ pgrep -u "$USER" -f pytest >/dev/null && { echo "pytest is running: wait for it"
 for pid in $(pgrep -u "$USER" -f "uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101"); do kill "$pid"; done
 conn=$(grep '^STIFLYT2_TEST_ROLE_CONN=' .env | cut -d= -f2- | tr -d "\"'")
 export STIFLYT2_API_DSN="dbname=stiflyt2_test user=stiflyt2_api $conn" STIFLYT2_EDITOR="Test Editor" STIFLYT2_GOOGLE_CLIENT_ID=""
+# The features that are given to nobody of themselves are switched on for all, in the test database, to be tried.
+.venv/bin/python -c "
+import psycopg
+with psycopg.connect(dbname='stiflyt2_test', autocommit=True) as c:
+    c.execute('SET ROLE stiflyt2_owner')
+    c.execute(\"INSERT INTO access.feature (key, state, by) VALUES ('trips', 'all', 'the walk-through') ON CONFLICT (key) DO UPDATE SET state = 'all'\")
+"
 nohup .venv/bin/uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101 --app-dir src > /tmp/stiflyt2-test-viewer.log 2>&1 &
 for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8101/api/v1/status && break; sleep 0.5; done
 curl -s -X POST "http://127.0.0.1:8101/api/v1/areas/$AREA/routes"; echo

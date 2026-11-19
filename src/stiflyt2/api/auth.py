@@ -172,10 +172,9 @@ def may(feature: str):
     def allowed(request: Request) -> Author:
         who = person_of(request)
         if not who.has(feature):
-            raise HTTPException(403, (f"you are signed in to look, not to {said.title}: {said.ask}"
-                                      if feature not in ("routes", "signs")
-                                      else f"you are signed in to look, not to change: {said.ask}")
-                                if signed_in() else "editing is not enabled on this server")
+            raise HTTPException(403, "editing is not enabled on this server" if not signed_in() and not who.name
+                                else f"you are signed in to look, not to change: {said.ask}" if feature in ("routes", "signs")
+                                else f"that is not switched on for you: {said.ask}")
         origin = request.headers.get("origin")
         if origin and urlparse(origin).netloc != request.headers.get("host"):
             raise HTTPException(403, "changes are only accepted from this site's own page")

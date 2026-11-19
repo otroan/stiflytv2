@@ -40,7 +40,8 @@ ws.addEventListener("message", m => {
   if (d.method === "Fetch.requestPaused") {
     const q = d.params.request;
     asked.push(q.url.slice(HOME.length - 1));
-    if (q.method !== "GET" && !editing) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
+    // (Planning a trip is asked with POST and keeps nothing: it is let through, as a look is.)
+    if (q.method !== "GET" && !editing && !/\/api\/v1\/trips\/plan$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
 });
@@ -119,6 +120,20 @@ const dot = await js(`(() => { const s = found.sites[0]; map.jumpTo({ center: [s
 await sleep(1500);
 await click(await onMap(`map.getCenter().toArray()`));
 check("a sign site's point among the routes opens the site among the signs", await until(`view === "signs" && open === ${JSON.stringify(dot)}`, 10), await text("#panel h2"));
+
+// Trips: a feature of its own. Without it the tab is not there. With it, a trip is planned, listed and drawn.
+if (await js(`(me.features || []).includes("trips")`)) {
+  await clickOn(`document.getElementById("tab-trips")`);
+  check("the trips tab asks which routes, where from and how long a day is", await until(`view === "trips" && Boolean(document.querySelector("form.trip-ask button.main")) && /Every route in use here/.test(document.querySelector("form.trip-ask").textContent)`, 20), await text("#panel h2"));
+  await clickOn(`document.querySelector("form.trip-ask button.main")`);
+  check("a trip is planned: every day is in the list, and a line on the map", await until(`Boolean(trip) && trip.days.length > 0 && document.querySelectorAll(".trip-days li").length === trip.days.length && Boolean(map.getLayer("trip")) && trip.covered.length > 0`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
+  check("each day says from where to where, how far, the climb and the time", await js(`/ – .*\\d km, .* m up, \\d+ h \\d\\d/.test(document.querySelector(".trip-days li").textContent.replace(/\\s+/g, " "))`), await text(".trip-days li"));
+  await clickOn(`document.querySelector(".trip-days li .grow")`);
+  check("a click on a day shows that day alone", await until(`tripDay === 1 && document.querySelector(".trip-days li").classList.contains("current")`, 10));
+  check("the address says the trips are open, so that it can be linked to", (await js("location.search")).includes("view=trips"));
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("the trips tab is not there for one who does not have the feature", await js(`document.getElementById("tab-trips").hidden`));
 
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {

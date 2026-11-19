@@ -46,6 +46,7 @@ from stiflyt2.domain import (
     routes,
     undo,
 )
+from stiflyt2.features import FEATURES
 from stiflyt2.index import query
 from stiflyt2.ops import signs as sign_ops
 from stiflyt2.ops import undo as sign_undo
@@ -130,17 +131,18 @@ class Tool:
     changes: bool           # needs the editor role, and a connection that may write
     writes: bool            # needs a connection that may write, though it keeps nothing
     operations: bool = False    # about signs and work, not routes: the operations role is enough to change
+    feature: str | None = None  # the feature it belongs to (ADR-005): only who has it sees the tool and may call it
 
 
 TOOLS: dict[str, Tool] = {}
 
 
-def tool(title: str, *, changes: bool = False, writes: bool = False, operations: bool = False):
+def tool(title: str, *, changes: bool = False, writes: bool = False, operations: bool = False, feature: str | None = None):
     """Register a function as a tool. Its docstring is the description; its second argument's type, the input."""
     def register(fn):
         args = next(t for n, t in get_type_hints(fn).items() if n not in ("c", "return"))
         TOOLS[fn.__name__] = Tool(fn.__name__, title, " ".join((fn.__doc__ or "").split()), args, fn, changes,
-                                  changes or writes, operations)
+                                  changes or writes, operations, feature)
         return fn
     return register
 
@@ -924,9 +926,12 @@ def report_gap(c: Call, a: Gap) -> dict:
 
 # ---- The protocol ----
 
-def _listed() -> list[dict]:
+def _listed(person: access.Person | None = None) -> list[dict]:
+    """The tools, as an assistant is told of them: not those of a feature the person does not have."""
     listed = []
     for t in TOOLS.values():
+        if t.feature and not (person and person.has(t.feature)):
+            continue
         schema = t.args.model_json_schema()
         schema.pop("title", None)
         listed.append({"name": t.name, "title": t.title, "description": t.description, "inputSchema": schema,
@@ -965,6 +970,8 @@ class Server:
 
     def call(self, person: access.Person, name: str, arguments: dict) -> dict:
         t = TOOLS[name]
+        if t.feature and not person.has(t.feature):
+            return _text(f"that is not switched on for you: {FEATURES[t.feature].ask}", error=True)
         if t.changes and not (person.operates if t.operations else person.edits):
             return _text("you are signed in to look, not to change: ask for the "
                          f"{'operations' if t.operations else 'editor'} role", error=True)
@@ -1013,7 +1020,7 @@ class Server:
         if method == "ping":
             return result({})
         if method == "tools/list":
-            return result({"tools": _listed()})
+            return result({"tools": _listed(person)})
         if method == "tools/call":
             name = params.get("name")
             if name not in TOOLS:

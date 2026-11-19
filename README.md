@@ -1189,6 +1189,46 @@ role is enough for them.
 Not there yet, of what v1 has: the field sheet as PDF, and photos. See
 `docs/TODO.md`.
 
+## Trips for work: a feature of its own
+
+For whoever is to inspect or mark some routes: say which, and get a trip on
+foot that walks every stretch of them with as little as possible walked
+twice, cut into days that end at huts. It is the first part built as a
+feature behind a flag ([ADR-005](docs/architecture/ADR-005-features-roles-and-flags.md)):
+nobody has it until it is given.
+
+    stiflyt2 access give you@example.org trips              # one person
+    stiflyt2 access role editor --features routes,signs,trips   # or everybody with a role
+    stiflyt2 access feature trips all                       # or everybody who is let in
+
+With it, the front page has a third part, **Trips**. Choose an area, and
+either every route in use there or the ones you tick; say where it begins
+(or leave that to it), how many hours of walking a day is, and whether you
+carry a tent, cross glaciers, or want to end where you began. "Plan the trip"
+gives the days: from where to where, how far, the climb, the walking time by
+Naismith's rule with no rests, and which of the routes each day covers. Each
+day is a line in its own colour on the map, ending at its number, and can be
+taken out as a GPX file, alone or with the others.
+
+How it is worked out (`src/stiflyt2/ops/trips.py`): the stretches to cover
+are joined into one piece along the shortest ways between them; junctions
+where an odd number of them meet are paired off, nearest first, and the way
+between each pair is walked once more; then all of it can be walked in one
+go, and is cut into days at huts. A day may run up to an hour over to reach a
+hut; where none lies within that, the day ends at a junction and says so (a
+night in a tent, or a day to walk on from). It says what it leaves out:
+routes no way on foot leads to, and what lies over water or ice.
+
+It reads the routes and keeps nothing. On two areas as they stood on
+2026-11-19: three routes at Gjende (jot2, jot6, jot88) come out as three
+days and 35 km, 4 km of it walked twice; all of Jotunheimen as 42 days, in
+under a second. A whole area in one trip is not how anybody walks, and many
+of its days end where there is no hut: it is meant for a handful of routes.
+
+Over the API: `POST /api/v1/trips/plan` with `routes` (codes) or `area`,
+and `start`, `hours`, `tent`, `over_ice`, `back_to_start`. An assistant has
+`plan_trip`, which it is told of only when the person has the feature.
+
 ## Setup
 
 Setting up from nothing, where your OS user is not a PostgreSQL superuser:

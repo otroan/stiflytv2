@@ -265,7 +265,7 @@ def test_a_role_is_a_bundle_of_features_and_a_person_or_a_feature_can_be_set_apa
         # Given by name what her role lacks.
         access.grant(owner, KARI, "routes", True, "test")
         assert (me()["features"], me()["edits"]) == (["routes", "signs"], True)
-        assert {w["feature"]: w["because"] for w in access.why(owner, KARI)} == {
+        assert {w["feature"]: w["because"] for w in access.why(owner, KARI) if w["feature"] in ("routes", "signs")} == {
             "routes": "given to them by name", "signs": "the role sign-orderer has it"}
         access.grant(owner, KARI, "routes", None, "test")
 

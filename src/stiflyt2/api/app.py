@@ -26,6 +26,7 @@ from stiflyt2.api import mcp as mcp_api
 from stiflyt2.api import owned_routes as routes_api
 from stiflyt2.api import places as places_api
 from stiflyt2.api import signs as signs_api
+from stiflyt2.api import trips as trips_api
 from stiflyt2.config import settings
 from stiflyt2.domain import routes as owned_routes
 from stiflyt2.index import query
@@ -183,6 +184,7 @@ def create_app() -> FastAPI:
     mcp_api.register(app, pool, writes)
     lookup_api.register(app, pool)
     signs_api.register(app, pool, writes)
+    trips_api.register(app, pool)
     return app
 
 
