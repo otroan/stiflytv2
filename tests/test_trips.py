@@ -80,6 +80,10 @@ def test_routes_apart_are_joined_by_the_way_between_them_and_what_cannot_be_reac
     island = {**NET, "far": stretch("far", "q", "w", 2, codes=("r9",))}
     told = trips.plan(island, PLACES, {**ends, "far": {"r9"}}, hours=10)
     assert told["left_out"] == ["r9"] and told["covered"] == ["r1", "r3"]
+    # Begun at a hut that none of it can be reached from: said so, with where it would begin if left to it.
+    apart = {**island, "qh": stretch("qh", "q", "H", 1, codes=("r9",))}
+    with pytest.raises(Invalid, match="no way over your routes leads on foot from Hut H to r1, r3: begin at Hut .*, or leave where it begins empty"):
+        trips.plan(apart, {**PLACES, "H": {"name": "Hut H", "kind": "hut"}}, ends, start="H", hours=10)
     with pytest.raises(Invalid, match="none of that can be walked"):
         trips.plan(NET, PLACES, {"not there": {"r1"}})
     with pytest.raises(Invalid, match="no stretch that can be walked leads to where the trip is to begin"):

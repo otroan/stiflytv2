@@ -182,9 +182,19 @@ def plan(stretches: dict[str, Stretch], places: dict[str, dict], cover: dict[str
         taken = of(near)
         joined.update(n for n in piece if of(n) == taken)
         apart.discard(taken)
-    left_out = sorted({c for e, codes in cover.items() if stretches[e].a in out_of_reach for c in codes})
+    left_out = sorted({c for e, codes in cover.items() if stretches[e].a in out_of_reach for c in codes}, key=_by_code)
     for e in [e for e in times if stretches[e].a in out_of_reach and e in cover]:
         del times[e]
+    if not any(e in times for e in cover):
+        # Begun where none of it can be reached from: only the routes are walked, and none of them leads there.
+        # Said so, with where it would begin if that were left to it.
+        name = (places.get(start) or {}).get("name") or "where it was to begin"
+        try:
+            there = plan(stretches, places, cover, hours=hours, tent=tent)["days"][0]["from"]["place"]
+        except Invalid:
+            there = None
+        raise Invalid(f"no way over your routes leads on foot from {name} to {', '.join(left_out)}"
+                      + (f": begin at {there}, or leave where it begins empty" if there else ""))
 
     # 2. The junctions where an odd number of walks meet, paired off: nearest first.
     def odd_ones() -> list[str]:
