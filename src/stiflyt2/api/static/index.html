@@ -38,6 +38,14 @@
   #undobar > button strong { color: var(--sign); margin-right: 6px; }
   #undobar > button:hover, #undobar > button:focus-visible { background: var(--wash); }
   #undobar > button:disabled { opacity: 0.6; cursor: wait; }
+  #unsaved { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff7dc; border: 1.5px solid #b07d00; border-radius: 4px;
+          padding: 4px 6px 4px 12px; box-shadow: 0 1px 4px #0003; }
+  #unsaved[hidden] { display: none; }
+  #unsaved .count { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-decoration: underline dotted; }
+  #unsaved .last { color: var(--muted); font-size: 13px; max-width: 26ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #unsaved.new { animation: took 0.9s ease-out; }
+  @keyframes took { from { background: #ffd24a; box-shadow: 0 0 0 5px #ffd24a88; } to { background: #fff7dc; box-shadow: 0 1px 4px #0003; } }
+  @media (prefers-reduced-motion: reduce) { #unsaved.new { animation: none; } }
   #latest { flex-basis: 100%; max-width: 440px; max-height: 60vh; overflow: auto; background: #fff; border: 1.5px solid var(--sign);
           border-radius: 4px; box-shadow: 0 2px 8px #0004; padding: 10px 12px; }
   #latest h2 { margin: 0 0 2px; font-size: 15px; }
@@ -173,6 +181,7 @@
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section><div id="hint" hidden role="status"></div>
   <div id="undobar">
+    <div id="unsaved" hidden role="status"></div>
     <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
     <button id="redo" hidden title="Brings back what you took back last. Ctrl or Cmd with Shift and Z does the same. Once you change something else, that stands in its place."></button>
     <button id="morelatest" hidden aria-expanded="false" aria-controls="latest" title="Your latest changes in the map: go back to before any of them in one go."><strong>Latest changes</strong></button>
@@ -1104,6 +1113,62 @@ function showUndo(next, again) {
   if (undoNext) undoButton.replaceChildren(el("strong", {}, "Undo"), undoNext.what);
   if (redoNext) redoButton.replaceChildren(el("strong", {}, "Redo"), redoNext.what);
   if (!undoNext) showLatest(false); else if (!latestBox.hidden) showLatest(true);
+  refreshUnsaved();
+}
+// ---- Save or discard. Every change is in the data the moment it is made; what is counted here is what you
+// have changed since you last saved. Save says it stays; Discard takes all of it back in one go. The mark of
+// where you last saved is kept in this browser, so it is still there after the page is loaded again. ----
+const unsavedBox = document.getElementById("unsaved");
+const savedKey = () => `stiflyt2.saved.${EDITOR}`;
+let unsaved = { changes: [], in_the_way: null }, unsavedAsked = 0;
+let saveWithNext = false;       // "Done with this route" says its changes stay, too
+function savedAt() {
+  let at = localStorage.getItem(savedKey());
+  if (at === null) { at = String(undoNext ? undoNext.txid : 0); localStorage.setItem(savedKey(), at); }      // the first time here: all that is there is saved
+  return Number(at);
+}
+async function refreshUnsaved(said) {
+  if (!EDITOR) { unsavedBox.hidden = true; return; }
+  const asked = ++unsavedAsked;
+  let found;
+  try { found = await get(`undo/since?txid=${savedAt()}`); } catch { return; }
+  if (asked !== unsavedAsked) return;
+  if (saveWithNext && found.changes.length) {
+    saveWithNext = false;
+    localStorage.setItem(savedKey(), String(found.changes[0].txid));
+    said = `Saved: ${found.changes.length} change${found.changes.length === 1 ? "" : "s"}.`;
+    found = { changes: [], in_the_way: null };
+  }
+  const more = found.changes.length > unsaved.changes.length || (found.changes[0] && unsaved.changes[0] && found.changes[0].txid !== unsaved.changes[0].txid && found.changes.length >= unsaved.changes.length);
+  unsaved = found;
+  const n = found.changes.length;
+  unsavedBox.hidden = !n && !said;
+  if (!n) { unsavedBox.replaceChildren(said || ""); if (said) setTimeout(() => { if (!unsaved.changes.length) unsavedBox.hidden = true; }, 2500); return; }
+  unsavedBox.replaceChildren(
+    el("button", { class: "count", title: "Show them", onclick: () => showLatest(true) }, `${n} change${n === 1 ? "" : "s"} not saved`),
+    el("span", { class: "last" }, `latest: ${found.changes[0].what}`),
+    el("button", { class: "btn main", title: "Says these changes are to stay. They are in the data already, for others too: saving only starts the count again.", onclick: saveAll }, "Save"),
+    found.in_the_way
+      ? el("span", { class: "sub" }, `Cannot be discarded as a whole: ${found.in_the_way} came after.`)
+      : el("button", { class: "btn", title: "Takes all of them back, in one go. Redo brings them back one at a time.", onclick: discardAll }, "Discard"));
+  if (more) { unsavedBox.classList.remove("new"); void unsavedBox.offsetWidth; unsavedBox.classList.add("new"); }      // seen to take
+}
+function saveAll() {
+  const n = unsaved.changes.length;
+  if (n) localStorage.setItem(savedKey(), String(unsaved.changes[0].txid));
+  refreshUnsaved(`Saved: ${n} change${n === 1 ? "" : "s"}.`);
+}
+async function discardAll() {
+  const n = unsaved.changes.length;
+  if (!n) return;
+  if (n > 3 && !confirm(`Discard your ${n} changes since you last saved? Redo brings them back one at a time.`)) return;
+  for (const b of unsavedBox.querySelectorAll("button")) b.disabled = true;
+  try {
+    const r = await send("POST", "undo/back", { txid: unsaved.changes[n - 1].txid });
+    showUndo(r.next, r.again);
+    await afterTakingBack(`Discarded ${n} change${n === 1 ? "" : "s"}: ${r.undone.slice(0, 4).join("; ")}${n > 4 ? "…" : ""}. Redo brings ${n === 1 ? "it" : "them"} back.`);
+  } catch (err) { alert(`Could not discard them: ${err.message}`); }
+  refreshEditing();
 }
 // After something was taken back or brought back: the map, the open route and the lists as they are now.
 async function afterTakingBack(note) {
@@ -2199,8 +2264,8 @@ function renderOwnedRoute(route, problem, note) {
     can ? el("div", { class: "actions" }, el("button", { class: "btn", title: "Take back the changes to this route and its line, as far back as you choose. What was done to other routes in between stays.", onclick: showBack }, "Put it back as it was…")) : "",
     backBox,
     el("div", { class: "actions", style: "margin-top:12px" },
-      can && !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, and closes it", onclick: async () => {
-        try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
+      can && !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: async () => {
+        try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); saveWithNext = true; clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
         catch (err) { renderOwnedRoute(route, err.message); }
       } }, "Done with this route") : "",
       el("button", { class: "btn", onclick: () => { if (route.bbox) map.fitBounds([[route.bbox[0], route.bbox[1]], [route.bbox[2], route.bbox[3]]], { padding: 60, maxZoom: 15, animate: !calm }); } }, "Show on map"),

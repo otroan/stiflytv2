@@ -292,6 +292,15 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         with read.connection() as conn:
             return undo.recent(conn, (who.name, who.through))
 
+    @app.get("/api/v1/undo/since")
+    def changes_since(request: Request, txid: int = 0) -> dict:
+        """Your changes that stand and came after one of them: what the page offers to save or discard."""
+        who = auth.person_of(request)
+        if not who.edits:
+            return {"changes": [], "in_the_way": None}
+        with read.connection() as conn:
+            return undo.since(conn, (who.name, who.through), txid)
+
     @app.post("/api/v1/undo/back")
     def take_back_to(body: Undo, author: Editor) -> dict:
         """Take back one of your latest changes and every change of yours after it."""

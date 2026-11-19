@@ -283,6 +283,11 @@ def test_what_was_taken_back_is_brought_back_until_something_else_is_changed(con
         ("bre18 renamed", 1, None), ("the grading of bre18 changed", 2, None), ("bre18 renamed", 3, None),
         ("bre18 made yours", 4, None)]
     assert undo.recent(conn, undo.whose(kari)) == [] and undo.undone_last(conn, mine) is None
+    # What he has changed since the route was made: the three, to be discarded as a whole or left to stay.
+    sitting = undo.since(conn, mine, listed[3]["txid"])
+    assert [c["txid"] for c in sitting["changes"]] == [c["txid"] for c in listed[:3]] and sitting["in_the_way"] is None
+    assert undo.since(conn, mine, listed[0]["txid"]) == {"changes": [], "in_the_way": None}
+    assert undo.since(conn, undo.whose(kari), 0)["changes"] == []
     with pytest.raises(undo.Conflict, match="there is nothing to bring back"):
         undo.redo(conn, ola)
     with pytest.raises(undo.Conflict, match="not among your latest"):

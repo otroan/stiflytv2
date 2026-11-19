@@ -213,8 +213,23 @@ if (EDIT) {
     for (let i = 0; i < 3; i++) { await clickOn(`document.getElementById("undo")`); await until(`!document.getElementById("undo").disabled`, 10); await sleep(400); }
     check("and with the two places taken back as well, nothing of the trial is left", await js(`Promise.all([get("places/${a}").then(() => false, () => true), get("places/${b}").then(() => false, () => true)]).then(gone => gone.every(Boolean))`));
   } else console.log(`    (no end without a place on a route of several stretches: making two places one is not tried) ${twice || ""}`);
+  // Save or discard: what has been changed since the last save is counted, kept or taken back as a whole.
+  const stays = `Stays ${Date.now() % 100000}`, goes = `Goes ${Date.now() % 100000}`, here = await js("openRoute.id"), found = await js("openRoute.name");
+  const rename = name => js(`(async () => { await send("PATCH", "owned/routes/${here}", { version: openRoute.version, name: ${JSON.stringify(name)} }); await reloadOpen(); return true; })()`);
+  const press = label => clickOn(`[...document.querySelectorAll("#unsaved button")].find(b => b.textContent === ${JSON.stringify(label)})`);
+  await js(`saveAll()`); await until(`document.getElementById("unsaved").hidden`, 10);
+  await rename(stays);
+  check("a change is seen to take: it is counted as not saved", await until(`/^1 change not saved/.test(document.getElementById("unsaved").textContent) && !document.getElementById("unsaved").hidden`, 15), await text("#unsaved"));
+  await press("Save");
+  check("Save says it stays, and the count starts again", await until(`/^Saved: 1 change/.test(document.getElementById("unsaved").textContent)`, 10) && await until(`document.getElementById("unsaved").hidden`, 10), await text("#unsaved"));
+  await rename(goes); await rename(`${goes} again`);
+  check("two more changes are counted", await until(`/^2 changes not saved/.test(document.getElementById("unsaved").textContent)`, 15), await text("#unsaved"));
+  await press("Discard");
+  check("Discard takes both back in one go, and what was saved stays", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(stays)} && document.getElementById("unsaved").hidden`, 20), await js("openRoute && openRoute.name"));
+  await clickOn(`document.getElementById("undo")`);
+  check("and the trial is taken back", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(found)}`, 15), await js("openRoute && openRoute.name"));
   editing = false;
-} else console.log("    (not asked to change anything: undo, redo, dragging and places are not tried)");
+} else console.log("    (not asked to change anything: undo, redo, dragging, places and saving are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
 const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes

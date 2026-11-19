@@ -682,6 +682,26 @@ that is not published
 - is otherwise a route like any other: in the list (with "Not published"), on
   the map, in the network checks and the to-do list, and it can be done.
 
+### Save or discard
+
+Every change goes to the server the moment it is made, and is there for
+others too. On top of that the page keeps count of what you have changed in
+the map since you last saved, in a yellow box at the top of the map: "3
+changes not saved", with the latest of them. It lights up each time a change
+has taken, so a pulled line that did nothing is seen to have done nothing.
+
+- **Save** says the changes are to stay, and starts the count again. Nothing
+  more happens to the data: it was there already. "Done with this route"
+  saves too.
+- **Discard** takes all of them back in one go, as "Back to before this" on
+  the first of them would. Redo brings them back one at a time. Where
+  somebody else has since changed the same stretches or junctions, the box
+  says so and they cannot be discarded as a whole.
+
+It is a mark, not a draft: nothing is held back until you save, and where
+you last saved is kept in the browser you work in. Click the count to see
+the changes one by one. Over the API: `GET /api/v1/undo/since?txid=…`.
+
 ### Getting out of changes that went wrong
 
 Three things, all at the top of the map:

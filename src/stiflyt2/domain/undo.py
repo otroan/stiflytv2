@@ -25,6 +25,11 @@ reverse; a change they make after it takes its place, and then there is
 nothing to bring back. To get out of a row of changes that went wrong, all of
 one's latest changes down to one of them can be taken back in one go, and
 brought back one by one.
+
+Saving and discarding is a mark on top of this, kept by the page: what you
+have changed since you last saved (`since`) is discarded as a whole or said
+to stay. Nothing is held back until it is saved: a change is in the data, for
+everybody, the moment it is made.
 """
 from __future__ import annotations
 
@@ -219,6 +224,7 @@ def _take_back(conn, author: str, txid: int, what: str) -> None:
 
 
 MOST = 20       # as many of a route's latest changes are offered to go back over
+SITTING = 100   # as many changes as one sitting can hold and still be discarded as a whole
 
 # The changes that concern a route: to the route itself, to which stretches it uses, and to the
 # stretches it uses or used. Read out of the rows each action left.
@@ -300,6 +306,22 @@ def recent(conn, mine: tuple[str, str] | None = None) -> list[dict]:
     return found
 
 
+def since(conn, mine: tuple[str, str] | None, txid: int) -> dict:
+    """Your changes that stand and were made after one of them: one sitting, to be saved or discarded as a whole.
+
+    Every change is kept the moment it is made. A sitting is what the page
+    counts from where the person last said "save": discarding it takes all of
+    it back (`back_to` the first), saving it only moves the mark. With what
+    stands in the way of discarding it: a later change by somebody else, or
+    by you another way, to the same stretches or junctions.
+    """
+    found = [f for f in _standing(conn, mine, SITTING) if f["txid"] > txid]
+    for f in found:
+        f["what"] = _describe(conn, f["txid"])
+    late = _in_the_way(conn, [f["txid"] for f in found]) if found else None
+    return {"changes": found, "in_the_way": _describe(conn, late) if late else None}
+
+
 def back_to(conn, author: str, txid: int) -> dict:
     """Take back one of your latest changes and every change of yours after it, in one go.
 
@@ -308,7 +330,7 @@ def back_to(conn, author: str, txid: int) -> dict:
     Each can be brought back afterwards, the earliest first.
     """
     mine = whose(author)
-    going = [f["txid"] for f in _standing(conn, mine, MOST)]
+    going = [f["txid"] for f in _standing(conn, mine, SITTING)]
     if txid not in going:
         raise Conflict("that change is not among your latest: look again")
     going = going[:going.index(txid) + 1]      # newest first
