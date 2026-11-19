@@ -170,6 +170,21 @@ for (const [what, pick] of [["with routes of yours", kinds.find(k => k[1])], ["w
   check(`choosing an area ${what} moves the map to it (${pick[0]})`, await until(`map.getCenter().lat < 66 && !map.isMoving()`, 40), await js("JSON.stringify(map.getCenter().toArray().map(v => Number(v.toFixed(2))))"));
 }
 
+// The list of an area follows the choice of whose routes: with a maintainer chosen, only theirs, the rest a click away.
+const whoIs = await js(`(async () => { const all = [...whoSelect.options].map(o => o.value).filter(Boolean); if (!all.length || !areaSelect.value) return null;
+  await chooseWho(""); await loadArea(true); const every = document.querySelectorAll("#routelist li.hit").length;
+  for (const w of all) { await chooseWho(w); await loadArea(true); const n = document.querySelectorAll("#routelist li.hit").length; if (n && n < every) return JSON.stringify({ w, n, every }); }
+  return JSON.stringify({ w: all[0], n: document.querySelectorAll("#routelist li.hit").length, every }); })()`);
+if (whoIs) {
+  const { w, n, every } = JSON.parse(whoIs), more = `[...document.querySelectorAll("#arearoutes button.link")].find(b => /List them too|Leave them out/.test(b.textContent))`;
+  if (n < every) {
+    check(`with a maintainer chosen, the list of the area has only their routes (${n} of ${every})`, await js(`/not maintained by .*not listed/.test(document.getElementById("arearoutes").textContent) && Boolean(${more})`), w);
+    await clickOn(more);
+    check("and the others are listed too when asked for", await until(`document.querySelectorAll("#routelist li.hit").length === ${every} && (${more} || {}).textContent === "Leave them out"`, 30));
+  } else console.log(`    (every route of the area is maintained by each who can be chosen: the narrowing of the list is not tried)`);
+  await js(`chooseWho(${JSON.stringify(await js("localStorage.getItem(WHOSE) || ''"))})`);
+}
+
 // Where several routes run on one line, a click asks which, by code and name.
 const shared = await js(`(() => { const f = ownedLines.features.find(f => f.properties.routes.length >= 2 && f.geometry.coordinates.length > 3);
   return f ? JSON.stringify({ at: f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)], routes: f.properties.routes.map(r => ({ id: r.id, code: r.code })) }) : null; })()`);
@@ -210,7 +225,7 @@ if (EDIT) {
   await until(`document.querySelectorAll("#latest li button").length >= 3`);
   await clickOn(`document.querySelectorAll("#latest li button")[2]`);
   check("and the route is left as it was found", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)}`), await js("openRoute && openRoute.name"));
-  const fullReads = asked.filter(u => u.endsWith("/owned/routes.geojson")).length;
+  const fullReads = asked.filter(u => u.endsWith("/owned/routes.geojson")).length, markReads = asked.filter(u => u.endsWith("/owned/routes.marks")).length;
   // An end dragged with the mouse to the junction before it: what that would give is shown while it is held,
   // it is done when let go, and Undo takes it back.
   const several = await js(`(() => { const n = {}; for (const f of ownedLines.features) for (const r of f.properties.routes) n[r.id] = (n[r.id] || 0) + 1;
@@ -239,7 +254,8 @@ if (EDIT) {
     await sleep(700);
     await mouse("mouseReleased", to.x, to.y);
     check("let go, the route is cut back to there", await until(`Boolean(openRoute) && openRoute.length.legs < ${legs}`, 20), await js("openRoute && openRoute.length.legs"));
-    check("after the change only the stretches that changed were read anew", asked.filter(u => /\/owned\/routes\.geojson\?edges=/.test(u)).length > 0 && asked.filter(u => u.endsWith("/owned/routes.geojson")).length === fullReads, `${asked.filter(u => u.endsWith("/owned/routes.geojson")).length} readings of all lines, ${fullReads} before`);
+    // (Stretches that only went out of use are dropped by their marks alone: then nothing more is read.)
+    check("after the change the marks were read, and not every line anew", asked.filter(u => u.endsWith("/owned/routes.marks")).length > markReads && asked.filter(u => u.endsWith("/owned/routes.geojson")).length === fullReads, `${asked.filter(u => u.endsWith("/owned/routes.geojson")).length} readings of all lines, ${fullReads} before`);
     await until(`/end of .* moved/.test(document.getElementById("undo").textContent)`, 10);
     await clickOn(`document.getElementById("undo")`);
     check("and Undo puts the end back", await until(`Boolean(openRoute) && openRoute.length.legs === ${legs}`, 20), await text("#undobar"));

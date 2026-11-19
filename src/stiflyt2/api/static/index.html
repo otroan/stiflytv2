@@ -194,10 +194,10 @@
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section>
   <div id="top"><div id="undobar">
-    <div id="unsaved" hidden role="status"></div>
     <button id="undo" hidden title="Takes your latest change in the map back, whatever it was. What others have changed since stays. Ctrl or Cmd with Z does the same."></button>
     <button id="redo" hidden title="Brings back what you took back last. Ctrl or Cmd with Shift and Z does the same. Once you change something else, that stands in its place."></button>
     <button id="morelatest" hidden aria-expanded="false" aria-controls="latest" title="Your latest changes in the map: go back to before any of them in one go."><strong>Latest changes</strong></button>
+    <div id="unsaved" hidden role="status"></div><!-- after the buttons: they stay where they are when it comes and goes -->
     <section id="latest" hidden aria-label="Your latest changes"></section>
   </div><div id="hint" hidden role="status"></div><div id="topsaid" class="error" hidden role="alert" title="Click to put it away"></div></div>
   <dialog id="leave"></dialog>
@@ -543,6 +543,8 @@ async function chooseWho(name) {
   for (const s of document.querySelectorAll("select.who, #who")) s.value = name;
   try { sideBySide = await get("report", name ? { maintainer: name } : {}); } catch { sideBySide = null; }
   listAreas();
+  othersToo = false;
+  if (areaSelect.value) loadArea(true);       // the list of the area that is open follows the choice
   if (!reportBox.hidden) showReport();
 }
 function closeReport() { reportBox.hidden = true; document.getElementById("openreport").focus(); }
@@ -623,6 +625,7 @@ function showArea() {
 }
 // After a change to a route or place the area's numbers and to-do list are stale: work them out again, a moment later.
 let areaTimer = null, areaSeq = 0, areaFilter = "all";
+let othersToo = false;      // list the routes of an area that the chosen maintainer does not look after, too
 let mappedSeen = null;    // the area's routes compared with the mapped paths: { area, found }. Kept, since it takes a while.
 function refreshArea() {
   if (!areaSelect.value) return;
@@ -663,7 +666,11 @@ async function loadArea(quiet) {
     // Every route of the area in one list, with where it stands. This is what a person works from.
     const statusOf = r => r.discontinued ? "disc" : r.withdrawn ? "gone" : r.kind === "candidate" ? "new" : r.done ? "done" : r.problems.length ? "work" : "check";
     const STATUS = { work: ["Needs work", "tag"], check: ["To check", "tag ok"], done: ["Done", "tag yours"], "new": ["Not yours yet", "tag none"], gone: ["Withdrawn", "tag none"], disc: ["Discontinued", "tag none"] };
-    const all = report.all, counts = { all: all.length, work: 0, check: 0, done: 0, "new": 0, gone: 0, disc: 0 };
+    // Whose routes: with a maintainer chosen at the top, only the routes that maintainer is said to look after
+    // (on the route, or on a stretch of it). The others are a click away.
+    const whose = whoSelect.value, theirs = r => !whose || othersToo || (r.maintainers || []).includes(whose);
+    const hidden = whose ? report.all.filter(r => !(r.maintainers || []).includes(whose)).length : 0;
+    const all = report.all.filter(theirs), counts = { all: all.length, work: 0, check: 0, done: 0, "new": 0, gone: 0, disc: 0 };
     for (const r of all) counts[statusOf(r)] += 1;
     if (areaFilter !== "all" && !counts[areaFilter]) areaFilter = "all";
     const openRow = r => r.kind === "yours" ? openOwnedRoute(r.id, true) : selectRoute(r.id);
@@ -702,6 +709,8 @@ async function loadArea(quiet) {
         el("code", {}, `stiflyt2 import area ${area}`), " fetches what is lacking."));
     const routesBox = el("li", {}, mapData,
       el("div", { class: "sub", style: "padding-top:8px" }, counts.done === all.length ? "Every route here is done." : `${counts.done} of ${all.length} routes are done. Open one to change it on the map; say “Done” when it is right.`),
+      hidden ? el("div", { class: "sub", style: "padding-top:4px" }, othersToo ? `${hidden} of them ${hidden === 1 ? "is" : "are"} not maintained by ${whose.replace(/^.*\| /, "")}. ` : `${hidden} more ${hidden === 1 ? "route" : "routes"} here ${hidden === 1 ? "is" : "are"} not maintained by ${whose.replace(/^.*\| /, "")}, and ${hidden === 1 ? "is" : "are"} not listed. `,
+        el("button", { class: "link", onclick: () => { othersToo = !othersToo; loadArea(true); } }, othersToo ? "Leave them out" : "List them too")) : "",
       filter, list,
       EDITOR ? el("div", { class: "actions" },
         el("button", { class: "btn", title: "Click where it starts and where it goes: it is laid along the shortest way over your stretches and Turrutebasen's", onclick: () => startRouting() }, "New route between points"),

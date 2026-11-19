@@ -62,6 +62,11 @@ def near_mapped(conn, route_ids: list[str], mapped: str) -> dict[str, float | No
     return share
 
 
+def _who(route: dict) -> list[str]:
+    """Everybody said to maintain a route of yours: on the route, or on a stretch of it."""
+    return sorted({*(route.get("maintained_by") or []), *(m["name"] for m in route.get("maintainers") or [])} - {"not stated"})
+
+
 def worklist(conn, area: str) -> dict:
     """Candidates still to be made yours, and what is wrong with your routes, places and network.
 
@@ -70,7 +75,7 @@ def worklist(conn, area: str) -> dict:
     area = area.lower()
     items = []
     candidates = _rows(conn, """
-        SELECT r.id, r.label, r.name, s.shape, s.pieces, s.ends,
+        SELECT r.id, r.label, r.name, s.shape, s.pieces, s.ends, r.maintainers,
                round((r.length_m / 1000)::numeric, 1)::float8 AS length_km
         FROM source_index.route r JOIN source_index.route_shape s ON s.route_id = r.id
         WHERE r.area_prefix = %(a)s ORDER BY length(r.code), r.label""", {"a": area})
@@ -82,7 +87,8 @@ def worklist(conn, area: str) -> dict:
         if routes.owner_of(conn, c["id"]):
             continue
         row = {"kind": "candidate", "id": c["id"], "code": c["label"], "km": c["length_km"],
-               "name": None if (c["name"] or "Ukjent") == "Ukjent" else c["name"], "done": False}
+               "name": None if (c["name"] or "Ukjent") == "Ukjent" else c["name"], "done": False,
+               "maintainers": sorted(c["maintainers"] or [])}
         rows.append(row)
         if c["label"] in taken_out:
             # A route of yours was made from it and no longer runs over it: a person took it out.
@@ -138,7 +144,7 @@ def worklist(conn, area: str) -> dict:
         r = routes.detail(conn, route_id)
         reviewed += r["reviewed"]
         yours.append({"id": r["id"], "code": r["code"], "name": r["name"] or r["generated_name"],
-                      "reviewed": r["reviewed"], "shape": r["shape"],
+                      "reviewed": r["reviewed"], "shape": r["shape"], "maintainers": _who(r),
                       "unpublished": r["unpublished"] and r["unpublished"]["why"],
                       "km": round(r["length"]["on_foot_m"] / 1000, 1)})
 
@@ -193,11 +199,12 @@ def worklist(conn, area: str) -> dict:
         r = routes.detail(conn, route_id)
         rows.append({"kind": "yours", "id": r["id"], "code": r["code"], "name": r["name"] or r["generated_name"],
                      "km": round(r["length"]["on_foot_m"] / 1000, 1), "done": r["reviewed"], "discontinued": True,
+                     "maintainers": _who(r),
                      "unpublished": r["unpublished"] and r["unpublished"]["why"],
                      "problems": [f"Discontinued since {r['discontinued']['since']:%-d %b %Y}: {r['discontinued']['why']}"]})
     for r in yours:
         rows.append({"kind": "yours", "id": r["id"], "code": r["code"], "name": r["name"], "km": r["km"],
-                     "done": r["reviewed"], "unpublished": r["unpublished"],
+                     "done": r["reviewed"], "unpublished": r["unpublished"], "maintainers": r["maintainers"],
                      "problems": [i["text"] for i in items if i["about"] == "route" and i["id"] == r["id"]]})
     rows.sort(key=lambda r: (len(r["code"].split("/")[0]), r["code"]))
     order = {"shape": 0, "network": 1, "geometry": 2, "name": 3, "place": 4, "code": 5, "end": 6}

@@ -206,7 +206,11 @@ def test_a_stray_bit_taken_out_of_its_route_is_not_offered_as_a_route_again(conn
     routes.remove_leg(conn, route, routes.detail(conn, route)["version"], first, AUTHOR)
     assert routes.owner_of(conn, stray) is None and routes.owner_of(conn, real) == str(route)
 
-    row, = [r for r in worklist.worklist(conn, "bre")["all"] if r["code"] == "bre17" and r["kind"] == "candidate"]
+    listed = worklist.worklist(conn, "bre")["all"]
+    row, = [r for r in listed if r["code"] == "bre17" and r["kind"] == "candidate"]
+    # Every row of the list says who is said to maintain the route, yours or not yet: what the list is narrowed by.
+    assert all(isinstance(r["maintainers"], list) for r in listed) and row["maintainers"] == ["DNT | DNT Oslo og omegn"]
+    assert all(r["maintainers"] for r in listed if r["kind"] == "yours")
     assert row["withdrawn"] and row["problems"][0].startswith("Taken out of bre17, which was made from it")
     # Making routes in bulk leaves it alone, and Kartverket is asked to take the number off.
     assert routes.make_default(conn, "bre")["left withdrawn"] >= 1 and routes.owner_of(conn, stray) is None
