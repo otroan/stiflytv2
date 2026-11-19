@@ -613,7 +613,7 @@ function showArea() {
   const area = (areaSelect.value || "").toLowerCase(), spots = [];
   if (!area) return;
   for (const f of ownedLines.features) if (f.properties.codes.split(", ").some(c => c.toLowerCase().startsWith(area))) spots.push(f.geometry.coordinates[0], f.geometry.coordinates[f.geometry.coordinates.length - 1]);
-  for (const f of (areaSpots && areaSpots.area === area && areaSpots.found.features) || []) if (f.geometry && f.geometry.type === "Point") spots.push(f.geometry.coordinates);
+  for (const a of (areaSpots && areaSpots.area === area && areaSpots.found) || []) if (Number.isFinite(a.lon) && Number.isFinite(a.lat)) spots.push([a.lon, a.lat]);      // where its routes end, yours or not
   if (!spots.length) return;
   const lon = spots.map(p => p[0]), lat = spots.map(p => p[1]);
   map.fitBounds([[Math.min(...lon), Math.min(...lat)], [Math.max(...lon), Math.max(...lat)]], { padding: 50, maxZoom: 13, animate: !calm });

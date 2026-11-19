@@ -159,9 +159,15 @@ if (own) {
   await js("closePopups()");
 }
 // Choosing an area shows it on the map.
-const elsewhere = await js(`(() => { const o = [...areaSelect.options].map(x => x.value).filter(Boolean); if (!o.length) return null; map.jumpTo({ center: [18.9, 69.6], zoom: 9 });
-  areaSelect.value = o[0]; areaSelect.dispatchEvent(new Event("change")); return o[0]; })()`);
-if (elsewhere) check("choosing an area moves the map to it", await until(`map.getCenter().lat < 66 && !map.isMoving()`, 40), await js("JSON.stringify(map.getCenter().toArray().map(v => Number(v.toFixed(2))))"));
+// Both an area with routes of yours and one with none yet, where only the spots its routes end at say where it is.
+const yoursIn = a => `ownedLines.features.some(f => f.properties.codes.split(", ").some(c => c.toLowerCase().startsWith(${JSON.stringify(a)})))`;
+const areas = JSON.parse(await js(`JSON.stringify([...areaSelect.options].map(x => x.value).filter(Boolean))`)), kinds = [];
+for (const a of areas) kinds.push([a, await js(yoursIn(a.toLowerCase()))]);
+for (const [what, pick] of [["with routes of yours", kinds.find(k => k[1])], ["with none of yours yet", kinds.find(k => !k[1])]]) {
+  if (!pick) { console.log(`    (no area ${what}: choosing one is not tried)`); continue; }
+  await js(`(() => { map.jumpTo({ center: [18.9, 69.6], zoom: 9 }); areaSelect.value = ${JSON.stringify(pick[0])}; areaSelect.dispatchEvent(new Event("change")); })()`);
+  check(`choosing an area ${what} moves the map to it (${pick[0]})`, await until(`map.getCenter().lat < 66 && !map.isMoving()`, 40), await js("JSON.stringify(map.getCenter().toArray().map(v => Number(v.toFixed(2))))"));
+}
 
 // Where several routes run on one line, a click asks which, by code and name.
 const shared = await js(`(() => { const f = ownedLines.features.find(f => f.properties.routes.length >= 2 && f.geometry.coordinates.length > 3);
