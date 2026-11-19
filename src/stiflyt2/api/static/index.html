@@ -978,13 +978,14 @@ map.on("click", e => {
   if (anchor) { openAnchor(anchor.properties.id, anchor.geometry.coordinates, finding && finding.properties); return; }
   if (finding) { showFinding({ ...finding.properties, lon: finding.geometry.coordinates[0], lat: finding.geometry.coordinates[1] }, false); return; }
   const legs = map.queryRenderedFeatures(box, { layers: YOURS });
-  if (openRoute && legs.length) { stretchPopup(legs.find(f => inOpenRoute(f)) || legs[0], e.lngLat); return; }
+  // A stretch of the route that is open is what is worked on: its popup. A line of another route means that
+  // route: it is opened instead (carrying the open one on along another line is a tool in its panel).
+  const own = openRoute && legs.find(f => inOpenRoute(f));
+  if (own) { stretchPopup(own, e.lngLat); return; }
   if (legs.length) {
     const sharing = JSON.parse(legs[0].properties.routes || "[]");
-    if (sharing.length < 2) { openOwnedRoute(legs[0].properties.route_id); return; }
-    const popup = new maplibregl.Popup({ maxWidth: "280px" }).setLngLat(e.lngLat).setDOMContent(el("div", { class: "pop" },
-      el("h3", {}, `${sharing.length} of your routes run here`), el("div", { class: "sub" }, "Which one do you want to open?"),
-      el("div", { class: "actions" }, ...sharing.map(r => el("button", { class: "btn", onclick: () => { popup.remove(); openOwnedRoute(r.id); } }, r.code))))).addTo(map);
+    if (sharing.length < 2) { switchTo(sharing[0] || { id: legs[0].properties.route_id, code: legs[0].properties.codes }, e.lngLat); return; }
+    chooseRoute(sharing, e.lngLat);
     return;
   }
   const seen = new Set(), body = el("div", { class: "pop" });
@@ -1081,6 +1082,7 @@ setInterval(lookAtNight, 30 * 60 * 1000);
 // The map shows what is yours on top, and hides the proposals it was made from.
 let ownedLines = { features: [] };
 async function refreshOwned() {
+  routeNames = {};      // a route may be called something else after a change
   const data = await get("places.geojson");
   adopted = data.features.filter(f => f.properties.type === "place").flatMap(f => [f.properties.adopted_from, ...(f.properties.taken_in || [])]).filter(Boolean);
   const lines = ownedLines = await get("owned/routes.geojson");
@@ -1160,15 +1162,17 @@ function saveAll() {
 }
 async function discardAll() {
   const n = unsaved.changes.length;
-  if (!n) return;
-  if (n > 3 && !confirm(`Discard your ${n} changes since you last saved? Redo brings them back one at a time.`)) return;
+  if (!n) return true;
+  if (n > 3 && !confirm(`Discard your ${n} changes since you last saved? Redo brings them back one at a time.`)) return false;
   for (const b of unsavedBox.querySelectorAll("button")) b.disabled = true;
+  let done = true;
   try {
     const r = await send("POST", "undo/back", { txid: unsaved.changes[n - 1].txid });
     showUndo(r.next, r.again);
     await afterTakingBack(`Discarded ${n} change${n === 1 ? "" : "s"}: ${r.undone.slice(0, 4).join("; ")}${n > 4 ? "…" : ""}. Redo brings ${n === 1 ? "it" : "them"} back.`);
-  } catch (err) { alert(`Could not discard them: ${err.message}`); }
+  } catch (err) { done = false; alert(`Could not discard them: ${err.message}`); }
   refreshEditing();
+  return done;
 }
 // After something was taken back or brought back: the map, the open route and the lists as they are now.
 async function afterTakingBack(note) {
@@ -1643,10 +1647,53 @@ function stretchPopup(f, at) {
       act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
       act("Someone else maintains it here", () => maintainerForm(st, at)),
       act("Fix the line itself", () => setFixing(true)),
-    ] : [
-      act(`Carry ${route.code} on along this`, () => carryOn({ edge_id: st.edge_id }), true),
-      act(`Open ${st.codes.split(", ")[0]} instead`, () => openOwnedRoute(st.route_id)),
-    ])))).addTo(map);
+    ] : [])))).addTo(map);
+}
+// ---- From one route to another on the map. ----
+// What routes are called, asked for when they are to be chosen between: a code alone is hard to remember.
+let routeNames = {};
+async function namesOf(ids) {
+  const lacking = ids.filter(id => !(id in routeNames));
+  if (lacking.length) Object.assign(routeNames, await get("owned/route-names", { ids: lacking.join(",") }));
+  return ids.map(id => routeNames[id] || "");
+}
+// A button for a route, with its code at once and its name when that has come.
+function routeButton(r, onclick, lead = "") {
+  const name = el("span", { class: "sub" }, routeNames[r.id] ? ` ${routeNames[r.id]}` : "");
+  const b = el("button", { class: "btn", style: "text-align:left", "data-route": r.id, onclick }, lead, el("strong", {}, r.code), name);
+  namesOf([r.id]).then(([n]) => { if (n) name.textContent = ` ${n}`; }).catch(() => {});
+  return b;
+}
+function chooseRoute(sharing, at) {
+  const popup = new maplibregl.Popup({ maxWidth: "340px" }).setLngLat(at).setDOMContent(el("div", { class: "pop" },
+    el("h3", {}, `${sharing.length} of your routes run here`), el("div", { class: "sub" }, "Which one do you want to open?"),
+    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" },
+      ...sharing.map(r => routeButton(r, () => { popup.remove(); switchTo(r, at); }))))).addTo(map);
+}
+// Open another route. With changes that are not saved, it is asked first what is to become of them.
+function switchTo(r, at) {
+  const n = unsaved.changes.length;
+  if (!openRoute || openRoute.id === r.id || !n) { openOwnedRoute(r.id); return; }
+  const left = openRoute.code, go = () => { popup.remove(); openOwnedRoute(r.id); };
+  const popup = new maplibregl.Popup({ maxWidth: "340px" }).setLngLat(at).setDOMContent(el("div", { class: "pop" },
+    el("h3", {}, `${n} change${n === 1 ? "" : "s"} not saved`),
+    el("div", { class: "sub" }, `You are leaving ${left}. The latest: ${unsaved.changes[0].what}.`),
+    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" },
+      routeButton(r, () => { saveAll(); go(); }, "Save, and open "),
+      unsaved.in_the_way ? "" : routeButton(r, async () => { popup.remove(); if (await discardAll()) openOwnedRoute(r.id); }, "Discard, and open "),
+      el("button", { class: "btn", onclick: () => popup.remove() }, `Stay on ${left}`)))).addTo(map);
+}
+// Carry the open route on along a line that is not part of it: asked for, then the line is clicked.
+function startCarryingOn() {
+  const route = openRoute;
+  startPick(`Click the line ${route.code} is to be carried on along: a stretch of another route, or a line of Turrutebasen.`, (at, point) => {
+    const box = around(point, 6);
+    const stretch = map.queryRenderedFeatures(box, { layers: YOURS }).find(f => !inOpenRoute(f));
+    const segment = !stretch && map.queryRenderedFeatures(box, { layers: ["trails-marked", "trails-unmarked", "trails-water"] }).find(f => f.properties.id);
+    if (stretch) carryOn({ edge_id: stretch.properties.edge_id });
+    else if (segment) carryOn({ segment_id: segment.properties.id });
+    else reloadOpen(null, `there is no line where you clicked that ${route.code} does not use already: nothing was changed`);
+  });
 }
 // ---- A route laid out between points: click where it starts, then where it goes. ----
 // The server finds the shortest way over your stretches and Turrutebasen's; more points steer it.
@@ -2119,7 +2166,7 @@ function renderOwnedRoute(route, problem, note) {
       : route.shape === "loop" ? el("div", { class: "sub" }, "A round trip has no ends to drag, and is not sent another way as it is. Click a stretch and take it out: that opens the route, with an end at each side of where the stretch was. Change it then, and drag one end onto the other to close it again. ",
         "None of this moves a line or changes another route. Undo, at the top of the map, takes the latest change back.")
       : el("div", { class: "sub" }, "Drag an end, the large dots, to where the route should end: it follows the stretches that lead there, and is cut back if you let go on the route itself. Let go on its own other end and it becomes a round trip, coming back another way than it went. ",
-        "Drag the line to send the route another way. Click a stretch to take it out, or another line to carry the route on along it. ",
+        "Drag the line to send the route another way. Click a stretch to take it out. A click on the line of another route opens that route. ",
         "None of this moves a line or changes another route. Undo, at the top of the map, takes the latest change back.",
         route.length.glacier_m || ownedLines.features.some(f => FREE.includes(f.properties.kind) && f.properties.codes.split(", ").includes(route.code))
           ? " A stretch drawn by hand, over a glacier or through the terrain, is the exception: it is pulled like a rubber band. Drag a corner, the small dots, to move it, or the line between two corners to make a new one." : ""),
@@ -2127,7 +2174,8 @@ function renderOwnedRoute(route, problem, note) {
     el("div", { class: "actions" },
       fixing ? el("button", { class: "btn main", onclick: () => setFixing(false) }, "Back to the route")
         : el("button", { class: "btn", title: "For when the line lies wrong on the map: move junctions, pull the line onto a path, divide a stretch", onclick: () => setFixing(true) }, "Fix the line itself"),
-      fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay it out again between points"))) : "";
+      fixing ? "" : el("button", { class: "btn", title: "Click where it starts and where it goes, and it is laid along the shortest way over what exists", onclick: () => startRouting(route) }, "Lay it out again between points"),
+      fixing || route.shape === "loop" ? "" : el("button", { class: "btn", title: "Then click a line the route does not use: a stretch of another route, or a line of Turrutebasen. The route is carried on along it from the end it meets.", onclick: startCarryingOn }, "Carry it on along another line…"))) : "";
 
   const codeInput = el("input", { type: "text", value: route.code, "aria-label": "Code of the route", maxlength: 40, style: "width:9em" });
   const nameInput = el("input", { type: "text", value: route.name || "", placeholder: route.generated_name || "Named after its end places", "aria-label": "Name of the route", maxlength: 160 });

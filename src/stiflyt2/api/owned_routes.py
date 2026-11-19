@@ -1,6 +1,7 @@
 """Owned routes over HTTP: make a candidate yours, add pieces, join them with crossings (ADR-003)."""
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import Annotated, Literal
 
@@ -261,6 +262,18 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 
         with read.connection() as conn:
             return nightly.status(conn, Folder("var/backup"))
+
+    @app.get("/api/v1/owned/route-names")
+    def route_names(ids: Annotated[str, Query(max_length=1000)]) -> dict[str, str | None]:
+        """What some of your routes are called, by id (at most 20, with commas between): a code alone says little."""
+        wanted = []
+        for one in ids.split(",")[:20]:
+            try:
+                wanted.append(str(uuid.UUID(one.strip())))
+            except ValueError:
+                continue
+        with read.connection() as conn:
+            return routes.called(conn, wanted)
 
     @app.get("/api/v1/latest")
     def latest() -> dict | None:

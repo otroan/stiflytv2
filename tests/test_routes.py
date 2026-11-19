@@ -35,6 +35,8 @@ def test_making_a_route_turns_its_segments_into_shared_edges(conn):
     # It runs between two places, joins their access points, and is named after them.
     assert sorted(e["place"] for e in route["ends"]) == ["Arentzbu", "Sprongdalshytta"]
     assert route["generated_name"] in ("Arentzbu – Sprongdalshytta", "Sprongdalshytta – Arentzbu")
+    # Asked what it is called, where routes are chosen between: the name its ends give, until it is given one.
+    assert routes.called(conn, [route_id, "00000000-0000-0000-0000-000000000000"]) == {route_id: route["generated_name"]}
     assert route["sources"][0]["code"] == "bre18" and route["gaps"] == []
     # Who maintains each stretch comes along, and adds up to the route's length.
     assert [m["name"] for m in route["maintainers"]] == ["DNT | DNT Oslo og omegn"]

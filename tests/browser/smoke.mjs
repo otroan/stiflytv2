@@ -228,8 +228,33 @@ if (EDIT) {
   check("Discard takes both back in one go, and what was saved stays", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(stays)} && document.getElementById("unsaved").hidden`, 20), await js("openRoute && openRoute.name"));
   await clickOn(`document.getElementById("undo")`);
   check("and the trial is taken back", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(found)}`, 15), await js("openRoute && openRoute.name"));
+  // From one route to another on the map: a click on the line of another route opens it, and asks first what
+  // is to become of changes that are not saved. Two routes that share no stretch are found, and one opened.
+  const pair = await js(`(() => { const lone = ownedLines.features.filter(f => JSON.parse(JSON.stringify(f.properties.routes)).length === 1 && f.geometry.coordinates.length > 3);
+    const a = lone.find(f => f.properties.routes[0].id === openRoute.id) || lone[0], b = a && lone.find(f => f.properties.routes[0].id !== a.properties.routes[0].id);
+    const mid = f => f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)];
+    return a && b ? JSON.stringify({ a: a.properties.routes[0], b: b.properties.routes[0], at: mid(b), back: mid(a) }) : null; })()`);
+  if (pair) {
+    const { a, b, at, back } = JSON.parse(pair), isOpen = r => `Boolean(openRoute) && openRoute.id === ${JSON.stringify(r.id)}`;
+    const show = async where => { await js(`map.jumpTo({ center: ${JSON.stringify(where)}, zoom: 14 })`); await until(`map.loaded() && !map.isMoving()`, 15); await sleep(900); return onMap(JSON.stringify(where)); };
+    await js(`openOwnedRoute(${JSON.stringify(a.id)})`); await until(isOpen(a), 20);
+    await js(`saveAll()`); await until(`unsaved.changes.length === 0`, 10);
+    await click(await show(at));
+    check("a click on the line of another route opens that route", await until(isOpen(b), 20), await js("openRoute && openRoute.code"));
+    const was = await js("openRoute.name"), trial = `Leaving ${Date.now() % 100000}`;
+    await js(`(async () => { await send("PATCH", "owned/routes/${b.id}", { version: openRoute.version, name: ${JSON.stringify(trial)} }); await reloadOpen(); return true; })()`);
+    await until(`unsaved.changes.length === 1`, 15);
+    await click(await show(back));
+    const asks = `[...document.querySelectorAll(".maplibregl-popup button")]`;
+    const called = await js(`namesOf([${JSON.stringify(a.id)}]).then(n => n[0])`);
+    check(`with a change not saved, it asks first, and says what the route is called${called ? "" : " (this one has no name)"}`, await until(`/1 change not saved/.test((document.querySelector(".maplibregl-popup") || {}).textContent || "") && ${asks}.some(x => x.textContent === "Discard, and open " + ${JSON.stringify(a.code + (called ? " " + called : ""))})`, 15), await text(".maplibregl-popup"));
+    check("and the route is still the one that was open", await js(isOpen(b)));
+    await clickOn(`${asks}.find(x => x.textContent.startsWith("Discard, and open "))`);
+    check("Discard, and open: the change is taken back and the other route is open", await until(`${isOpen(a)} && unsaved.changes.length === 0`, 20) && await js(`get("owned/routes/${b.id}").then(r => r.name === ${JSON.stringify(was)})`), await js("openRoute && openRoute.code"));
+    check("the panel has carrying on along another line as a tool of its own", await js(`[...document.querySelectorAll("#selected button")].some(x => x.textContent === "Carry it on along another line…")`));
+  } else console.log("    (no two routes with a stretch of their own each: going from one to the other is not tried)");
   editing = false;
-} else console.log("    (not asked to change anything: undo, redo, dragging, places and saving are not tried)");
+} else console.log("    (not asked to change anything: undo, redo, dragging, places, saving and changing route are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
 const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes

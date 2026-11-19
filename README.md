@@ -189,9 +189,16 @@ which stretches the route uses; no line is moved and no other route changes.
   places light up while you drag: let go on one and the route ends there.
 - **Drag the line** to send the route another way: the stretch you took hold
   of gives way to the way round by the spot you let go on.
-- **Click a stretch** to take it out of the route or say that someone else
-  maintains it there. Click a line that is not part of the route to carry the
-  route on along it.
+- **Click a stretch** of the route to take it out or say that someone else
+  maintains it there.
+- **Click the line of another route** to open that route instead. Where
+  several of your routes run on the line, you are asked which, by code and
+  name. With changes that are not saved (see "Save or discard"), it asks
+  first: save and open, discard and open, or stay.
+- **Carry it on along another line…**, a button in the route's panel, and
+  then a click on a line the route does not use (a stretch of another route,
+  or a line of Turrutebasen): the route is carried on along it. Dragging an
+  end onto the line does the same, and shows first what it would give.
 
 While an end or the line is held still for a moment, the map shows the route
 as it would be if you let go there, and the box at the top says it in words:
@@ -700,7 +707,9 @@ has taken, so a pulled line that did nothing is seen to have done nothing.
 
 It is a mark, not a draft: nothing is held back until you save, and where
 you last saved is kept in the browser you work in. Click the count to see
-the changes one by one. Over the API: `GET /api/v1/undo/since?txid=…`.
+the changes one by one. Going to another route by a click on its line asks
+what is to become of them first. Over the API:
+`GET /api/v1/undo/since?txid=…`.
 
 ### Getting out of changes that went wrong
 

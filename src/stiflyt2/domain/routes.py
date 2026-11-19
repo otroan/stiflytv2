@@ -2561,6 +2561,15 @@ def name_from_ends(conn, route_id: str) -> str | None:
     return named_after(graph["shape"], [place.get(n) for n in graph["ends"]])
 
 
+def called(conn, route_ids: list[str]) -> dict[str, str | None]:
+    """What each of some routes is called: the name it was given, else the one its end places give."""
+    found = {}
+    for route_id, name in conn.execute("SELECT id::text, name FROM core.route WHERE id = ANY(%s::uuid[]) "
+                                       "AND status = 'active'", (route_ids,)).fetchall():
+        found[route_id] = name or name_from_ends(conn, route_id)
+    return found
+
+
 def grading_of(route: dict) -> tuple[str | None, str | None]:
     """The grading of a route and where it is from: set (by a person, or taken from Turrutebasen), or worked
     out from its length and climb where none is set. "Not graded" (I) is nobody having set one."""
