@@ -29,7 +29,10 @@ step is still started on their word; the details of each are further down.
      route panel listing the stretches that say otherwise than the route.
      (Making two places one in the page, feedback 23: built 2026-11-19.)
    - *The other areas* (ron, har, ska, fem, hul, osl) made ours in bulk.
-     Operations is of little use where the routes are not ours yet.
+     Operations is of little use where the routes are not ours yet. Done
+     2026-11-20 for ron, hul, har and fem, for DNT and DNT Oslo og omegn
+     only (198 routes, 84 places); the routes in pieces there are left for
+     a person. Left: ska and osl.
 2. **One table for what happens on a route** (the pattern of ADR-004). An
    issue, "cut here", "replace this sign or post", a diary entry, a report
    from a work party and an inspection are one kind of thing: an entry with
