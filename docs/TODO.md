@@ -61,6 +61,10 @@ step is still started on their word; the details of each are further down.
      least walked twice, in days that end at a hut. Needs only what is ours
      already, so it can come before the walker's.
 
+Every step from 2 on is built as a feature of its own, behind a flag, as
+ADR-005 says (decided 2026-11-19): its own module, endpoints, tools, tables
+and part of a page, given to roles and people when it is ready for them.
+
 Beside the steps, as the answers come: handing changes on to Kartverket and
 to UT.no ("Handing the changes on" below). Without an answer: a work sheet
 per correction for Rett i kartet and a mark that it is reported. For the

@@ -498,7 +498,8 @@ def access_list() -> None:
         found = access.people(conn)
         for p in found:
             last = f"last here {_when(p['last_seen_at'])}" if p["last_seen_at"] else "not been here yet"
-            typer.echo(f"{p['name']:<24} {p['role']:<7} {p['email']:<34} {last}")
+            own = "".join(f" {'+' if f['given'] else '-'}{f['feature']}" for f in p["own"])
+            typer.echo(f"{p['name']:<24} {p['role'] + own:<16} {p['email']:<34} {last}")
             for t in p["tokens"]:
                 typer.echo(f"    token {t['id']} ({t['through']}): {t['label']}"
                            + (f", last used {t['last_used_at'][:16].replace('T', ' ')}" if t["last_used_at"] else ", not used yet"))
@@ -512,7 +513,7 @@ def access_list() -> None:
 def access_add(
     email: Annotated[str, typer.Argument(help="The address the person signs in to Google with")],
     name: Annotated[str, typer.Argument(help="The name their changes are recorded under")],
-    role: Annotated[str, typer.Option(help="reader looks; operations changes signs and work, not routes; editor, the route responsible, changes both")] = "reader",
+    role: Annotated[str, typer.Option(help="reader looks; operations changes signs and work, not routes; editor, the route responsible, changes both; or a role of your own making (`access roles`)")] = "reader",
 ) -> None:
     """List a person, or change the name or role of one who is listed."""
     import os
@@ -521,6 +522,110 @@ def access_add(
 
     _access(lambda conn: access.add(conn, email, name, role, os.environ.get("USER", "?")))
     typer.echo(f"{name} <{email.strip().lower()}> may sign in, as {role}")
+
+
+@access_app.command("roles")
+def access_roles() -> None:
+    """The roles there are: what each is a bundle of, and how many people hold it."""
+    from stiflyt2 import access
+
+    def show(conn) -> None:
+        for r in access.roles(conn):
+            typer.echo(f"{r['name']:<16} {', '.join(r['features']) or 'looks only':<32} {r['people']} "
+                       f"{'person' if r['people'] == 1 else 'people'}" + (f"   {r['about']}" if r["about"] else ""))
+
+    _access(show)
+
+
+@access_app.command("role")
+def access_role(
+    name: Annotated[str, typer.Argument(help="The role: one there is, to change it, or a new name")],
+    features: Annotated[str, typer.Option(help="What it is a bundle of, with commas between: see `access features`. Empty: looks only")] = "",
+    about: Annotated[str | None, typer.Option(help="What the role is for, in a sentence")] = None,
+    drop: Annotated[bool, typer.Option("--drop", help="Take the role away. Nobody may hold it")] = False,
+) -> None:
+    """Make a role, change what a role is a bundle of, or take one away. Those who hold it follow within half a minute."""
+    from stiflyt2 import access
+
+    if drop:
+        _access(lambda conn: access.drop_role(conn, name))
+        typer.echo(f"the role {name} is gone")
+        return
+    wanted = [f.strip() for f in features.split(",") if f.strip()]
+    _access(lambda conn: access.set_role(conn, name, wanted, about))
+    typer.echo(f"{name}: {', '.join(sorted(wanted)) or 'looks only'}")
+
+
+@access_app.command("features")
+def access_features() -> None:
+    """Every feature: how it stands, which roles have it, and who is given or denied it by name."""
+    from stiflyt2 import access
+
+    def show(conn) -> None:
+        for f in access.features(conn):
+            typer.echo(f"{f['key']:<12} {f['state']:<6} to {f['title']}")
+            typer.echo(f"    roles: {', '.join(f['roles']) or 'none'}"
+                       + (f"; given to {', '.join(f['given'])}" if f["given"] else "")
+                       + (f"; denied {', '.join(f['denied'])}" if f["denied"] else ""))
+
+    _access(show)
+
+
+@access_app.command("feature")
+def access_feature(
+    key: Annotated[str, typer.Argument(help="The feature, from `access features`")],
+    state: Annotated[str, typer.Argument(help="off: for nobody. given: for those whose role or own list has it. all: for everybody who is let in")],
+) -> None:
+    """Say how a feature stands as a whole."""
+    import os
+
+    from stiflyt2 import access
+
+    _access(lambda conn: access.set_state(conn, key, state, os.environ.get("USER", "?")))
+    typer.echo(f"{key} is {state}")
+
+
+@access_app.command("give")
+def access_give(email: str, feature: str) -> None:
+    """Give one person a feature, whatever their role says."""
+    import os
+
+    from stiflyt2 import access
+
+    _access(lambda conn: access.grant(conn, email, feature, True, os.environ.get("USER", "?")))
+    typer.echo(f"{email} has {feature}")
+
+
+@access_app.command("deny")
+def access_deny(email: str, feature: str) -> None:
+    """Deny one person a feature, though their role has it."""
+    import os
+
+    from stiflyt2 import access
+
+    _access(lambda conn: access.grant(conn, email, feature, False, os.environ.get("USER", "?")))
+    typer.echo(f"{email} does not have {feature}")
+
+
+@access_app.command("as-role")
+def access_as_role(email: str, feature: str) -> None:
+    """Leave a feature to the person's role again: neither given nor denied by name."""
+    from stiflyt2 import access
+
+    _access(lambda conn: access.grant(conn, email, feature, None, "?"))
+    typer.echo(f"{feature} follows the role of {email} again")
+
+
+@access_app.command("why")
+def access_why(email: str) -> None:
+    """For one person: every feature, whether they have it, and what decided that."""
+    from stiflyt2 import access
+
+    def show(conn) -> None:
+        for f in access.why(conn, email):
+            typer.echo(f"{'has ' if f['has'] else 'lacks'} {f['feature']:<12} {f['because']}")
+
+    _access(show)
 
 
 @access_app.command("remove")

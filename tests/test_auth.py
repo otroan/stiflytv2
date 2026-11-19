@@ -57,7 +57,7 @@ def test_run_locally_it_answers_only_what_is_asked_straight_of_localhost(loaded,
         assert client.get(f"{V1}/areas").status_code == 200
         assert client.get(f"{V1}/auth/me").json() == {
             "name": "Test Editor", "email": None, "role": "editor", "edits": True, "operates": True, "through": "api",
-                "sign_in": False, "really": None, "may_look_as": []}
+                "features": ["routes", "signs"], "sign_in": False, "really": None, "may_look_as": []}
         # Passed on by a proxy, or asked for under the public name: this way of running is not for the world.
         for headers in ({"X-Forwarded-For": "203.0.113.9"}, {"Host": "stiflyt2.example.org"}):
             refused = client.get(f"{V1}/areas", headers=headers)
@@ -95,7 +95,7 @@ def test_signing_in_with_google_lets_in_only_who_is_listed(signed, owner, monkey
     assert (back.status_code, back.headers["location"]) == (302, "/?area=jot")
     assert signed.get(f"{V1}/auth/me").json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "reader", "edits": False, "operates": False, "through": "viewer",
-        "sign_in": True, "really": None, "may_look_as": []}
+        "features": [], "sign_in": True, "really": None, "may_look_as": []}
     assert signed.get("/").status_code == 200 and signed.get(f"{V1}/areas").status_code == 200
     assert "How to use it" in signed.get("/guide").text
 
@@ -145,7 +145,7 @@ def test_a_token_acts_as_its_person_and_what_it_does_is_recorded_as_having_come_
     as_her, as_him = {"Authorization": f"Bearer {hers}"}, {"Authorization": f"Bearer {his}"}
     assert signed.get(f"{V1}/auth/me", headers=as_her).json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "editor", "edits": True, "operates": True, "through": "mcp",
-        "sign_in": True, "really": None, "may_look_as": []}
+        "features": ["routes", "signs"], "sign_in": True, "really": None, "may_look_as": []}
     said = signed.post(f"{V1}/feedback", headers=as_her, json={"what": "report_gap", "message": "No way to do that"})
     assert owner.execute("SELECT who, through, what FROM feedback.entry WHERE id = %s", (said.json()["id"],)).fetchone() == (
         "Kari Nordmann", "mcp", "report_gap")
@@ -225,3 +225,83 @@ def test_one_who_may_change_things_can_look_at_the_pages_as_one_who_may_do_less(
         shared = client.get("/static/common.js").text
         assert "X-Stiflyt-As" in shared and "function roleSwitch" in shared
         assert "roleSwitch(me" in client.get("/ruter").text and "roleSwitch(me" in client.get("/static/front/start.js").text
+
+
+def test_a_role_is_a_bundle_of_features_and_a_person_or_a_feature_can_be_set_apart(signed, owner):
+    """Three things decide what somebody may use: how the feature stands, their role, and what they are given by name."""
+    try:
+        access.add(owner, KARI, "Kari Nordmann", "reader", "test")
+        hers = {"Authorization": f"Bearer {access.new_token(owner, KARI, 'api', 'for the test')}"}
+
+        def me():
+            return signed.get(f"{V1}/auth/me", headers=hers).json()
+
+        def may_decide_about_signs():
+            return signed.patch(f"{V1}/signs", headers=hers, json={"key": "a|b|place:c", "text": "x"}).status_code != 403
+
+        # The three roles there were are bundles of what they could do: nobody's access has changed.
+        assert {r["name"]: r["features"] for r in access.roles(owner)} == {
+            "reader": [], "operations": ["signs"], "editor": ["routes", "signs"]}
+        assert (me()["features"], me()["operates"], may_decide_about_signs()) == ([], False, False)
+
+        # A role of one's own making: a bundle, with no new code. She holds it, and has what it has.
+        access.set_role(owner, "sign-orderer", ["signs"], "Orders signs for an area")
+        with pytest.raises(access.Refused, match="no such feature: flying"):
+            access.set_role(owner, "pilot", ["flying"])
+        with pytest.raises(access.Refused, match="a role is one of: reader, operations, sign-orderer, editor"):
+            access.add(owner, KARI, "Kari Nordmann", "pilot", "test")
+        access.add(owner, KARI, "Kari Nordmann", "sign-orderer", "test")
+        assert (me()["role"], me()["features"], me()["edits"], may_decide_about_signs()) == ("sign-orderer", ["signs"], False, True)
+        with pytest.raises(access.Refused, match="1 person holds the role sign-orderer"):
+            access.drop_role(owner, "sign-orderer")
+
+        # Denied by name, though her role has it; and left to her role again.
+        access.grant(owner, KARI, "signs", False, "test")
+        assert (me()["features"], may_decide_about_signs()) == ([], False)
+        assert [w for w in access.why(owner, KARI) if w["feature"] == "signs"] == [
+            {"feature": "signs", "has": False, "because": "denied them by name, though the role sign-orderer has it"}]
+        access.grant(owner, KARI, "signs", None, "test")
+        assert me()["features"] == ["signs"]
+        # Given by name what her role lacks.
+        access.grant(owner, KARI, "routes", True, "test")
+        assert (me()["features"], me()["edits"]) == (["routes", "signs"], True)
+        assert {w["feature"]: w["because"] for w in access.why(owner, KARI)} == {
+            "routes": "given to them by name", "signs": "the role sign-orderer has it"}
+        access.grant(owner, KARI, "routes", None, "test")
+
+        # A feature that is off is off for everybody, the route responsible too; and for all, it is hers as a reader.
+        access.add(owner, PER, "Per Hansen", "editor", "test")
+        his = {"Authorization": f"Bearer {access.new_token(owner, PER, 'api', 'for the test')}"}
+        access.set_state(owner, "signs", "off", "test")
+        assert (me()["features"], may_decide_about_signs()) == ([], False)
+        assert signed.get(f"{V1}/auth/me", headers=his).json()["features"] == ["routes"]
+        refused = signed.patch(f"{V1}/signs", headers=his, json={"key": "a|b|place:c", "text": "x"})
+        assert (refused.status_code, refused.json()["detail"]) == (403, "you are signed in to look, not to change: ask for the operations role")
+        assert [w["because"] for w in access.why(owner, PER) if w["feature"] == "signs"] == ["the feature is off for everybody"]
+        access.add(owner, KARI, "Kari Nordmann", "reader", "test")
+        access.set_state(owner, "signs", "all", "test")
+        assert (me()["role"], me()["features"], may_decide_about_signs()) == ("reader", ["signs"], True)
+        listed = {f["key"]: f for f in access.features(owner)}
+        assert (listed["signs"]["state"], listed["signs"]["roles"], listed["routes"]["state"]) == ("all", ["editor", "operations", "sign-orderer"], "given")
+        with pytest.raises(access.Refused, match="a feature is one of: off, given, all"):
+            access.set_state(owner, "signs", "perhaps", "test")
+    finally:
+        owner.execute("DELETE FROM access.feature")
+        owner.execute("DELETE FROM access.person WHERE email LIKE '%@example.org'")
+        owner.execute("DELETE FROM access.role WHERE name = 'sign-orderer'")
+
+
+def test_the_pages_can_be_looked_at_as_any_role_that_may_do_less_of_what_one_may_oneself(loaded, owner, monkeypatch):
+    """With roles as bundles, lesser is a role whose features are some of one's own: also one of one's own making."""
+    monkeypatch.setattr(settings, "editor", "Test Editor")
+    try:
+        access.set_role(owner, "sign-orderer", ["signs"])
+        page = {"X-Stiflyt-Through": "viewer"}
+        with TestClient(create_app()) as client:
+            me = client.get(f"{V1}/auth/me", headers=page).json()
+            assert (me["role"], me["features"], me["may_look_as"]) == ("editor", ["routes", "signs"], ["reader", "operations", "sign-orderer"])
+            as_orderer = client.get(f"{V1}/auth/me", headers={**page, "X-Stiflyt-As": "sign-orderer"}).json()
+            assert (as_orderer["role"], as_orderer["really"], as_orderer["features"], as_orderer["edits"]) == ("sign-orderer", "editor", ["signs"], False)
+            assert as_orderer["may_look_as"] == me["may_look_as"]
+    finally:
+        owner.execute("DELETE FROM access.role WHERE name = 'sign-orderer'")

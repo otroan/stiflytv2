@@ -32,6 +32,7 @@ from starlette.requests import HTTPConnection
 
 from stiflyt2 import access
 from stiflyt2.config import settings
+from stiflyt2.features import FEATURES
 
 log = logging.getLogger("stiflyt2.auth")
 
@@ -108,12 +109,18 @@ class Gate:
         self.known[(kind, key)] = (time.monotonic() + REMEMBER_S, who)
         return who
 
+    def _resolve(self, who: access.Person) -> access.Person:
+        """What the one editor of a local server may use: looked up each time, as it is cheap and seldom."""
+        with self.pool.connection() as conn:
+            return access.resolved(conn, who)
+
     async def who(self, conn: HTTPConnection) -> access.Person | None:
         """Who is asking, or None when that is not known."""
         if not signed_in():
             said = conn.headers.get("x-stiflyt-through", "")
-            return access.Person(settings.editor or None, "editor" if settings.editor else "reader",
-                                 through=said if said in ("viewer", "mcp") else "api")
+            local = access.Person(settings.editor or None, "editor" if settings.editor else "reader",
+                                  through=said if said in ("viewer", "mcp") else "api")
+            return await to_thread.run_sync(self._resolve, local)
         bearer = conn.headers.get("authorization", "")
         if bearer.lower().startswith("bearer "):
             return await to_thread.run_sync(self._find, "token", bearer[7:].strip())
@@ -157,28 +164,27 @@ def person_of(request: Request) -> access.Person:
     return request.scope.get("stiflyt2_person") or access.Person(None, "reader")
 
 
-def editor(request: Request) -> Author:
-    """The one whose change this is. Refuses readers, and requests made by another site's page in the browser."""
-    who = person_of(request)
-    if not who.edits:
-        raise HTTPException(403, "you are signed in to look, not to change: ask for the editor role"
-                            if signed_in() else "editing is not enabled on this server")
-    origin = request.headers.get("origin")
-    if origin and urlparse(origin).netloc != request.headers.get("host"):
-        raise HTTPException(403, "changes are only accepted from this site's own page")
-    return Author(who.name, who.through, who.email)
+def may(feature: str):
+    """What an endpoint asks for, to belong to a feature: the one whose request this is, who must have the
+    feature. Refuses those who lack it, and requests made by another site's page in the browser."""
+    said = FEATURES[feature]
+
+    def allowed(request: Request) -> Author:
+        who = person_of(request)
+        if not who.has(feature):
+            raise HTTPException(403, (f"you are signed in to look, not to {said.title}: {said.ask}"
+                                      if feature not in ("routes", "signs")
+                                      else f"you are signed in to look, not to change: {said.ask}")
+                                if signed_in() else "editing is not enabled on this server")
+        origin = request.headers.get("origin")
+        if origin and urlparse(origin).netloc != request.headers.get("host"):
+            raise HTTPException(403, "changes are only accepted from this site's own page")
+        return Author(who.name, who.through, who.email)
+    return allowed
 
 
-def operator(request: Request) -> Author:
-    """The one whose change to signs or work this is: operations, or a route responsible."""
-    who = person_of(request)
-    if not who.operates:
-        raise HTTPException(403, "you are signed in to look, not to change: ask for the operations role"
-                            if signed_in() else "editing is not enabled on this server")
-    origin = request.headers.get("origin")
-    if origin and urlparse(origin).netloc != request.headers.get("host"):
-        raise HTTPException(403, "changes are only accepted from this site's own page")
-    return Author(who.name, who.through, who.email)
+editor = may("routes")          # the one whose change to the routes this is: a route responsible
+operator = may("signs")         # the one whose decision about signs this is: operations, or a route responsible
 
 
 def install(app: FastAPI, pool: ConnectionPool) -> None:
@@ -246,6 +252,8 @@ def register(app: FastAPI, pool: ConnectionPool) -> None:
         as one with a lesser role, and `may_look_as` the roles you can look as: in the pages only."""
         who = person_of(request)
         holds = who.really or who.role
+        looks = [name for name, _ in who.look_as] if who.features is not None else access.lesser(holds)
         return {"name": who.name, "email": who.email, "role": who.role, "edits": who.edits, "operates": who.operates,
+                "features": sorted(f for f in FEATURES if who.has(f)),
                 "through": who.through, "sign_in": signed_in(), "really": who.really,
-                "may_look_as": access.lesser(holds) if who.name and who.through == "viewer" else []}
+                "may_look_as": looks if who.name and who.through == "viewer" else []}

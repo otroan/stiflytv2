@@ -846,6 +846,24 @@ what is refused is refused there and not only hidden. The choice is the
 tab's, a stripe says so for as long as it lasts, and it only ever goes
 downwards. Programs with a token are not affected.
 
+**Roles, features and flags** ([ADR-005](docs/architecture/ADR-005-features-roles-and-flags.md)).
+What a person may use is a set of features: today `routes` (change the
+routes) and `signs` (decide about signs); every new part of the tool is one
+more. A role is a bundle of them, and three things decide what somebody has:
+
+    stiflyt2 access roles                                  # the roles, and what each is a bundle of
+    stiflyt2 access role sign-orderer --features signs     # a role of your own making
+    stiflyt2 access add kari@example.org "Kari Nordmann" --role sign-orderer
+    stiflyt2 access give kari@example.org routes           # one person, one feature more than the role
+    stiflyt2 access deny kari@example.org signs            # or one less; `as-role` leaves it to the role again
+    stiflyt2 access features                               # every feature: how it stands, who has it
+    stiflyt2 access feature signs off                      # off, given, or all (everybody who is let in)
+    stiflyt2 access why kari@example.org                   # what she has, and which of the three decided it
+
+The server refuses what one lacks, and the pages show only what one has. A
+change bites within 20 seconds. "Show the pages as" offers every role that
+has some of what you have yourself.
+
 **Undo is your own.** Undo in the map takes back your latest change made in
 the map, and Redo brings back what you took back. What others have done since stays, and so does what an assistant did
 in your name: the assistant takes that back, or the route is put back from
@@ -1208,6 +1226,8 @@ With a superuser OS account and password-free local logins, none of steps 1,
 - [ADR-004](docs/architecture/ADR-004-how-operations-hangs-on-the-routes.md) —
   how what operations keeps stays with what it is about while the routes
   are mended, and how it is taken back
+- [ADR-005](docs/architecture/ADR-005-features-roles-and-flags.md) —
+  a part of the tool is a feature with a name; a role is a bundle of features; flags per feature and per person
 - [To do](docs/TODO.md) — what is wanted and not built, by part; the
   operations part (signs, work, closures) is collected there
 - [v1 assessment](docs/architecture/current-state.md)
