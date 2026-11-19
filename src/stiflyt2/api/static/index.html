@@ -692,7 +692,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
         el("span", { class: "code" }, r.code),
         el("span", { class: "grow" }, r.name || "", r.problems.length && (!r.done || r.discontinued) ? el("span", { class: "sub" }, `${r.name ? " " : ""}${r.problems[0]}${more}`) : ""),
         r.unpublished ? el("span", { class: "tag none", title: `Not published: ${r.unpublished}` }, "Not published") : "",
-        r.kind === "yours" && r.dnt === "bare" ? el("span", { class: "tag", title: "Turrutebasen says only “DNT” as its maintainer, and it meets routes of other associations: is it DNT Oslo og omegn’s? If not, withdraw it." }, "Whose?") : "",
+        r.kind === "yours" && r.dnt === "bare" ? el("span", { class: "tag", title: "Turrutebasen said only “DNT” as its maintainer, and it meets other associations’ routes, or its own stretches name another association: is it DNT Oslo og omegn’s? If not, withdraw it." }, "Whose?") : "",
         el("span", { class: cls }, word));
     }));
     const filter = el("div", { class: "filter", role: "group", "aria-label": "Which routes to list" },

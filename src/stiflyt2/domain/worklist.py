@@ -78,9 +78,16 @@ def worklist(conn, area: str) -> dict:
     items = []
     home = set(whose.home_dnt(conn))       # candidates that say only "DNT" and are DNT Oslo og omegn's
 
+    # The candidates routes of yours were made from that have "DNT" among their maintainers and do not name DNT
+    # Oslo og omegn: filled below once their ids are known. Such a route was made on the word "DNT" alone.
+    on_dnt: set[str] = set()
+
     def dnt(ids, names) -> str | None:
-        """For a route that says only "DNT": "home" where it is DNT Oslo og omegn's by its neighbours, else "bare"."""
-        return None if not whose.bare(names) else "home" if set(ids) & home else "bare"
+        """For a route that says only "DNT", or one of yours made on the word "DNT" alone: "home" where it is DNT
+        Oslo og omegn's by the routes it meets, else "bare", for a person to say whose it is."""
+        if not (whose.bare(names) or set(ids) & on_dnt):
+            return None
+        return "home" if set(ids) & home else "bare"
     candidates = _rows(conn, """
         SELECT r.id, r.label, r.name, s.shape, s.pieces, s.ends, r.maintainers,
                round((r.length_m / 1000)::numeric, 1)::float8 AS length_km
@@ -150,6 +157,10 @@ def worklist(conn, area: str) -> dict:
                WHERE subject_type = 'route' AND ref_type = 'adopted_from' AND subject_id = ANY(%s::uuid[])""",
             ([str(m) for m in [*mine, *routes_of(conn, area, discontinued=True)]],)):
         made_from.setdefault(route_id, []).append(candidate)
+    made_ids = [c for cs in made_from.values() for c in cs if c]
+    on_dnt.update(i for i, names in conn.execute(
+        "SELECT id, maintainers FROM source_index.route WHERE id = ANY(%s)", (made_ids,))
+        if whose.BARE in {whose.norm(n) for n in names or []} and whose.HOME not in {whose.norm(n) for n in names or []})
     mapped = routes.mapped_lines(conn)      # paths, and roads where they are loaded
     share = near_mapped(conn, mine, mapped)
     reviewed, yours = 0, []
