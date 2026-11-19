@@ -126,6 +126,6 @@ function drawTrip() {
     map.getSource("trip-ends").setData({ type: "FeatureCollection", features: [
       ...(days.length ? [{ type: "Feature", properties: { day: "S", colour: "#1f2a30" }, geometry: { type: "Point", coordinates: days[0].coords[0] } }] : []),
       ...days.map(d => ({ type: "Feature", properties: { day: String(d.day), colour: dayColour(d.day) }, geometry: { type: "Point", coordinates: d.coords[d.coords.length - 1] } }))] });
-    for (const id of ["routes"]) if (map.getLayer(id)) map.setPaintProperty(id, "line-opacity", on ? 0.3 : 1);
+    if (on) for (const id of ["routes", "routes-ice"]) if (map.getLayer(id)) map.setPaintProperty(id, "line-opacity", 0.3);
   });
 }

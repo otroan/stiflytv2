@@ -1,5 +1,6 @@
 // The front page's map: the routes in use, the one open, the sign sites, and what a click on it means.
 const empty = { type: "FeatureCollection", features: [] };
+const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
 
 const map = new maplibregl.Map({
   container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
@@ -13,9 +14,14 @@ const map = new maplibregl.Map({
     layers: [
       ...baseLayers(),
       { id: "route-hot", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#f5c400", "line-width": 9 } },
-      { id: "routes", type: "line", source: "routes", paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
+      // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
+      { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
+      { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 5], "line-dasharray": [0, 2], "line-opacity": 0.75 } },
       { id: "route-open", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6] } },
+      { id: "route-open-ice", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 15, 8], "line-dasharray": [0, 1.8] } },
       { id: "places", type: "circle", source: "places", minzoom: 10, paint: { "circle-radius": 3, "circle-color": "#fff", "circle-stroke-color": css("--ink"), "circle-stroke-width": 1.5 } },
       { id: "place-names", type: "symbol", source: "places", minzoom: 12,
         layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top" },
@@ -54,9 +60,11 @@ function drawMap() {
     map.setLayoutProperty("site-names", "visibility", among ? "none" : "visible");
     map.setLayoutProperty("sites-small", "visibility", among ? "visible" : "none");
     // The routes of the area stand out; those of other areas are there to be seen past.
-    map.setPaintProperty("routes", "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
-    const walked = among && route && over && over.routes.find(r => r.code === route);
-    map.setFilter("route-open", ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]]);
+    for (const id of ["routes", "routes-ice"]) map.setPaintProperty(id, "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
+    const walked = among && route && over && over.routes.find(r => r.code === route), mine = ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]];
+    map.setFilter("route-open", ["all", mine, ["!=", ["get", "kind"], "glacier"]]);
+    map.setFilter("route-open-ice", ["all", mine, ["==", ["get", "kind"], "glacier"]]);
+    map.setFilter("routes-ice", ["all", ["!", mine], ["==", ["get", "kind"], "glacier"]]);     // the open route's own dots alone: two rows of dots smear
     map.getSource("sites").setData({ type: "FeatureCollection", features: (found ? found.sites : []).map(s => ({ type: "Feature",
       properties: { key: s.key, name: s.name || (s.near ? `by ${s.near.name}` : ""), state: s.no_signs ? "none" : onOrder(s) ? "order" : waiting(s) ? "waiting" : "", open: s.key === open }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) });
     for (const m of stakes) m.remove();
@@ -114,7 +122,7 @@ map.on("click", e => {
 // The routes in use that run where the map was clicked: of the area, or with none chosen, of any.
 function routesAt(point) {
   const ids = new Map();
-  for (const f of map.queryRenderedFeatures([[point.x - 5, point.y - 5], [point.x + 5, point.y + 5]], { layers: ["routes"] })) {
+  for (const f of map.queryRenderedFeatures([[point.x - 5, point.y - 5], [point.x + 5, point.y + 5]], { layers: ["routes", "routes-ice"] })) {
     const codes = f.properties.codes_in_use.split("|");
     f.properties.ids.split("|").forEach((id, i) => { if (id) ids.set(id, codes[i]); });
   }
