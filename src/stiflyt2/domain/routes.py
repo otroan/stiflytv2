@@ -536,19 +536,22 @@ def taken_out_by_a_person(conn) -> dict[str, str]:
         WHERE sr.subject_type = 'route' AND sr.source_key = 'turrutebasen' AND sr.detail->>'label' IS NOT NULL"""))
 
 
-def make_default(conn, area: str) -> dict:
+def make_default(conn, area: str, maintainer: str | None = None) -> dict:
     """Make every clean route candidate of an area yours: one connected line with two ends.
 
     They are marked as not reviewed and keep the candidate's label as their
     code. Candidates in pieces or with extra ends are left for a person, as
     are those whose route a person has withdrawn, or has taken out of the
-    route that was made from them.
+    route that was made from them. Given a maintainer, only the candidates
+    Turrutebasen says that maintainer looks after, as `whose` compares names.
     """
-    candidates = _rows(conn, """
+    from stiflyt2.domain import whose
+
+    candidates = _rows(conn, f"""
         SELECT r.id, r.label FROM source_index.route r
         JOIN source_index.route_shape s ON s.route_id = r.id
-        WHERE r.area_prefix = lower(%(a)s) AND s.shape = 'line'
-        ORDER BY length(r.code), r.label""", {"a": area})
+        WHERE r.area_prefix = lower(%(a)s) AND s.shape = 'line' AND {whose.sql("r.maintainers")}
+        ORDER BY length(r.code), r.label""", {"a": area, "kin": whose.kin(maintainer)})
     withdrawn = withdrawn_by_a_person(conn) | set(taken_out_by_a_person(conn))
     taken = {code for (code,) in conn.execute(
         "SELECT lower(code) FROM core.route WHERE status = 'active'")}

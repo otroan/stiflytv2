@@ -486,7 +486,7 @@ def review(conn, place_id: str, version: int, author: str) -> None:
     _touch(conn, place_id, author)
 
 
-def make_default(conn, area: str | None = None) -> dict:
+def make_default(conn, area: str | None = None, maintainer: str | None = None) -> dict:
     """Make a place of every proposed hut and parking place that is not one yet.
 
     Places made here are marked as not reviewed. While a place is unreviewed
@@ -495,13 +495,17 @@ def make_default(conn, area: str | None = None) -> dict:
     proposal whose place a person withdrew is left alone.
 
     area: only anchors where routes with this three-letter code prefix end.
+    maintainer: of those, only where routes that maintainer looks after end (as `whose` compares names).
     """
+    from stiflyt2.domain import whose
+
     current = fingerprints(conn)
     if area:
         inside = {a for (a,) in conn.execute(
-            """SELECT DISTINCT e.anchor_id FROM source_index.route_end e
-               JOIN source_index.route r ON r.id = e.route_id WHERE r.area_prefix = lower(%s)""",
-            (area,))}
+            f"""SELECT DISTINCT e.anchor_id FROM source_index.route_end e
+                JOIN source_index.route r ON r.id = e.route_id
+                WHERE r.area_prefix = lower(%(a)s) AND {whose.sql("r.maintainers")}""",
+            {"a": area, "kin": whose.kin(maintainer)})}
         current = {a: f for a, f in current.items() if a in inside}
     places = {anchor: (str(place_id), reviewed, fingerprint) for anchor, place_id, reviewed, fingerprint
               in conn.execute("""

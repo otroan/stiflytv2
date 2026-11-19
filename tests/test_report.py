@@ -5,7 +5,7 @@ from conftest import role_dsn
 from typer.testing import CliRunner
 
 from stiflyt2.cli import app as cli
-from stiflyt2.domain import report, routes
+from stiflyt2.domain import report, routes, whose
 
 AUTHOR = "Test Editor"
 
@@ -97,9 +97,11 @@ def test_who_maintains_routes_is_listed_by_the_ground_they_look_after(loaded):
         assert found and [m["metres"] for m in found] == sorted((m["metres"] for m in found), reverse=True)
         assert all(m["name"] and m["areas"] >= 1 for m in found)
         assert len(report.maintainers(conn, least_m=10**9)) == 0
-        # The ground one of them looks after is what the report says for that maintainer.
+        # The ground one of them looks after is what the report says for that maintainer (for DNT Oslo og omegn
+        # the report also counts what says only "DNT", and other spellings of its name: at least as much).
         first = found[0]
-        assert report.areas(conn, first["name"])["all"]["turrutebasen"]["ground_m"] == pytest.approx(first["metres"], abs=3)
+        said = report.areas(conn, first["name"])["all"]["turrutebasen"]["ground_m"]
+        assert said == pytest.approx(first["metres"], abs=3) if whose.norm(first["name"]) != whose.HOME else said >= first["metres"] - 3
     with TestClient(create_app()) as client:
         said = client.get("/api/v1/maintainers").json()
         assert said["home"] == "DNT | DNT Oslo og omegn" and isinstance(said["maintainers"], list)

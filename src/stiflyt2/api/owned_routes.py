@@ -429,10 +429,20 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.post("/api/v1/areas/{area}/routes", status_code=201)
-    def make_all(area: Area, author: Editor) -> dict:
-        """Make every clean candidate of the area yours, marked as not reviewed."""
+    def make_all(area: Area, author: Editor, maintainer: Annotated[str | None, Query(max_length=120)] = None) -> dict:
+        """Make every clean candidate of the area yours, marked as not reviewed. Given a maintainer, only theirs
+        (names compared as `domain.whose` does: no case, no "DNT | ", and "DNT" alone is DNT Oslo og omegn's)."""
         with write.connection() as conn:
-            return routes.make_default(conn, area)
+            return routes.make_default(conn, area, maintainer)
+
+    @app.post("/api/v1/areas/{area}/places", status_code=201)
+    def make_places(area: Area, author: Editor, maintainer: Annotated[str | None, Query(max_length=120)] = None) -> dict:
+        """Make a place of every proposed hut and parking place where routes of the area end, marked as not
+        reviewed. Given a maintainer, only where their routes end."""
+        from stiflyt2.domain import places as owned_places
+
+        with write.connection() as conn:
+            return owned_places.make_default(conn, area, maintainer)
 
     @app.post(f"{V1}/{{route_id}}/review")
     def review(route_id: str, body: Version, author: Editor) -> dict:

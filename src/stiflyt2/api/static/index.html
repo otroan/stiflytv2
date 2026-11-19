@@ -529,6 +529,11 @@ const areaSelect = document.getElementById("area"), areaRoutes = document.getEle
 const whoSelect = document.getElementById("who"), reportBox = document.getElementById("report");
 let everyArea = [], sideBySide = null;      // sideBySide: { maintainer, areas, all } as last fetched
 const WHOSE = "stiflyt2.maintainer";
+// Whether a list of maintainers has this one, compared as the server does (domain/whose.py): no case, no "DNT | "
+// in front, and "DNT" alone counts as DNT Oslo og omegn's.
+const whoseName = n => (n || "").trim().replace(/\s+/g, " ").replace(/^dnt ?\| ?/i, "").toLowerCase();
+const looksAfter = (list, who) => { const w = whoseName(who), kin = w === "dnt oslo og omegn" ? [w, "dnt"] : [w];
+  return (list || []).some(m => kin.includes(whoseName(m))); };
 function listAreas() {
   const chosen = areaSelect.value, mine = sideBySide && sideBySide.maintainer ? new Map(sideBySide.areas.map(a => [a.area, a.turrutebasen])) : null;
   areaSelect.replaceChildren(el("option", { value: "" }, "Choose an area prefix…"),
@@ -670,8 +675,10 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     const STATUS = { work: ["Needs work", "tag"], check: ["To check", "tag ok"], done: ["Done", "tag yours"], "new": ["Not yours yet", "tag none"], gone: ["Withdrawn", "tag none"], disc: ["Discontinued", "tag none"] };
     // Whose routes: with a maintainer chosen at the top, only the routes that maintainer is said to look after
     // (on the route, or on a stretch of it). The others are a click away.
-    const whose = whoSelect.value, theirs = r => !whose || othersToo || (r.maintainers || []).includes(whose);
-    const hidden = whose ? report.all.filter(r => !(r.maintainers || []).includes(whose)).length : 0;
+    const whose = whoSelect.value, theirs = r => !whose || othersToo || looksAfter(r.maintainers, whose);
+    const hidden = whose ? report.all.filter(r => !looksAfter(r.maintainers, whose)).length : 0;
+    // Clean lines not made yours yet, of the maintainer chosen: what the button makes yours.
+    const clean = report.all.filter(r => r.kind === "candidate" && !r.withdrawn && /^One clean line/.test(r.problems[0] || "") && (!whose || looksAfter(r.maintainers, whose))).length;
     const all = report.all.filter(theirs), counts = { all: all.length, work: 0, check: 0, done: 0, "new": 0, gone: 0, disc: 0 };
     for (const r of all) counts[statusOf(r)] += 1;
     if (areaFilter !== "all" && !counts[areaFilter]) areaFilter = "all";
@@ -716,11 +723,12 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
       filter, list,
       EDITOR ? el("div", { class: "actions" },
         el("button", { class: "btn", title: "Click where it starts and where it goes: it is laid along the shortest way over your stretches and Turrutebasen's", onclick: () => startRouting() }, "New route between points"),
-        R.clean_candidates ? el("button", { class: "btn main", onclick: async e => {
+        clean ? el("button", { class: "btn main", title: whose ? `Only the routes ${whose.replace(/^.*\| /, "")} looks after, and the huts and parking places where they end` : "Every association's, and the huts and parking places where they end", onclick: async e => {
           e.target.disabled = true; e.target.textContent = "Making them yours…";
-          try { await send("POST", `areas/${area}/routes`); await refreshOwned(); refreshEditing(); reload(); }
+          const of = whose ? `?maintainer=${encodeURIComponent(whose)}` : "";
+          try { await send("POST", `areas/${area}/places${of}`); await send("POST", `areas/${area}/routes${of}`); await refreshOwned(); refreshEditing(); reload(); }
           catch (err) { e.target.replaceWith(el("div", { class: "error" }, `Not made: ${err.message}`)); }
-        } }, R.clean_candidates === 1 ? "Make the clean line yours" : `Make the ${R.clean_candidates} clean lines yours`) : "") : "");
+        } }, clean === 1 ? "Make the clean line yours" : `Make the ${clean} clean lines yours`) : "") : "");
     // What is not about one route: where the network is not joined, and ends at no place.
     const row = i => el("li", { class: "hit", tabindex: 0, onclick: () => open(i), onkeydown: k => { if (k.key === "Enter") open(i); } },
       el("span", { class: "code" }, i.label), el("span", { class: "grow", title: i.text }, i.text));
