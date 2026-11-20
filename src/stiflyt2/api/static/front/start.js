@@ -12,6 +12,10 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!baske
   try {
     me = await get("auth/me");
     roleSwitch(me, document.getElementById("who"));
+    presence(me, document.getElementById("present"), () => {
+      const site = view === "signs" && open && found && found.sites.find(s => s.key === open);
+      return { page: view, area, route: view === "routes" ? route : null, site: site ? site.name || (site.near ? `by ${site.near.name}` : null) : null };
+    });
     // The parts that are features of their own (ADR-005) are there only for one who has them.
     document.getElementById("tab-trips").hidden = !(me.features || []).includes("trips");
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";

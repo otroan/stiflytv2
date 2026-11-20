@@ -119,6 +119,7 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .trip-steps li { margin: 1px 0; }
 .trip-steps li.again { color: var(--muted); font-style: italic; }
 .trip-days .swatch { flex: none; width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 600 12px/22px var(--tight); text-align: center; }
+#present { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo .unsaved { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff7dc; border: 1.5px solid #b07d00; border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; color: var(--ink); }
 #undo .unsaved strong { font-weight: 600; }

@@ -77,3 +77,27 @@ function go(center, zoom) {
   const to = { center, zoom: Math.max(map.getZoom(), zoom) };
   if (calm) map.jumpTo(to); else map.flyTo(to);
 }
+// Who else is at work in the pages now (the feature `presence`): this page says where it is every 20 seconds,
+// and is told who else has a page open, which is shown in `box`. Only for one who has the feature: the others
+// who have it see this one the same way.
+function presence(me, box, where) {
+  if (!box || !me || !me.name || !(me.features || []).includes("presence")) return;
+  const PAGE = { editor: "route editor", routes: "routes", signs: "signs", trips: "trips" };
+  let every = null;
+  const tell = async () => {
+    if (document.hidden) return;
+    let others;
+    try {
+      const r = await fetch(new URL("here", API), { method: "POST", headers: { "Content-Type": "application/json", ...THROUGH }, body: JSON.stringify(where()) });
+      if (r.status === 403) clearInterval(every);         // not for this one after all: asked from a script, say
+      if (!r.ok) return;
+      others = await r.json();
+    } catch { return; }
+    box.replaceChildren(...(others.length ? ["Also here now: ", ...others.flatMap((o, i) => [i ? "; " : "", el("strong", {}, o.name),
+      ` (${[PAGE[o.page] || "a page", o.area, o.route || o.site].filter(Boolean).join(", ")}${o.unsaved ? `, ${o.unsaved} not saved` : ""})`])] : []));
+    box.hidden = !others.length;
+  };
+  every = setInterval(tell, 20000);
+  tell();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tell(); });
+}

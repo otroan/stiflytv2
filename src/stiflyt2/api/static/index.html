@@ -132,6 +132,7 @@
   ol.log li { display: grid; grid-template-columns: 86px 1fr; gap: 8px; padding: 2px 0; color: var(--muted); }
   ol.log li span:last-child { color: var(--ink); }
   footer { padding: 9px 16px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+  #present { color: var(--ink); margin-bottom: 4px; }
   /* The areas side by side: a sheet over the map, since a table of twelve columns does not fit the side. */
   #report { position: absolute; inset: 0; z-index: 4; background: #fff; overflow: auto; padding: 22px 28px 40px; }
   #report header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 0; border: 0; margin-bottom: 4px; }
@@ -189,7 +190,7 @@
     </details>
     </section>
   </div>
-  <footer><div id="others" role="status"></div><details id="foot"><summary><span id="footwho">Loading…</span><span id="footwarn"></span></summary><div id="editing"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Front page: areas, routes and signs</a></div><div id="status">Loading…</div></details></footer>
+  <footer><div id="present" hidden role="status"></div><div id="others" role="status"></div><details id="foot"><summary><span id="footwho">Loading…</span><span id="footwarn"></span></summary><div id="editing"></div><div id="nightly" class="error" role="status"></div><div id="tell"></div><div><a href="guide" target="_blank" rel="noopener">How to use this</a> <a href="/" style="margin-left:10px">Front page: areas, routes and signs</a></div><div id="status">Loading…</div></details></footer>
 </div>
 <div id="mapwrap"><div id="map"></div>
   <section id="report" hidden aria-labelledby="reporttitle"></section>
@@ -1573,7 +1574,10 @@ function renderPlace(place, problem) {
   placeBox.scrollIntoView({ block: "nearest" });
 }
 refreshEditing();
-get("auth/me").then(me => roleSwitch(me, document.querySelector("footer"))).catch(() => {});
+get("auth/me").then(me => {
+  roleSwitch(me, document.querySelector("footer"));
+  presence(me, document.getElementById("present"), () => ({ page: "editor", area: areaSelect.value || null, route: openRoute ? openRoute.code : null }));
+}).catch(() => {});
 refreshOwned().catch(() => {});
 
 // ---- Your routes (ADR-003): make a candidate yours, add parts, join them with crossings. ----

@@ -28,6 +28,7 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise(r => ws.addEventListener("open", r));
 let seq = 0;
 const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [], asked = [], said = [];
+let pretend = null;         // what the service is made to say about who else is here
 const send = (method, params = {}) => new Promise(r => { waiting.set(++seq, r); ws.send(JSON.stringify({ id: seq, method, params })); });
 ws.addEventListener("message", m => {
   const d = JSON.parse(m.data);
@@ -40,8 +41,10 @@ ws.addEventListener("message", m => {
   if (d.method === "Fetch.requestPaused") {
     const q = d.params.request;
     asked.push(q.url.slice(HOME.length - 1));
-    // (Planning a trip is asked with POST and keeps nothing: it is let through, as a look is.)
-    if (q.method !== "GET" && !editing && !/\/api\/v1\/trips\/plan$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
+    // Somebody else at work, for the page to show: the answer is made up here.
+    if (pretend && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend)).toString("base64") }); return; }
+    // (Planning a trip, and saying where the page is, are asked with POST and keep nothing: they are let through, as a look is.)
+    if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
 });
@@ -136,6 +139,20 @@ if (await js(`(me.features || []).includes("trips")`)) {
   await until(`view === "routes"`, 10);
 } else check("the trips tab is not there for one who does not have the feature", await js(`document.getElementById("tab-trips").hidden`));
 
+// Who else is at work now (the feature `presence`): the page says where it is, and shows the others at the foot.
+const others = async (who, shown) => {
+  pretend = [who];
+  await js(`document.dispatchEvent(new Event("visibilitychange"))`);
+  const ok = await until(`!document.getElementById("present").hidden && document.getElementById("present").textContent === ${JSON.stringify(shown)}`, 10);
+  pretend = null;
+  return ok;
+};
+if (await js(`(me.features || []).includes("presence")`)) {
+  check("the page says where it is, and shows nobody while nobody else is here", asked.includes("/api/v1/here") && await js(`document.getElementById("present").hidden`));
+  check("somebody else at work is shown at the foot: where, and how much is not saved",
+    await others({ name: "Another Editor", page: "signs", area: "jot", site: "Gjendesheim", route: null, unsaved: 2 }, "Also here now: Another Editor (signs, jot, Gjendesheim, 2 not saved)"), await text("#present"));
+} else check("nobody else is shown to one who does not have the feature", !asked.includes("/api/v1/here") && await js(`document.getElementById("present").hidden`));
+
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   const holds = await js("me.role"), where = await js("area");
@@ -158,6 +175,9 @@ await open("ruter");
 check("the editor opens with its map", await until(`typeof map !== "undefined" && map.loaded() && document.getElementById("editing").textContent.length > 0`), await text("#editing"));
 await open(`ruter?yours=${yours}`);
 check("the editor opens one of your routes from its address", await until(`[...document.querySelectorAll("#selected dt")].some(d => d.textContent === "On foot")`), (await text("#selected")).slice(0, 80));
+if (await js(`get("auth/me").then(m => (m.features || []).includes("presence"))`))
+  check("the editor too shows who else is at work, at its foot",
+    await others({ name: "Another Editor", page: "editor", area: "bre", route: "bre18", site: null, unsaved: 0 }, "Also here now: Another Editor (route editor, bre, bre18)"), await text("#present"));
 if (await js(`Boolean(openRoute ? openRoute.height.known_m : document.querySelector("#selected .profile"))`))
   check("and draws its height profile with the same code", await until(`Boolean(document.querySelector("#selected .profile svg"))`, 25));
 
@@ -396,7 +416,8 @@ if (EDIT) {
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
 const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes
 check("and put up no box to say that something went wrong", boxes.length === 0, boxes.join(" | "));
-const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r)));      // that one was asked for as a reader, to be refused
+const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r))      // that one was asked for as a reader, to be refused
+  && !(TOKEN && r === "403 /api/v1/here"));            // and a script is not somebody at work in the pages
 check("the service answered every request of its own", unasked.length === 0, unasked.join(" | "));
 check("nothing was changed", stopped.length === 0, stopped.join(" | "));
 console.log(failed.length ? `\n${failed.length} failed` : "\nall passed");

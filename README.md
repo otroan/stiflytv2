@@ -1272,6 +1272,31 @@ Over the API: `POST /api/v1/trips/plan` with `routes` (codes) or `area`,
 and `start`, `hours`, `tent`, `over_ice`, `back_to_start`, `mapped`. An assistant has
 `plan_trip`, which it is told of only when the person has the feature.
 
+## Who else is at work now: a feature of its own
+
+At the foot of the front page and of the route editor, a line says who else
+has one of the pages open now, where, and how much they have changed and not
+yet saved: "Also here now: **Kari Nordmann** (route editor, har, har13, 3
+not saved)". Before you start on a route, you can see whether somebody is
+already at it.
+
+Signing in lasts for weeks, so who is signed in says little; what is shown
+is who has a page open. Each page says where it is every 20 seconds, while
+it is in front (a page in a tab behind others says nothing), and somebody
+whose page has said nothing for 90 seconds is gone. It is kept in the
+service's memory and nowhere else: nothing about who was here when is
+written down, and a restart empties it until the pages have spoken again.
+
+Only those who have the feature `presence` are shown, and only they see the
+others: being seen comes with seeing. An assistant or a script acting for
+somebody is not somebody at work in the pages, and is not shown.
+
+    stiflyt2 access give you@example.org presence                  # one person
+    stiflyt2 access role editor --features routes,signs,presence   # or everybody with a role
+
+Over the API: `POST /api/v1/here` with where the page is (`page`, `area`,
+`route`, `site`), answered with the others.
+
 ## Setup
 
 Setting up from nothing, where your OS user is not a PostgreSQL superuser:
