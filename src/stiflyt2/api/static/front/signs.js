@@ -145,6 +145,13 @@ const undoBar = document.getElementById("undo");
 // stays; Discard takes all of it back. Every decision is kept the moment it is made, for others too.
 const countOf = n => `${n} change${n === 1 ? "" : "s"}`;
 function renderUndo() {
+  // Among the issues: your latest decision in operations, whatever it was, and the way to take it back.
+  if (view === "issues") {
+    undoBar.hidden = !entryUndo;
+    undoBar.replaceChildren(entryUndo ? el("button", { class: "link", title: entryUndo.in_the_way ? `${entryUndo.in_the_way} came after, and is about the same thing` : "Takes back your latest decision",
+      onclick: undoEntry }, `Undo: ${entryUndo.what}`) : "");
+    return;
+  }
   const n = pending.changes.length;
   undoBar.hidden = !(view === "signs" && me.operates && (undoable || n));
   if (undoBar.hidden) { undoBar.replaceChildren(); return; }

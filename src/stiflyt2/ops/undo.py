@@ -9,7 +9,7 @@ repeated to go further back.
 Whose latest: the one who asks, made the way they ask. Undo in the page takes
 back what that person did in the page; an assistant acting as the same person
 takes back what the assistant did. What others have done since stays; where
-it is about the same sign, post or site, taking the earlier back would lose
+it is about the same sign, post, site or issue, taking the earlier back would lose
 it, and nothing is done.
 
 An order that has been taken out stands: it has gone to whoever makes the
@@ -47,6 +47,9 @@ _WHAT = {
     "sign.not_up": "a sign said not to be up after all",
     "sign.moved": "a decision moved to the sign it is about now",
     "sign.forgotten": "what was decided about a sign that is gone, forgotten",
+    "entry.reported": "an issue reported",
+    "entry.changed": "what was said of an issue",
+    "entry.taken_away": "an issue taken away",
 }
 
 
@@ -102,7 +105,7 @@ def undo(conn, author, txid: int | None = None) -> dict:
     if txid is not None and txid != latest["txid"]:
         raise Conflict("something else has been decided since: look again at what would be undone")
     if latest["in_the_way"]:
-        raise Conflict(f"{latest['in_the_way']} came after, and is about the same sign, post or site: it would be lost")
+        raise Conflict(f"{latest['in_the_way']} came after, and is about the same sign, post, site or issue: it would be lost")
     rows = _rows(conn, """SELECT id, tbl, op, key::text AS key, old FROM ops.undo_log
                           WHERE txid = %(t)s AND undone_at IS NULL ORDER BY id DESC FOR UPDATE""",
                  {"t": latest["txid"]})
@@ -170,7 +173,7 @@ def discard(conn, author) -> dict:
     if not now["changes"]:
         raise Conflict("there is nothing that is not saved")
     if now["in_the_way"]:
-        raise Conflict(f"{now['in_the_way']} came after, and is about the same sign, post or site: "
+        raise Conflict(f"{now['in_the_way']} came after, and is about the same sign, post, site or issue: "
                        "it cannot be discarded as a whole")
     told = [undo(conn, author, c["txid"])["undone"] for c in now["changes"]]
     return {"undone": told, "next": last(conn, author)}

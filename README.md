@@ -1297,6 +1297,50 @@ somebody is not somebody at work in the pages, and is not shown.
 Over the API: `POST /api/v1/here` with where the page is (`page`, `area`,
 `route`, `site`), answered with the others.
 
+## Issues and notices on the routes: a feature of its own
+
+What is wrong or to be done on a route, and what walkers are to be told:
+two birches down below the bridge, marking worn away, a sign or post to
+replace, a summer bridge not out yet, a bog that wants boards; or the
+route closed for works at the dam, or a warning, from a date until a date
+that may be left open. The first part of what happens on a route (step 2 of
+the plan in `docs/TODO.md`), with the feature `issues`:
+
+    stiflyt2 access role editor --features routes,signs,presence,issues
+    stiflyt2 access role operations --features signs,issues
+
+The front page has a part of its own, **Issues**. "Report an issue", then a
+click on a route: say what it is, and whether it is about that spot, the
+stretch there (from junction to junction), or the whole route. A spot is a
+point on the map, amber; a stretch a band under the route; a notice red,
+and grey what is done. An issue is reported, planned, done or dismissed;
+"Change it…", "Move it" and "Take it away" do what they say, and Undo (or
+Ctrl/⌘+Z) takes your latest back. Each says what has happened to it, by
+whom. A route with a notice in force says so at the top of the route, and
+"Closed" in the area's list; a route's open issues are listed at its foot,
+with "Report an issue on this route". The route editor lists them in a
+route's panel, linked to the front page.
+
+An issue keeps the ids of the route and the stretch it was said about and
+is read through what stands for them now (ADR-004): when the stretch is
+divided, a spot stays on the part it lies on and a stretch issue covers both
+parts; when the route is taken into another, it goes along. A spot keeps
+its own position: mending the line does not move a fallen tree. What finds
+no route in use any more is adrift, and says so, until it is moved onto a
+route or taken away. An issue is saved as it is made, unless you have other
+decisions in operations not saved yet, which it then joins.
+
+Over the API: `GET /api/v1/issues?area=|route=`, `GET /api/v1/issues/{id}`
+(with its history), `POST /api/v1/issues`, `PATCH` and `DELETE` on one,
+`GET|POST /api/v1/issues/undo`. An assistant has `route_issues`,
+`report_issue` and `change_issue` (dry unless told otherwise), when the
+person has the feature. Kept in `ops.entry` (import migration `0017`),
+where reports from work parties and inspections are to come as well.
+
+Not yet: notices in what is handed to UT.no; photos on an issue (step 3);
+replacing a sign tied to the sign order; planning a work trip round the
+open issues.
+
 ## Setup
 
 Setting up from nothing, where your OS user is not a PostgreSQL superuser:

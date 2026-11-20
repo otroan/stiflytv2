@@ -972,7 +972,8 @@ class Server:
         t = TOOLS[name]
         if t.feature and not person.has(t.feature):
             return _text(f"that is not switched on for you: {FEATURES[t.feature].ask}", error=True)
-        if t.changes and not (person.operates if t.operations else person.edits):
+        # A tool of a feature is allowed by the feature; the others by the role's routes or signs.
+        if t.changes and not (person.has(t.feature) if t.feature else person.operates if t.operations else person.edits):
             return _text("you are signed in to look, not to change: ask for the "
                          f"{'operations' if t.operations else 'editor'} role", error=True)
         try:

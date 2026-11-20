@@ -42,6 +42,13 @@ step is still started on their word; the details of each are further down.
    a route), a state, who and when. First: issues marked on the map, with
    replacing a sign tied to the sign order. Then reports as entries that
    close issues. The diary is the timeline of a route.
+   *Begun 2026-11-20* as the feature `issues` (README, "Issues and notices
+   on the routes"): `ops.entry`, issues and notices at a spot, along a
+   stretch or of a whole route, on the map, in the route and in the editor,
+   with undo and history. Left: replacing a sign tied to the sign order;
+   reports and inspections as entries that close issues; notices handed to
+   UT.no; trips planned round the open issues; spans along a route that are
+   not whole stretches.
 3. **Photos and GPX.** A photo is placed by the position in its file and can
    hang on an entry or a sign site. A GPX track is a layer and something to
    compare a route with. Whether a route may be laid on tracks is not
@@ -637,7 +644,12 @@ Nørdstedalseter):
 
 ### Notices on a route: closed, diverted, warning
 
-Asked for by the route responsible 2026-11-15. **Not to be built yet.**
+Asked for by the route responsible 2026-11-15. **Built 2026-11-20** as part of
+the feature `issues` (README, "Issues and notices on the routes"): a notice
+on the whole route, or a spot or a stretch of it, closed or a warning, from
+a date until a date or further notice, lapsing by itself; kept with its
+history. Not yet: in the export for UT.no, and how a closed stretch counts
+for the planners.
 
 The case: bre59 is temporarily closed because of works at the dam at
 Skålavatnet. There is nowhere to record that today. A route is either active

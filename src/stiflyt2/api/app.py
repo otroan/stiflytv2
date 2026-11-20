@@ -21,6 +21,7 @@ from psycopg_pool import ConnectionPool
 
 from stiflyt2.api import auth as auth_api
 from stiflyt2.api import feedback as feedback_api
+from stiflyt2.api import issues as issues_api
 from stiflyt2.api import lookup as lookup_api
 from stiflyt2.api import mcp as mcp_api
 from stiflyt2.api import owned_routes as routes_api
@@ -187,6 +188,7 @@ def create_app() -> FastAPI:
     signs_api.register(app, pool, writes)
     trips_api.register(app, pool)
     presence_api.register(app, pool)
+    issues_api.register(app, pool, writes)
     return app
 
 

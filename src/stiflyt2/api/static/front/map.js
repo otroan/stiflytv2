@@ -1,6 +1,7 @@
 // The front page's map: the routes in use, the one open, the sign sites, and what a click on it means.
 const empty = { type: "FeatureCollection", features: [] };
 const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
+const NOTICE_RED = "#c62828", ISSUE_AMBER = "#ef8f00", ISSUE_DONE = "#9aa5ad";     // an issue: a notice to walkers, work, done
 
 const map = new maplibregl.Map({
   container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
@@ -9,11 +10,15 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty },
     },
     layers: [
       ...baseLayers(),
       { id: "route-hot", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#f5c400", "line-width": 9 } },
+      // An issue along a stretch is a band under the route (the feature `issues`): red for a notice to walkers.
+      { id: "entry-lines", type: "line", source: "entry-lines", layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
+                 "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 15, 14], "line-opacity": ["case", ["get", "chosen"], 0.7, 0.4] } },
       // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
       { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
       { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
@@ -41,6 +46,11 @@ const map = new maplibregl.Map({
       { id: "site-names", type: "symbol", source: "sites", minzoom: 10,
         layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.2], "text-anchor": "top" },
         paint: { "text-halo-color": "#fff", "text-halo-width": 1.5 } },
+      // An issue at a spot, or of a whole route (at its middle): amber, red for a notice, grey when done.
+      { id: "entries", type: "circle", source: "entries", layout: { visibility: "none" },
+        paint: { "circle-radius": ["case", ["get", "chosen"], 9, ["get", "open"], 6.5, 4.5],
+                 "circle-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
+                 "circle-stroke-color": ["case", ["get", "chosen"], css("--ink"), "#fff"], "circle-stroke-width": ["case", ["get", "chosen"], 3, 1.5] } },
     ],
   },
 });
@@ -94,6 +104,7 @@ function drawMap() {
 }
 
 map.on("click", e => {
+  if (placing && placing.issue) { placedEntry(e); return; }
   if (placing === "site") { stopPlacing(); change(async () => { open = (await send("POST", "signs/sites", { area, lon: e.lngLat.lng, lat: e.lngLat.lat })).key; }); return; }
   if (placing && placing.to) {
     const wanted = { post: placing.to, lon: e.lngLat.lng, lat: e.lngLat.lat };
@@ -107,7 +118,10 @@ map.on("click", e => {
     return;
   }
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
-  const hit = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], { layers: [view === "signs" ? "sites" : "sites-small"] })[0];
+  const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+  const issue = map.getLayoutProperty("entries", "visibility") === "visible" && map.queryRenderedFeatures(box, { layers: ["entries", "entry-lines"] })[0];
+  if (issue) { openEntry(issue.properties.id); return; }
+  const hit = map.queryRenderedFeatures(box, { layers: [view === "signs" ? "sites" : "sites-small"] })[0];
   if (hit) { openSite(hit.properties.key); return; }
   if (view !== "routes") return;
   // Among the routes a click on one opens it; where several run together, it asks which.
@@ -130,7 +144,8 @@ function routesAt(point) {
 }
 map.on("mousemove", e => {
   if (placing) return;
-  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small"] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
+  const issues = map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : [];
+  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);
 });

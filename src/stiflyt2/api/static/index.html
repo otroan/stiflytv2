@@ -1574,7 +1574,8 @@ function renderPlace(place, problem) {
   placeBox.scrollIntoView({ block: "nearest" });
 }
 refreshEditing();
-get("auth/me").then(me => {
+const meAsked = get("auth/me");
+meAsked.then(me => {
   roleSwitch(me, document.querySelector("footer"));
   presence(me, document.getElementById("present"), () => ({ page: "editor", area: areaSelect.value || null, route: openRoute ? openRoute.code : null }));
 }).catch(() => {});
@@ -2410,6 +2411,17 @@ function renderOwnedRoute(route, problem, note) {
     if (at.length && othersAt.isConnected) othersAt.replaceChildren(...at.map(i => el("div", { class: "said", style: "border-left-color:#b07d00;background:#fff7dc" },
       `${i.author}${i.through === "mcp" ? " (through an assistant)" : i.through === "api" ? " (through a script)" : ""} has ${countOf(i.changes)} to this route that ${i.changes === 1 ? "is" : "are"} not saved yet.`)));
   }).catch(() => {});
+  // Issues and notices on the route (the feature `issues`): kept and changed on the front page, told here.
+  const issuesAt = el("div", {});
+  meAsked.then(me => (me.features || []).includes("issues") ? get("issues", { route: route.id }) : []).then(found => {
+    const open = found.filter(e => e.open), area = route.code.slice(0, 3).toLowerCase();
+    if (!open.length || !issuesAt.isConnected) return;
+    const link = e => el("a", { href: `/?area=${area}&view=issues&issue=${e.id}` }, e.text.length > 90 ? `${e.text.slice(0, 90)}…` : e.text);
+    issuesAt.replaceChildren(...open.filter(e => e.active).map(e => el("div", { class: "said", style: "border-left-color:#c62828;background:#fdf0f0" },
+        el("strong", {}, e.kind === "closed" ? "Closed: " : "Warning: "), link(e))),
+      ...(open.some(e => !e.active) ? [el("div", { class: "sub", style: "margin:4px 0" }, `${open.filter(e => !e.active).length} open ${open.filter(e => !e.active).length === 1 ? "issue" : "issues"} on this route: `,
+        ...open.filter(e => !e.active).flatMap((e, i) => [i ? "; " : "", link(e)]))] : []));
+  }).catch(() => {});
   const done = async () => {
     try { await send("POST", `owned/routes/${route.id}/review`, { version: route.version }); await send("POST", "work/save"); clearRoute(); await refreshOwned(); refreshEditing(); refreshArea(); }
     catch (err) { renderOwnedRoute(route, err.message); }
@@ -2433,6 +2445,7 @@ function renderOwnedRoute(route, problem, note) {
     problem ? el("div", { class: "error", role: "alert" }, `That change was not saved: ${problem}`) : "",
     note ? el("div", { class: "said", role: "status" }, note) : "",
     othersAt,
+    issuesAt,
     tools,
     can ? el("div", { class: "actions" },
       !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: done }, "Done with this route") : "",

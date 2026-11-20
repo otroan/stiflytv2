@@ -59,7 +59,8 @@ function renderArea() {
       oninput: e => { seek = e.target.value; const at = e.target.selectionStart; renderArea(); const box = document.getElementById("seek"); box.focus(); box.setSelectionRange(at, at); } }) : "",
     el("ul", { style: "margin-top:6px" }, ...rows.map(r => el("li", { class: "hit", tabindex: 0, onclick: () => showRoute(r.code), onkeydown: enter(() => showRoute(r.code)),
         onmouseenter: () => pointRoute(r.id), onmouseleave: () => pointRoute(null), onfocus: () => pointRoute(r.id), onblur: () => pointRoute(null) },
-      el("span", { class: "code" }, r.code), el("span", { class: "grow" }, r.name || el("span", { class: "sub" }, "no name")),
+      el("span", { class: "code" }, r.code), el("span", { class: "grow" }, r.name || el("span", { class: "sub" }, "no name"),
+        ...inForce(r.id).slice(0, 1).flatMap(e => [" ", el("span", { class: "tag issue notice", title: e.text }, e.kind === "closed" ? "Closed" : "Warning")])),
       el("span", { class: "far" }, km(r.on_foot_m / 1000)), grade(r.grading)))),
     S.routes && !rows.length ? el("div", { class: "sub" }, "None.") : "");
 }
@@ -80,6 +81,7 @@ function renderRoute() {
   leaveProfile();
   panel.replaceChildren(back,
     el("h2", {}, el("span", { class: "code" }, r.code), r.name || ""),
+    ...inForce(r.id).map(noticeBox),
     el("dl", { class: "facts" },
       el("dt", {}, "Length"), el("dd", {}, `${km(r.on_foot_m / 1000)} on foot`,
         r.glacier_m ? el("div", { class: "sub" }, `${km(r.glacier_m / 1000)} of it over glacier.`) : "",
@@ -93,6 +95,16 @@ function renderRoute() {
       : shownRoute.problem ? el("div", { class: "error" }, `Could not get the route: ${shownRoute.problem}`) : el("div", { class: "sub" }, "Loading…"),
     el("div", { class: "actions", style: "margin-top:12px" },
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",
-      el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")));
+      el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")),
+    ...(hasIssues() ? routeIssues(r) : []));
   if (D && H) drawProfile(profile, D, H);
+}
+// What is open on a route, and a way to report more (the feature `issues`).
+function routeIssues(r) {
+  const open = entriesOn(r.id).filter(e => e.open && !e.active);
+  return [el("h2", { class: "next" }, "Issues"),
+    open.length ? el("ul", {}, ...open.map(e => el("li", { class: "hit entry", tabindex: 0, onclick: () => openEntry(e.id), onkeydown: enter(() => openEntry(e.id)) },
+      kindTag(e), el("span", { class: "grow" }, el("span", { class: "said clip" }, e.text)), el("span", { class: "far" }, e.state === "planned" ? "planned" : whenSaid(e.made_at)))))
+      : el("div", { class: "sub" }, entries ? "Nothing open on this route." : "Loading…"),
+    el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => placeEntry(r) }, "Report an issue on this route"))];
 }

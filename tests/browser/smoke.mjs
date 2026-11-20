@@ -153,6 +153,50 @@ if (await js(`(me.features || []).includes("presence")`)) {
     await others({ name: "Another Editor", page: "signs", area: "jot", site: "Gjendesheim", route: null, unsaved: 2 }, "Also here now: Another Editor (signs, jot, Gjendesheim, 2 not saved)"), await text("#present"));
 } else check("nobody else is shown to one who does not have the feature", !asked.includes("/api/v1/here") && await js(`document.getElementById("present").hidden`));
 
+// Issues and notices (the feature `issues`): reported by a click on a route, changed, taken back, and told in the route.
+if (await js(`hasIssues()`)) {
+  await clickOn(`document.getElementById("tab-issues")`);
+  check("the issues tab lists what is open in the area", await until(`view === "issues" && Array.isArray(entries) && /Issues in/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel h2"));
+  check("the address says the issues are open", (await js("location.search")).includes("view=issues"));
+  const spot = EDIT && await onMap(`(() => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1); if (!f) return null;
+    const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 14 }); return c; })()`);
+  if (spot) {
+    editing = true;
+    const trial = `Trial birch ${Date.now() % 100000}`;
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Report an issue")`);
+    await sleep(1500);
+    await click(await onMap(`map.getCenter().toArray()`));
+    check("Report, then a click on a route, asks what it is", await until(`Boolean(entryAsk) && Boolean(document.querySelector("form.entry-form"))`, 10), await text("#panel"));
+    await js(`(() => { const f = document.querySelector("form.entry-form"); f.querySelector("textarea").value = ${JSON.stringify(trial)}; f.requestSubmit(); })()`);
+    check("reported, it is open in the side and a point on the map", await until(`Boolean(entryOpen) && document.getElementById("panel").textContent.includes(${JSON.stringify(trial)})
+      && map.queryRenderedFeatures({ layers: ["entries"] }).some(f => f.properties.chosen)`, 15), await text("#panel"));
+    check("its history says who reported it", await until(`/Test Editor: reported it on/.test(document.querySelector("#panel ol.history") ? document.querySelector("#panel ol.history").textContent : "")`, 10), await text("#panel ol.history"));
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "It is done")`);
+    check("It is done: it is no longer open", await until(`entries.some(e => e.id === entryOpen && e.state === "done") && /Done/.test(document.querySelector("#panel h2").textContent)`, 10), await text("#panel h2"));
+    check("and Undo offers to take that back", await until(`!document.getElementById("undo").hidden && /Undo: what was said of an issue/.test(document.getElementById("undo").textContent)`, 10), await text("#undo"));
+    await clickOn(`document.querySelector("#undo button.link")`);
+    check("Undo takes it back: it is open again", await until(`entries.some(e => e.id === entryOpen && e.state === "reported")`, 10));
+    // Changed into a notice for the whole route: the route says it is closed, and so does the area's list.
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Change it…")`);
+    await js(`(() => { const f = document.querySelector("form.entry-form"); f.querySelector("select").value = "closed"; f.querySelector("select").dispatchEvent(new Event("change"));
+      f.querySelector("input[value=route]").checked = true; f.requestSubmit(); })()`);
+    check("changed into a notice for the whole route, it is in force", await until(`!entryAsk && Boolean(document.querySelector("#panel dl.facts")) && entries.some(e => e.id === entryOpen && e.kind === "closed" && e.about === "route" && e.active)`, 10), await text("#panel"));
+    const closed = await js(`entries.find(e => e.id === entryOpen).routes[0].code`);
+    await clickOn(`[...document.querySelectorAll("#panel dl.facts button.link")].find(b => b.textContent === ${JSON.stringify(closed)})`);
+    check("the route it closes says so at the top", await until(`route === ${JSON.stringify(closed)} && /Closed until further notice/.test(document.querySelector("#panel .notice-box") ? document.querySelector("#panel .notice-box").textContent : "")`, 10), await text("#panel .notice-box"));
+    await js(`visit({ route: null })`);
+    check("and the area's list of routes marks it closed", await until(`[...document.querySelectorAll("#panel li.hit")].some(li => li.querySelector(".code").textContent === ${JSON.stringify(closed)} && /Closed/.test(li.textContent))`, 10));
+    await js(`(() => { const e = entries.find(x => x.text === ${JSON.stringify(trial)}); openEntry(e.id); })()`);
+    await until(`view === "issues" && Boolean(entryOpen)`, 10);
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Take it away")`);
+    check("taken away, the trial is gone", await until(`entryOpen === null && !entries.some(e => e.text === ${JSON.stringify(trial)})`, 10), await text("#panel"));
+    editing = false;
+  } else if (EDIT) console.log("    (no stretch here is walked by one route only: reporting an issue is not tried)");
+  else console.log("    (not asked to change anything: reporting an issue is not tried)");
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("the issues tab is not there for one who does not have the feature", await js(`document.getElementById("tab-issues").hidden`));
+
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   const holds = await js("me.role"), where = await js("area");
@@ -414,7 +458,7 @@ if (EDIT) {
 } else console.log("    (not asked to change anything: undo, redo, dragging, places, saving, changing route and signs are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
-const boxes = said.filter(s => !/^Take .* into /.test(s));       // that one asks before two places are made one, and is answered yes
+const boxes = said.filter(s => !/^Take .* into |^Take this issue away/.test(s));       // those ask before two places are made one, or an issue is taken away, and are answered yes
 check("and put up no box to say that something went wrong", boxes.length === 0, boxes.join(" | "));
 const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r))      // that one was asked for as a reader, to be refused
   && !(TOKEN && r === "403 /api/v1/here"));            // and a script is not somebody at work in the pages

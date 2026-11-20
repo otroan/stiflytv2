@@ -82,7 +82,7 @@ function go(center, zoom) {
 // who have it see this one the same way.
 function presence(me, box, where) {
   if (!box || !me || !me.name || !(me.features || []).includes("presence")) return;
-  const PAGE = { editor: "route editor", routes: "routes", signs: "signs", trips: "trips" };
+  const PAGE = { editor: "route editor", routes: "routes", signs: "signs", trips: "trips", issues: "issues" };
   let every = null;
   const tell = async () => {
     if (document.hidden) return;

@@ -2,7 +2,10 @@
 
 Status: built 2026-11-17 for signs, as the pattern for the rest of operations
 (work to do, reports, closures, issues, photos). `src/stiflyt2/ops/anchor.py`,
-`ops/undo.py`, `ops/signs.py`; import migration `0014`.
+`ops/undo.py`, `ops/signs.py`; import migration `0014`. Followed 2026-11-20 by
+issues and notices (`ops/issues.py`, `ops.entry`, import migration `0017`):
+a spot is on the part of a divided stretch it lies on, a stretch issue on
+every part; a spot keeps its own position.
 
 ## The problem
 
