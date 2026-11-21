@@ -14,6 +14,12 @@ sends at most 10,000 features per response; a tile holding more is fetched as
 four smaller tiles. If a response does not hold the number of features it
 states, the whole delivery is refused.
 
+Since 2026-11-20 the server may also send the first 9,999 features of a
+dense tile and say that is all there is (numberMatched="9999"). A tile sent
+that full is therefore always fetched as four smaller ones, whatever the
+response says. Trusting it lost 6,900 paths round Geilo, Hol and Ål in
+Skarvheimen for two nights, and paths in Rondane from the first import.
+
 The layer schema is fetched and kept with the tiles, and loading uses only that
 copy. Left to itself GDAL fetches the schema from the server while loading and,
 if that fails, guesses column types from the data, giving different columns.
@@ -36,6 +42,7 @@ LAYER = "ms:traktorveg_sti"
 TRANSFORM = "fkb-wfs-1"
 TILE_M = 25_000
 MIN_TILE_M = 500
+MOST = 9_999        # the most features the server sends in one response
 SCHEMA_FILE = "schema.xsd"
 HEAD = 4000  # the root element with its counts fits well inside this
 
@@ -125,6 +132,9 @@ def _fetch_tile(client: httpx.Client, bbox: Bbox, dest: Path) -> int | None:
         if int(returned.group(1)) or ' next="' in root:
             return None
     elif int(returned.group(1)) < int(matched.group(1)):
+        return None
+    # Seen from 2026-11-20 (and on one tile in Rondane from the start): a tile cut at 9,999 said to hold 9,999.
+    if int(returned.group(1)) >= MOST:
         return None
     actual = body.count(b"<ms:traktorveg_sti ")
     if actual != int(returned.group(1)):

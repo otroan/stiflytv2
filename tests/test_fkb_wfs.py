@@ -96,6 +96,7 @@ class Server:
         self.cap = 10_000  # most features sent in one response
         self.lost = 0      # features the response claims to hold but does not
         self.links = True  # a response that is cut short links to the next page
+        self.says_all = False  # a response cut short says it holds all there is, as the service has since 2026-11-20
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         query = request.url.params
@@ -107,8 +108,8 @@ class Server:
         # As the real service: no count for a tile it sends only the first page of, nor for an empty one.
         cut = len(sent) < len(matched)
         body = HEADER.format(stamp=self.stamp, returned=len(sent),
-                             matched="unknown" if cut or not matched else len(matched),
-                             more='\n   next="https://wfs.example/next"' if cut and self.links else "")
+                             matched=len(sent) if cut and self.says_all else "unknown" if cut or not matched else len(matched),
+                             more='\n   next="https://wfs.example/next"' if cut and self.links and not self.says_all else "")
         body += "".join(MEMBER.format(n=n, coords=coords, typeveg=typeveg)
                         for n, (coords, typeveg) in enumerate(sent[: len(sent) - self.lost], 1))
         return httpx.Response(200, content=(body + "</wfs:FeatureCollection>\n").encode())
@@ -200,6 +201,15 @@ def test_dense_tile_is_fetched_as_smaller_tiles_also_when_no_next_page_is_named(
     server.cap, server.links = 2, False
     r = fkb_wfs.run("dense-unlinked", BOX)
     assert r.counts == {"veglenke": 4}
+
+
+def test_a_tile_sent_as_full_as_the_server_sends_is_fetched_as_smaller_tiles_whatever_it_says(server, monkeypatch):
+    # The first tile holds A, C and E; the server sends two and says that is all. A tile that full is taken as cut.
+    E = ("110000 6815000 110400 6815300", "sti")
+    server.features, server.cap, server.says_all = [A, C, E], 2, True
+    monkeypatch.setattr(fkb_wfs, "MOST", 2)
+    r = fkb_wfs.run("says-all", BOX)
+    assert r.counts == {"veglenke": 3}
 
 
 def test_tile_with_nothing_in_it_is_no_reason_to_refuse(server):
