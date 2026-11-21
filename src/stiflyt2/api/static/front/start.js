@@ -6,7 +6,7 @@ for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else undoLast(); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) stopPlacing(); else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) visit({ route: null }); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) visit({ route: null }); } });
 
 (async () => {
   try {

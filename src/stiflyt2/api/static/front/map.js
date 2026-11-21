@@ -10,7 +10,7 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty },
     },
     layers: [
       ...baseLayers(),
@@ -19,6 +19,9 @@ const map = new maplibregl.Map({
       { id: "entry-lines", type: "line", source: "entry-lines", layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
                  "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 15, 14], "line-opacity": ["case", ["get", "chosen"], 0.7, 0.4] } },
+      // The parts of an issue while they are chosen: the same band, stronger.
+      { id: "entry-pick", type: "line", source: "entry-pick", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ISSUE_AMBER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 6, 15, 16], "line-opacity": 0.7 } },
       // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
       { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
       { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
@@ -51,6 +54,8 @@ const map = new maplibregl.Map({
         paint: { "circle-radius": ["case", ["get", "chosen"], 9, ["get", "open"], 6.5, 4.5],
                  "circle-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
                  "circle-stroke-color": ["case", ["get", "chosen"], css("--ink"), "#fff"], "circle-stroke-width": ["case", ["get", "chosen"], 3, 1.5] } },
+      { id: "entry-pick-at", type: "circle", source: "entry-pick", filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": 7, "circle-color": "#fff", "circle-stroke-color": ISSUE_AMBER, "circle-stroke-width": 3 } },
     ],
   },
 });

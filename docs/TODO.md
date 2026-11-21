@@ -47,8 +47,8 @@ step is still started on their word; the details of each are further down.
    stretch or of a whole route, on the map, in the route and in the editor,
    with undo and history. Left: replacing a sign tied to the sign order;
    reports and inspections as entries that close issues; notices handed to
-   UT.no; trips planned round the open issues; spans along a route that are
-   not whole stretches.
+   UT.no; trips planned round the open issues; the parts of an issue on the
+   route's height profile.
 3. **Photos and GPX.** A photo is placed by the position in its file and can
    hang on an entry or a sign site. A GPX track is a layer and something to
    compare a route with. Whether a route may be laid on tracks is not

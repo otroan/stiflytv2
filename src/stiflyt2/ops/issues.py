@@ -1,20 +1,25 @@
 """What happens on a route, first issues and notices: the feature `issues` (ADR-004, ADR-005).
 
 An issue is something on a route that is wrong or to be done: a tree across
-the path, marking worn away, a sign to replace, a bridge that is out, wet
-ground that wants boards. A notice is said to walkers: the route is closed
-(bre59, for works at the dam), or a warning, from a date until a date that
-may be left open. Both are entries (`ops.entry`, import migration 0017), and
-later kinds (a report from a work party, an inspection) will be too.
+the path, a part to be cleared, marking worn away, a sign to replace, a
+bridge that is out, wet ground that wants boards. A notice is said to
+walkers: the route is closed (bre59, for works at the dam), or a warning,
+from a date until a date that may be left open. Both are entries
+(`ops.entry`, import migrations 0017 and 0018), and later kinds (a report
+from a work party, an inspection) will be too.
 
-An entry is about a spot on a route, a whole stretch of it, or the whole
-route. It keeps the ids of the route and the stretch as they were when it was
-said, and is read through what stands for them now (`anchor`): a stretch that
-is divided carries a spot on the part it lies on, and a stretch issue on both
-parts; a route that is taken into another carries its entries along. A spot
-keeps its own position, which does not move when the line is mended: the tree
-lies where it lies. What finds nothing to hang on is adrift, and is shown as
-such until a person moves it onto a route or takes it away.
+An entry is about a spot on a route, one or more parts of it (from one bend
+to another, wherever they begin and end), or the whole route. Where on the
+route is kept as positions along our own stretches: a stretch, and how far
+along it (0 at its first end, 1 at its last). No line is copied. When a
+stretch's line is mended (laid on the mapped path), what lies along it is
+drawn along the mended line; when a stretch is divided, a position is found
+again on the part it lies on; a route that is taken into another carries its
+entries along (`anchor`). What finds nothing to hang on is adrift, and is
+shown as such until a person moves it onto a route or takes it away.
+
+Where it is along the route, in metres from the route's start, is worked out
+when it is shown, from the route as it is then; and can be given that way.
 
 Every change is an event and can be taken back (`ops/undo.py`).
 """
@@ -36,16 +41,25 @@ features.feature("issues", "mark on the map what is wrong or to be done on a rou
 KINDS = {"closed": "closed", "warning": "warning", "clearing": "to be cleared", "marking": "marking to be mended",
          "sign": "a sign or post", "bridge": "a bridge", "wet": "wet ground", "other": "something else"}
 NOTICES = ("closed", "warning")         # said to walkers, from a date until a date
-ABOUT = ("spot", "stretch", "route")
+ABOUT = ("spot", "part", "route")
 STATES = ("reported", "planned", "done", "dismissed")
 OPEN = ("reported", "planned")
-ON_ROUTE_M = 50                         # a spot is on a route's stretch this near where it was clicked
+ON_ROUTE_M = 50                         # a click this near a route's line is on it
+MOST_PARTS = 20
 _POINT = "ST_Transform(ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326), 25833)"
 
 
 def _rows(conn, sql: str, params: dict | None = None) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(sql, params or {}).fetchall()
+
+
+def _uuid(some) -> bool:
+    try:
+        uuid.UUID(str(some))
+        return True
+    except ValueError:
+        return False
 
 
 def _event(conn, author, entry: str, type_: str, payload: dict) -> None:
@@ -59,23 +73,6 @@ def _route(conn, route: str) -> dict:
                   {"r": route}) if _uuid(route) else []
     if not found:
         raise NotFound("no route of ours in use has that id")
-    return found[0]
-
-
-def _on(conn, routes: list[str] | None, lon: float, lat: float) -> dict:
-    """The stretch of these routes (None: of any route in use) nearest a clicked point, and the spot on it."""
-    found = _rows(conn, f"""
-        SELECT e.id::text AS edge, l.route_id::text AS route, ST_Distance(v.geom, q.p) AS off,
-               ST_ClosestPoint(v.geom, q.p) AS spot
-        FROM core.route_leg l JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
-        JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id,
-             (SELECT {_POINT} AS p) q
-        WHERE (%(routes)s::uuid[] IS NULL OR l.route_id = ANY(%(routes)s::uuid[]))
-          AND ST_DWithin(v.geom, q.p, %(near)s)
-        ORDER BY off, r.discontinued_since IS NOT NULL LIMIT 1""",
-                  {"lon": lon, "lat": lat, "routes": routes, "near": ON_ROUTE_M})
-    if not found:
-        raise Invalid(f"that is not on {'the route' if routes else 'a route in use'}: click within {ON_ROUTE_M} m of its line")
     return found[0]
 
 
@@ -94,33 +91,142 @@ def _dates(kind: str, valid_from, valid_until) -> tuple:
     return valid_from, valid_until
 
 
-def report(conn, author, *, route: str, kind: str, text: str, about: str = "spot", lon: float | None = None,
-           lat: float | None = None, state: str = "reported", valid_from: dt.date | None = None,
-           valid_until: dt.date | None = None) -> dict:
-    """Say something about a route: at a spot on it, along one of its stretches, or of the whole route.
+# --- where along a route ----------------------------------------------------------------------------------------
 
-    A spot or a stretch is where it was clicked (`lon`, `lat`), on the route's nearest stretch within 50 m;
-    the spot is moved onto the line. For the whole route a position is not needed.
+class _Route:
+    """A route's stretches in walking order, to say where along it a position is, and back."""
+
+    def __init__(self, conn, route: str) -> None:
+        self.id = route
+        self.legs = _rows(conn, """
+            SELECT l.seq, l.edge_id::text AS edge, l.reversed, ST_Length(v.geom) AS m
+            FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
+            WHERE l.route_id = %(r)s ORDER BY l.seq""", {"r": route})
+        start = 0.0
+        for leg in self.legs:
+            leg["start"] = start
+            start += leg["m"]
+        self.metres = start
+
+    def index(self, edge: str, near_m: float | None = None) -> int | None:
+        """The leg that walks a stretch: of several (there and back), the one nearest `near_m` along the route."""
+        found = [i for i, leg in enumerate(self.legs) if leg["edge"] == edge]
+        if not found:
+            return None
+        return min(found, key=lambda i: abs(self.legs[i]["start"] - near_m)) if near_m is not None else found[0]
+
+    def metres_at(self, pos: dict, near_m: float | None = None) -> float | None:
+        """How far from the route's start a position along a stretch is. None when the route does not walk it."""
+        i = self.index(pos["edge"], near_m)
+        if i is None:
+            return None
+        leg = self.legs[i]
+        return leg["start"] + leg["m"] * ((1 - pos["at"]) if leg["reversed"] else pos["at"])
+
+    def at_metres(self, metres: float) -> dict:
+        """The position along a stretch that lies this far from the route's start."""
+        if not self.legs:
+            raise Invalid("the route has no stretches")
+        if not 0 <= metres <= self.metres + 0.5:
+            raise Invalid(f"the route is {self.metres / 1000:.1f} km long: say a place on it from 0 to there")
+        leg = next((x for x in self.legs if x["start"] <= metres <= x["start"] + x["m"]), self.legs[-1])
+        walked = min(max((metres - leg["start"]) / leg["m"], 0.0), 1.0) if leg["m"] else 0.0
+        return {"edge": leg["edge"], "at": round(1 - walked if leg["reversed"] else walked, 6)}
+
+    def walked(self, a: dict, b: dict) -> list[tuple[int, float, float]] | None:
+        """The legs from one position to another, and how much of each, as walked: (seq, from, to). In the order
+        the route walks them, whichever of the two was given first. None when the route does not walk both."""
+        ma = self.metres_at(a)
+        mb = self.metres_at(b, ma)
+        if ma is None or mb is None:
+            return None
+        if mb < ma:
+            ma, mb = mb, ma
+        cut = []
+        for leg in self.legs:
+            lo, hi = leg["start"], leg["start"] + leg["m"]
+            if hi <= ma or lo >= mb or not leg["m"]:
+                continue
+            cut.append((leg["seq"], (max(ma, lo) - lo) / leg["m"], (min(mb, hi) - lo) / leg["m"]))
+        return cut
+
+
+def _on(conn, routes: list[str] | None, lon: float, lat: float) -> dict:
+    """The stretch of these routes (None: of any route in use) nearest a clicked point, and where along it."""
+    found = _rows(conn, f"""
+        SELECT e.id::text AS edge, l.route_id::text AS route, ST_LineLocatePoint(v.geom, q.p) AS at,
+               ST_Distance(v.geom, q.p) AS off
+        FROM core.route_leg l JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+        JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id,
+             (SELECT {_POINT} AS p) q
+        WHERE (%(routes)s::uuid[] IS NULL OR l.route_id = ANY(%(routes)s::uuid[]))
+          AND ST_DWithin(v.geom, q.p, %(near)s)
+        ORDER BY off, r.discontinued_since IS NOT NULL LIMIT 1""",
+                  {"lon": lon, "lat": lat, "routes": routes, "near": ON_ROUTE_M})
+    if not found:
+        raise Invalid(f"that is not on {'the route' if routes else 'a route in use'}: click within {ON_ROUTE_M} m of its line")
+    return {"edge": found[0]["edge"], "at": round(found[0]["at"], 6), "route": found[0]["route"]}
+
+
+def _position(conn, route: _Route, said: dict, end: str = "") -> dict:
+    """A position on a route, given as a point clicked (`lon`, `lat`) or as metres from its start (`m`)."""
+    point, metres = said.get(f"{end}point" if end else "point"), said.get(f"{end}m" if end else "m")
+    if point is not None:
+        pos = _on(conn, [route.id], point[0], point[1])
+        return {"edge": pos["edge"], "at": pos["at"]}
+    if metres is not None:
+        return route.at_metres(float(metres))
+    raise Invalid("say where on the route: a point on it, or how far from its start")
+
+
+def _along(conn, route: _Route, about: str, spot: dict | None, parts: list[dict] | None) -> list:
+    """What `ops.entry.along` keeps for a spot, parts, or the whole route."""
+    if about == "route":
+        return []
+    if about == "spot":
+        return [_position(conn, route, spot or {})]
+    if not parts:
+        raise Invalid("say which part of the route: where it begins and where it ends")
+    if len(parts) > MOST_PARTS:
+        raise Invalid(f"at most {MOST_PARTS} parts")
+    kept = []
+    for part in parts:
+        a, b = _position(conn, route, part, "from_"), _position(conn, route, part, "to_")
+        cut = route.walked(a, b)
+        if not cut or sum(hi - lo for _, lo, hi in cut) <= 0:
+            raise Invalid("a part must have a length: where it begins and where it ends are the same")
+        kept.append({"from": a, "to": b})
+    return kept
+
+
+def _edges(along: list) -> list[str]:
+    return list(dict.fromkeys(p["edge"] for x in along for p in ([x] if "edge" in x else [x["from"], x["to"]])))
+
+
+# --- saying it ----------------------------------------------------------------------------------------------------
+
+def report(conn, author, *, route: str, kind: str, text: str, about: str = "spot", spot: dict | None = None,
+           parts: list[dict] | None = None, state: str = "reported", valid_from: dt.date | None = None,
+           valid_until: dt.date | None = None) -> dict:
+    """Say something about a route: at a spot on it, along parts of it, or of the whole route.
+
+    A spot is `{"point": [lon, lat]}` (a click within 50 m of the route's line) or `{"m": metres from the
+    route's start}`. A part is `{"from_point": .., "to_point": ..}` or `{"from_m": .., "to_m": ..}`, or one of each.
     """
     if kind not in KINDS or about not in ABOUT or state not in STATES:
         raise Invalid(f"kind is one of {', '.join(KINDS)}; about one of {', '.join(ABOUT)}; state one of {', '.join(STATES)}")
     r = _route(conn, route)
     valid_from, valid_until = _dates(kind, valid_from, valid_until)
-    edge, spot = None, None
-    if about != "route" or lon is not None:
-        if lon is None or lat is None:
-            raise Invalid("say where on the route: lon and lat")
-        on = _on(conn, [r["id"]], lon, lat)
-        edge, spot = on["edge"], on["spot"]
+    along = _along(conn, _Route(conn, r["id"]), about, spot, parts)
     made = conn.execute("""
-        INSERT INTO ops.entry (kind, about, route_id, edge_ids, geom, area, text, state, valid_from, valid_until,
+        INSERT INTO ops.entry (kind, about, route_id, edge_ids, along, area, text, state, valid_from, valid_until,
                                made_by, updated_by)
-        VALUES (%(kind)s, %(about)s, %(route)s, %(edges)s::uuid[], %(spot)s::geometry, lower(left(%(code)s, 3)),
+        VALUES (%(kind)s, %(about)s, %(route)s, %(edges)s::uuid[], %(along)s, lower(left(%(code)s, 3)),
                 %(text)s, %(state)s, %(from)s, %(until)s, %(who)s, %(who)s)
         RETURNING id::text""",
-        {"kind": kind, "about": about, "route": r["id"], "edges": [edge] if edge and about != "route" else [],
-         "spot": spot, "code": r["code"], "text": _text(text), "state": state, "from": valid_from,
-         "until": valid_until, "who": str(author)}).fetchone()[0]
+        {"kind": kind, "about": about, "route": r["id"], "edges": _edges(along), "along": Jsonb(along),
+         "code": r["code"], "text": _text(text), "state": state, "from": valid_from, "until": valid_until,
+         "who": str(author)}).fetchone()[0]
     _event(conn, author, made, "entry.reported", {"kind": kind, "about": about, "route": r["code"], "text": _text(text)})
     return one(conn, made)
 
@@ -132,29 +238,21 @@ def _kept(conn, entry: str) -> dict:
     return found[0]
 
 
-def _uuid(some) -> bool:
-    try:
-        uuid.UUID(str(some))
-        return True
-    except ValueError:
-        return False
-
-
 def change(conn, author, entry: str, said: dict) -> dict:
     """Say something else of an entry: its kind, text, state, dates, what it is about, or where it is.
 
-    `said` holds only what changes; a date given as None is taken away. A new position (`lon`, `lat`) puts it
-    on the nearest stretch of its route there, or of any route in use when its route is gone.
+    `said` holds only what changes; a date given as None is taken away. `spot` or `parts` (as for `report`) say
+    anew where on the route it is: on its route as it is now, or for one that is adrift, a spot clicked on any
+    route in use.
     """
     row = _kept(conn, entry)
     now = _anchored(conn, [dict(row)])[0]
     sets, was = {}, {}
-    if now["route_now"] and (now["route_now"] != str(row["route_id"]) or now["edges_now"] != [str(e) for e in row["edge_ids"]]):
+    if now["route_now"] and not now["lost"] and (now["route_now"] != str(row["route_id"]) or now["along_now"] != row["along"]):
         # Brought to where it belongs now (ADR-004, point 4), so that what is said is said of the same entry.
-        sets.update(route_id=now["route_now"], edge_ids=now["edges_now"])
-        _event(conn, author, entry, "entry.followed", {"route": now["route_now"], "stretches": now["edges_now"]})
-    kind = said.get("kind", row["kind"])
-    about = said.get("about", row["about"])
+        sets.update(route_id=now["route_now"], along=now["along_now"])
+        _event(conn, author, entry, "entry.followed", {"route": now["route_now"], "along": now["along_now"]})
+    kind, about = said.get("kind", row["kind"]), said.get("about", row["about"])
     if kind not in KINDS or about not in ABOUT or said.get("state", row["state"]) not in STATES:
         raise Invalid(f"kind is one of {', '.join(KINDS)}; about one of {', '.join(ABOUT)}; state one of {', '.join(STATES)}")
     for key in ("kind", "state", "about"):
@@ -162,31 +260,30 @@ def change(conn, author, entry: str, said: dict) -> dict:
             sets[key], was[key] = said[key], [row[key], said[key]]
     if "text" in said and _text(said["text"]) != row["text"]:
         sets["text"], was["text"] = _text(said["text"]), [row["text"], _text(said["text"])]
-    valid_from = said.get("valid_from", row["valid_from"])
-    valid_until = said.get("valid_until", row["valid_until"])
-    valid_from, valid_until = _dates(kind, valid_from, valid_until)
+    valid_from, valid_until = _dates(kind, said.get("valid_from", row["valid_from"]), said.get("valid_until", row["valid_until"]))
     for key, value in (("valid_from", valid_from), ("valid_until", valid_until)):
         if value != row[key]:
             sets[key], was[key] = value, [str(row[key]) if row[key] else None, str(value) if value else None]
-    if said.get("lon") is not None and said.get("lat") is not None:
-        route = sets.get("route_id") or (now["route_now"] if now["route_now"] else None)
-        on = _on(conn, [route] if route else None, said["lon"], said["lat"])
+    if said.get("spot") or said.get("parts") or "about" in sets:
+        if about != "route" and not said.get("spot" if about == "spot" else "parts"):
+            raise Invalid(f"say where on the route it is: {'the spot' if about == 'spot' else 'the parts'}")
+        route = now["route_now"]
+        if not route and about == "spot" and (said.get("spot") or {}).get("point"):
+            # Adrift: put on whichever route in use is clicked.
+            route = _on(conn, None, *said["spot"]["point"])["route"]
+            sets["area"] = conn.execute("SELECT lower(left(code, 3)) FROM core.route WHERE id = %s", (route,)).fetchone()[0]
         if not route:
-            sets["route_id"] = on["route"]
-            sets["area"] = conn.execute("SELECT lower(left(code, 3)) FROM core.route WHERE id = %s", (on["route"],)).fetchone()[0]
-        sets.update(edge_ids=[on["edge"]], geom=on["spot"])
-        was["moved"] = True
-    if "about" in sets:
-        if about == "route":
-            sets["edge_ids"] = []
-        elif row["about"] == "route" and not sets.get("edge_ids"):
-            raise Invalid("say where on the route it is: give the spot (lon, lat)")
-        elif about == "spot" and len(sets.get("edge_ids", now["edges_now"])) > 1:
-            sets["edge_ids"] = sets.get("edge_ids", now["edges_now"])[:1]
-    if not was and "route_id" not in sets:
+            raise Invalid("its route is gone: say where it is by clicking a route in use")
+        along = _along(conn, _Route(conn, route), about, said.get("spot"), said.get("parts"))
+        if along != (sets.get("along") or row["along"]) or route != str(row["route_id"]):
+            sets.update(route_id=route, along=along)
+            was["moved"] = True
+    if not was and not sets:
         return one(conn, entry)
-    columns = ", ".join(f"{k} = %({k})s" + {"edge_ids": "::uuid[]", "geom": "::geometry", "route_id": "::uuid"}.get(k, "")
-                        for k in sets)
+    if "along" in sets:
+        sets["edge_ids"] = _edges(sets["along"])
+        sets["along"] = Jsonb(sets["along"])
+    columns = ", ".join(f"{k} = %({k})s" + {"edge_ids": "::uuid[]", "route_id": "::uuid"}.get(k, "") for k in sets)
     conn.execute(f"UPDATE ops.entry SET {columns}, updated_at = now(), updated_by = %(who)s WHERE id = %(id)s::uuid",
                  {**sets, "who": str(author), "id": entry})
     if was:
@@ -202,49 +299,98 @@ def take_away(conn, author, entry: str) -> dict:
     return {"taken_away": entry}
 
 
+# --- reading it ---------------------------------------------------------------------------------------------------
+
+def _follow(conn, positions: list[dict]) -> list[dict | None]:
+    """Each position along a stretch, along what stands for the stretch now: itself, as its line is now; or where
+    the same spot lies on the part it was divided into, or on the stretch it was joined into. None: gone."""
+    edges = anchor.stands_for(conn, "edge", {p["edge"] for p in positions})
+    told = []
+    for p in positions:
+        now = edges.get(p["edge"], [])
+        if now == [p["edge"]] or not now:
+            told.append(p if now else None)
+            continue
+        found = conn.execute("""
+            WITH was AS (SELECT ST_LineInterpolatePoint(v.geom, %(at)s) AS p FROM core.edge e
+                         JOIN core.edge_revision v ON v.id = e.current_revision_id WHERE e.id = %(e)s)
+            SELECT e.id::text, ST_LineLocatePoint(v.geom, was.p) FROM core.edge e
+            JOIN core.edge_revision v ON v.id = e.current_revision_id, was
+            WHERE e.id = ANY(%(now)s::uuid[]) ORDER BY ST_Distance(v.geom, was.p) LIMIT 1""",
+            {"at": p["at"], "e": p["edge"], "now": now}).fetchone()
+        told.append({"edge": found[0], "at": round(found[1], 6)} if found else None)
+    return told
+
+
 def _anchored(conn, rows: list[dict]) -> list[dict]:
-    """What each entry hangs on now: the route, the stretches (`anchor.stands_for`), the routes in use on them."""
-    edges = anchor.stands_for(conn, "edge", {str(e) for r in rows for e in r["edge_ids"]})
+    """What each entry hangs on now: its route, and its positions along the stretches as they stand now."""
+    positions = [p for r in rows for x in r["along"] for p in ([x] if "edge" in x else [x["from"], x["to"]])]
+    followed = iter(_follow(conn, positions))
     routes = anchor.stands_for(conn, "route", {str(r["route_id"]) for r in rows})
     for r in rows:
-        now = []
-        for e in map(str, r["edge_ids"]):
-            parts = edges.get(e, [])
-            if r["about"] == "spot" and len(parts) > 1 and r.get("geom") is not None:
-                # A spot is on the part of a divided stretch that it lies on.
-                parts = [conn.execute("""
-                    SELECT e.id::text FROM core.edge e JOIN core.edge_revision v ON v.id = e.current_revision_id
-                    WHERE e.id = ANY(%s::uuid[])
-                    ORDER BY ST_Distance(v.geom, (SELECT geom FROM ops.entry WHERE id = %s)) LIMIT 1""",
-                    (parts, r["id"])).fetchone()[0]]
-            now += parts
-        r["edges_now"] = list(dict.fromkeys(now))
+        along, lost = [], False
+        for x in r["along"]:
+            if "edge" in x:
+                p = next(followed)
+                lost |= p is None
+                along += [p] if p else []
+            else:
+                a, b = next(followed), next(followed)
+                lost |= a is None or b is None
+                along += [{"from": a, "to": b}] if a and b else []
+        r["along_now"], r["lost"] = along, lost or (r["about"] != "route" and not along)
         r["route_now"] = anchor.one(routes.get(str(r["route_id"])))
     return rows
 
 
+def _drawn(conn, route: _Route, along: list) -> tuple[list, list, list]:
+    """The parts as lines along the route as it is now, where each begins and ends in metres from its start, and the
+    stretches they cover."""
+    lines, said, covered = [], [], []
+    by_seq = {leg["seq"]: leg["edge"] for leg in route.legs}
+    for x in along:
+        cut = route.walked(x["from"], x["to"])
+        if not cut:
+            continue
+        covered += [by_seq[c[0]] for c in cut]
+        ma = route.metres_at(x["from"])
+        mb = route.metres_at(x["to"], ma)
+        said.append({"from_m": round(min(ma, mb)), "to_m": round(max(ma, mb)), "metres": round(abs(mb - ma))})
+        for (coords,) in conn.execute("""
+                SELECT ST_AsGeoJSON(ST_Transform((ST_Dump(ST_LineMerge(ST_Collect(piece ORDER BY seq)))).geom, 4326), 6)::json -> 'coordinates'
+                FROM (SELECT c.seq, ST_LineSubstring(CASE WHEN l.reversed THEN ST_Reverse(v.geom) ELSE v.geom END, c.lo, c.hi) AS piece
+                      FROM unnest(%(seq)s::int[], %(lo)s::float8[], %(hi)s::float8[]) c(seq, lo, hi)
+                      JOIN core.route_leg l ON l.route_id = %(r)s AND l.seq = c.seq
+                      JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
+                      WHERE c.hi > c.lo) p""",
+                {"seq": [c[0] for c in cut], "lo": [c[1] for c in cut], "hi": [c[2] for c in cut], "r": route.id}):
+            lines.append(coords)
+    return lines, said, list(dict.fromkeys(covered))
+
+
 def _shown(conn, rows: list[dict]) -> list[dict]:
-    """Entries as they are told: what they hang on now, where they are on the map, and whether they are adrift."""
+    """Entries as they are told: what they hang on now, where they are on the map and along the route, and whether
+    they are adrift."""
     if not rows:
         return []
     _anchored(conn, rows)
+    edges_now = {r["id"]: _edges(r["along_now"]) for r in rows}
     on = {}
     for edge, rid, code in conn.execute("""
             SELECT l.edge_id::text, r.id::text, r.code FROM core.route_leg l
             JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
-            WHERE l.edge_id = ANY(%s::uuid[])""", ([e for r in rows for e in r["edges_now"]],)):
+            WHERE l.edge_id = ANY(%s::uuid[])""", ([e for v in edges_now.values() for e in v],)):
         on.setdefault(edge, {})[rid] = code
-    whole = dict(conn.execute("SELECT id::text, code FROM core.route WHERE id = ANY(%s::uuid[])",
+    whole = dict(conn.execute("SELECT id::text, code FROM core.route WHERE id = ANY(%s::uuid[]) AND status = 'active'",
                               ([r["route_now"] for r in rows if r["route_now"]],)).fetchall())
-    lines = {e: c for e, c in conn.execute("""
-            SELECT e.id::text, ST_AsGeoJSON(ST_Transform(v.geom, 4326), 6)::json -> 'coordinates'
-            FROM core.edge e JOIN core.edge_revision v ON v.id = e.current_revision_id
-            WHERE e.id = ANY(%s::uuid[])""", ([e for r in rows for e in r["edges_now"]],))}
-    points = dict(conn.execute("""
-            SELECT id::text, ARRAY[round(ST_X(p)::numeric, 6), round(ST_Y(p)::numeric, 6)]::float8[]
-            FROM (SELECT id, ST_Transform(geom, 4326) AS p FROM ops.entry WHERE id = ANY(%s::uuid[]) AND geom IS NOT NULL) x""",
-            ([r["id"] for r in rows],)).fetchall())
-    # What is said of a whole route, and not at a spot, is shown at the middle of the route.
+    spots = [x for r in rows if r["about"] == "spot" for x in r["along_now"]]
+    points = {(e, at): [lon, lat] for e, at, lon, lat in conn.execute("""
+            SELECT c.edge::text, c.at, round(ST_X(p)::numeric, 6)::float8, round(ST_Y(p)::numeric, 6)::float8
+            FROM unnest(%s::uuid[], %s::float8[]) c(edge, at)
+            JOIN core.edge e ON e.id = c.edge JOIN core.edge_revision v ON v.id = e.current_revision_id,
+                 LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(v.geom, c.at), 4326) AS p) m""",
+            ([s["edge"] for s in spots], [s["at"] for s in spots]))}
+    # What is said of a whole route is shown at the middle of the route.
     centres = dict(conn.execute("""
             SELECT DISTINCT ON (l.route_id) l.route_id::text,
                    ARRAY[round(ST_X(p)::numeric, 6), round(ST_Y(p)::numeric, 6)]::float8[]
@@ -253,22 +399,43 @@ def _shown(conn, rows: list[dict]) -> list[dict]:
             WHERE l.route_id = ANY(%s::uuid[])
             ORDER BY l.route_id, abs(l.seq - (SELECT avg(seq) FROM core.route_leg x WHERE x.route_id = l.route_id))""",
             ([r["route_now"] for r in rows if r["route_now"] and r["about"] == "route"],)).fetchall())
+    walked = {}
     today = dt.date.today()
     told = []
     for r in rows:
         routes = {}
-        for e in r["edges_now"]:
+        for e in edges_now[r["id"]]:
             routes.update(on.get(e, {}))
-        if r["about"] == "route" and r["route_now"]:
-            routes = {r["route_now"]: whole.get(r["route_now"])} | routes
-        adrift = (None if routes
+        lines, parts, at, at_m, here = [], [], None, None, None
+        if r["about"] == "route":
+            here = r["route_now"] if r["route_now"] in whole else None
+            at = centres.get(here)
+            if here:
+                routes = {here: whole[here]} | routes
+        elif not r["lost"]:
+            # Measured along the route it was said on; when that no longer walks there, along another that does.
+            for rid in dict.fromkeys(x for x in (r["route_now"], *routes) if x in whole or x in routes):
+                route = walked.get(rid) or walked.setdefault(rid, _Route(conn, rid))
+                if r["about"] == "part":
+                    drawn, said, covered = _drawn(conn, route, r["along_now"])
+                    if len(said) == len(r["along_now"]):
+                        here, lines, parts = rid, drawn, said
+                        # A part is on every route that walks some of it, not only where it begins and ends.
+                        routes.update(conn.execute("""
+                            SELECT DISTINCT r.id::text, r.code FROM core.route_leg l
+                            JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                            WHERE l.edge_id = ANY(%s::uuid[])""", (covered,)).fetchall())
+                        break
+                elif (m := route.metres_at(r["along_now"][0])) is not None:
+                    here, at_m = rid, round(m)
+                    break
+            at = (points.get((r["along_now"][0]["edge"], r["along_now"][0]["at"])) if r["about"] == "spot"
+                  else lines[0][len(lines[0]) // 2] if lines else None)
+        adrift = (None if here
                   else "the route is gone, and nothing came instead" if r["about"] == "route"
-                  else "its stretch is gone, and nothing came instead" if not r["edges_now"]
+                  else "what it lay along is gone, and nothing came instead" if r["lost"]
+                  else "no route in use walks all of it now" if routes
                   else "it lies on no route in use now")
-        at = points.get(str(r["id"])) or (centres.get(r["route_now"]) if r["about"] == "route" else None)
-        if not at and r["edges_now"] and lines.get(r["edges_now"][0]):
-            coords = lines[r["edges_now"][0]]
-            at = coords[len(coords) // 2]
         notice = r["kind"] in NOTICES
         told.append({
             "id": str(r["id"]), "kind": r["kind"], "says": KINDS[r["kind"]], "notice": notice, "about": r["about"],
@@ -277,10 +444,11 @@ def _shown(conn, rows: list[dict]) -> list[dict]:
             "active": notice and r["state"] in OPEN and (not r["valid_from"] or r["valid_from"] <= today)
                       and (not r["valid_until"] or r["valid_until"] >= today),
             "lapsed": bool(notice and r["valid_until"] and r["valid_until"] < today),
+            "route": {"id": here, "code": whole.get(here) or routes.get(here)} if here else None,
             "routes": [{"id": i, "code": c} for i, c in sorted(routes.items(), key=lambda x: x[1] or "")],
             "area": r["area"], "adrift": adrift,
             "lon": at[0] if at else None, "lat": at[1] if at else None,
-            "lines": [lines[e] for e in r["edges_now"] if e in lines] if r["about"] == "stretch" else [],
+            "at_m": at_m, "parts": parts, "lines": lines,
             "made_at": r["made_at"], "made_by": r["made_by"], "updated_at": r["updated_at"], "updated_by": r["updated_by"]})
     return told
 
@@ -292,8 +460,7 @@ def _order(e: dict) -> tuple:
 def listing(conn, area: str | None = None, route: str | None = None) -> list[dict]:
     """The entries of an area (on its routes now, or said there and on none now), or of one route: open first,
     notices in force first among them, then the newest."""
-    rows = _rows(conn, "SELECT * FROM ops.entry ORDER BY made_at")
-    told = _shown(conn, rows)
+    told = _shown(conn, _rows(conn, "SELECT * FROM ops.entry ORDER BY made_at"))
     if area:
         area = area.lower()
         told = [e for e in told if any(r["code"] and r["code"][:3].lower() == area for r in e["routes"])
@@ -310,3 +477,10 @@ def one(conn, entry: str) -> dict:
                                      WHERE subject = 'entry' AND subject_id = %(e)s AND type <> 'entry.followed'
                                      ORDER BY seq""", {"e": entry})
     return told
+
+
+def parts(conn, route: str, said: list[dict]) -> dict:
+    """What some parts of a route would be, drawn, and how long: for a page to show them while they are chosen."""
+    r = _Route(conn, _route(conn, route)["id"])
+    lines, told, _ = _drawn(conn, r, _along(conn, r, "part", None, said))
+    return {"lines": lines, "parts": told, "route_m": round(r.metres)}

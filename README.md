@@ -1310,32 +1310,43 @@ the plan in `docs/TODO.md`), with the feature `issues`:
     stiflyt2 access role operations --features signs,issues
 
 The front page has a part of its own, **Issues**. "Report an issue", then a
-click on a route: say what it is, and whether it is about that spot, the
-stretch there (from junction to junction), or the whole route. A spot is a
-point on the map, amber; a stretch a band under the route; a notice red,
-and grey what is done. An issue is reported, planned, done or dismissed;
-"Change it…", "Move it" and "Take it away" do what they say, and Undo (or
-Ctrl/⌘+Z) takes your latest back. Each says what has happened to it, by
-whom. A route with a notice in force says so at the top of the route, and
+click on a route: say what it is, and whether it is about that spot, part
+of the route, or the whole route. Part of the route is from wherever to
+wherever, not from junction to junction: two clicks on its line, where it
+begins and where it ends, or "from 3.2 to 3.5 km" from the start; an issue
+can have several parts. A spot is a point on the map, amber; a part a band
+under the route; a notice red, and grey what is done. Each says where it
+is in km from the route's start. An issue is Reported, Planned, Done or
+Dismissed, a notice Up, Lifted or Dismissed: one row, the state it is in
+pressed, a click on another to put it there. "Change it…", "Move it" (a
+spot) and "Take it away" do what they say, and Undo (or Ctrl/⌘+Z) takes
+your latest back. Each says what has happened to it, by whom. A route with a notice in force says so at the top of the route, and
 "Closed" in the area's list; a route's open issues are listed at its foot,
 with "Report an issue on this route". The route editor lists them in a
 route's panel, linked to the front page.
 
-An issue keeps the ids of the route and the stretch it was said about and
-is read through what stands for them now (ADR-004): when the stretch is
-divided, a spot stays on the part it lies on and a stretch issue covers both
-parts; when the route is taken into another, it goes along. A spot keeps
-its own position: mending the line does not move a fallen tree. What finds
-no route in use any more is adrift, and says so, until it is moved onto a
-route or taken away. An issue is saved as it is made, unless you have other
+Where an issue is, is kept as positions along our own stretches: a stretch,
+and how far along it (0 at one end, 1 at the other); for a part, where it
+begins and where it ends. No line is copied, and nothing is kept in km from
+the route's start, which would move when an end of the route is moved. When
+a stretch's line is mended (laid on the mapped path, drawn again), what lies
+along it goes with the line; when the stretch is divided, each position is
+found again on the part it lies on (ADR-004); when the route is taken into
+another, it goes along. Km from the start are worked out from the route as
+it is, each time it is shown. Where the route is sent another way, off the
+stretches, the issue says no route walks it, until it is moved or taken
+away. An issue is saved as it is made, unless you have other
 decisions in operations not saved yet, which it then joins.
 
 Over the API: `GET /api/v1/issues?area=|route=`, `GET /api/v1/issues/{id}`
-(with its history), `POST /api/v1/issues`, `PATCH` and `DELETE` on one,
-`GET|POST /api/v1/issues/undo`. An assistant has `route_issues`,
-`report_issue` and `change_issue` (dry unless told otherwise), when the
-person has the feature. Kept in `ops.entry` (import migration `0017`),
-where reports from work parties and inspections are to come as well.
+(with its history), `POST /api/v1/issues` (`spot` as `point` or `m`;
+`parts` as `from_point`/`to_point` or `from_m`/`to_m`), `PATCH` and `DELETE`
+on one, `POST /api/v1/issues/parts` (what parts would be, drawn and
+measured, keeping nothing), `GET|POST /api/v1/issues/undo`. An assistant
+has `route_issues`, `report_issue` (parts in km) and `change_issue` (dry
+unless told otherwise), when the person has the feature. Kept in `ops.entry`
+(import migrations `0017`, `0018`), where reports from work parties and
+inspections are to come as well.
 
 Not yet: notices in what is handed to UT.no; photos on an issue (step 3);
 replacing a sign tied to the sign order; planning a work trip round the

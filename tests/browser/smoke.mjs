@@ -159,7 +159,7 @@ if (await js(`hasIssues()`)) {
   check("the issues tab lists what is open in the area", await until(`view === "issues" && Array.isArray(entries) && /Issues in/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel h2"));
   check("the address says the issues are open", (await js("location.search")).includes("view=issues"));
   const spot = EDIT && await onMap(`(() => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1); if (!f) return null;
-    const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 14 }); return c; })()`);
+    window.trialLine = f.geometry.coordinates; const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 14 }); return c; })()`);
   if (spot) {
     editing = true;
     const trial = `Trial birch ${Date.now() % 100000}`;
@@ -167,19 +167,39 @@ if (await js(`hasIssues()`)) {
     await sleep(1500);
     await click(await onMap(`map.getCenter().toArray()`));
     check("Report, then a click on a route, asks what it is", await until(`Boolean(entryAsk) && Boolean(document.querySelector("form.entry-form"))`, 10), await text("#panel"));
-    await js(`(() => { const f = document.querySelector("form.entry-form"); f.querySelector("textarea").value = ${JSON.stringify(trial)}; f.requestSubmit(); })()`);
+    await js(`(() => { const f = document.querySelector("form.entry-form"), t = f.querySelector("textarea"); t.value = ${JSON.stringify(trial)}; t.dispatchEvent(new Event("input")); f.requestSubmit(); })()`);
     check("reported, it is open in the side and a point on the map", await until(`Boolean(entryOpen) && document.getElementById("panel").textContent.includes(${JSON.stringify(trial)})
       && map.queryRenderedFeatures({ layers: ["entries"] }).some(f => f.properties.chosen)`, 15), await text("#panel"));
     check("its history says who reported it", await until(`/Test Editor: reported it on/.test(document.querySelector("#panel ol.history") ? document.querySelector("#panel ol.history").textContent : "")`, 10), await text("#panel ol.history"));
-    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "It is done")`);
-    check("It is done: it is no longer open", await until(`entries.some(e => e.id === entryOpen && e.state === "done") && /Done/.test(document.querySelector("#panel h2").textContent)`, 10), await text("#panel h2"));
+    check("its state is one row, with Reported pressed", (await js(`[...document.querySelectorAll("#panel .states button")].map(b => b.textContent + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" ")`)) === "Reported* Planned Done Dismissed",
+      await text("#panel .states"));
+    await clickOn(`[...document.querySelectorAll("#panel .states button")].find(b => b.textContent === "Done")`);
+    check("a click on Done: it is done, and no longer open", await until(`entries.some(e => e.id === entryOpen && e.state === "done") && document.querySelector("#panel .states button[aria-pressed=true]").textContent === "Done"`, 10), await text("#panel .states"));
     check("and Undo offers to take that back", await until(`!document.getElementById("undo").hidden && /Undo: what was said of an issue/.test(document.getElementById("undo").textContent)`, 10), await text("#undo"));
     await clickOn(`document.querySelector("#undo button.link")`);
     check("Undo takes it back: it is open again", await until(`entries.some(e => e.id === entryOpen && e.state === "reported")`, 10));
+    // Along part of the route instead, from one bend to another: two clicks on the route's line.
+    await until(`Boolean(entryShown && entryShown.told && entryShown.told.history.length >= 3)`, 10);       // the side drawn for the last time
+    await js(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Change it…").click()`);
+    await until(`Boolean(document.querySelector("form.entry-form input[value=part]"))`, 10);
+    await js(`document.querySelector("form.entry-form input[value=part]").click()`);
+    check("choosing part of the route asks where it begins", await until(`Boolean(entryAsk && entryAsk.picking) && !document.getElementById("hint").hidden`, 10), await text("#hint"));
+    const ends = await js(`(() => { const c = window.trialLine, m = Math.floor(c.length / 2), a = c[Math.max(0, m - 4)], b = c[Math.min(c.length - 1, m + 4)]; return JSON.stringify([a, b]); })()`);
+    for (const [i, end] of JSON.parse(ends).entries()) {
+      await click(await onMap(JSON.stringify(end)));
+      if (!i) await until(`Boolean(entryAsk && entryAsk.picking && entryAsk.picking.from)`, 10);
+    }
+    check("two clicks make a part, measured from the route's start and drawn", await until(`entryAsk && entryAsk.draft.parts.length === 1 && /km, \\d+ m/.test(document.querySelector("form.entry-form .parts").textContent)
+      && map.queryRenderedFeatures({ layers: ["entry-pick"] }).length > 0`, 10), await text("form.entry-form .parts"));
+    await js(`document.querySelector("form.entry-form").requestSubmit()`);
+    check("saved, the issue is along that part", await until(`!entryAsk && entries.some(e => e.id === entryOpen && e.about === "part" && e.parts.length === 1)
+      && /Along.* km \\(/.test(document.querySelector("#panel dl.facts").textContent) && map.queryRenderedFeatures({ layers: ["entry-lines"] }).some(f => f.properties.chosen)`, 10), await text("#panel dl.facts"));
     // Changed into a notice for the whole route: the route says it is closed, and so does the area's list.
     await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Change it…")`);
     await js(`(() => { const f = document.querySelector("form.entry-form"); f.querySelector("select").value = "closed"; f.querySelector("select").dispatchEvent(new Event("change"));
-      f.querySelector("input[value=route]").checked = true; f.requestSubmit(); })()`);
+      f.querySelector("input[value=route]").click(); })()`);
+    await until(`Boolean(entryAsk && entryAsk.draft.about === "route" && document.querySelector("form.entry-form"))`, 10);
+    await js(`document.querySelector("form.entry-form").requestSubmit()`);
     check("changed into a notice for the whole route, it is in force", await until(`!entryAsk && Boolean(document.querySelector("#panel dl.facts")) && entries.some(e => e.id === entryOpen && e.kind === "closed" && e.about === "route" && e.active)`, 10), await text("#panel"));
     const closed = await js(`entries.find(e => e.id === entryOpen).routes[0].code`);
     await clickOn(`[...document.querySelectorAll("#panel dl.facts button.link")].find(b => b.textContent === ${JSON.stringify(closed)})`);

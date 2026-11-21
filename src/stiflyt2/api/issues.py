@@ -20,8 +20,23 @@ May = Annotated[str, Depends(auth.may("issues"))]
 Id = Annotated[str, Path(max_length=40)]
 Kind = Literal["closed", "warning", "clearing", "marking", "sign", "bridge", "wet", "other"]
 State = Literal["reported", "planned", "done", "dismissed"]
-About = Literal["spot", "stretch", "route"]
+About = Literal["spot", "part", "route"]
 Text = Annotated[str, Field(min_length=1, max_length=2000)]
+
+
+class Spot(BaseModel):
+    point: mcp.Point | None = Field(None, description="Clicked on the route's line, [lon, lat]")
+    m: float | None = Field(None, ge=0, le=1_000_000, description="Or metres from the route's start")
+
+
+class Part(BaseModel):
+    from_point: mcp.Point | None = None
+    to_point: mcp.Point | None = None
+    from_m: float | None = Field(None, ge=0, le=1_000_000)
+    to_m: float | None = Field(None, ge=0, le=1_000_000)
+
+
+Parts = Annotated[list[Part], Field(min_length=1, max_length=issues.MOST_PARTS)]
 
 
 class Report(BaseModel):
@@ -29,8 +44,8 @@ class Report(BaseModel):
     kind: Kind
     text: Text
     about: About = "spot"
-    lon: float | None = Field(None, ge=-180, le=180)
-    lat: float | None = Field(None, ge=-90, le=90)
+    spot: Spot | None = None
+    parts: Parts | None = None
     state: State = "reported"
     valid_from: dt.date | None = None
     valid_until: dt.date | None = None
@@ -43,8 +58,13 @@ class Change(BaseModel):
     state: State | None = None
     valid_from: dt.date | None = None           # given as null: taken away
     valid_until: dt.date | None = None
-    lon: float | None = Field(None, ge=-180, le=180)
-    lat: float | None = Field(None, ge=-90, le=90)
+    spot: Spot | None = None                    # where it is now, said anew
+    parts: Parts | None = None
+
+
+class Chosen(BaseModel):
+    route: str = Field(max_length=40)
+    parts: Parts
 
 
 class Undo(BaseModel):
@@ -79,6 +99,12 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         """Take your latest decision in operations back."""
         with write.connection() as conn:
             return undo.undo(conn, author, body.txid if body else None)
+
+    @app.post(f"{V1}/parts")
+    def chosen(body: Chosen, _: May) -> dict:
+        """What parts of a route would be, drawn and measured, while they are being chosen. Keeps nothing."""
+        with read.connection() as conn:
+            return issues.parts(conn, body.route, [p.model_dump() for p in body.parts])
 
     @app.get(f"{V1}/{{entry}}")
     def single(entry: Id, _: May) -> dict:
@@ -129,12 +155,26 @@ def route_issues(c: mcp.Call, a: Issues) -> dict:
     return {"issues": told, "count": len(told)}
 
 
+class Along(mcp.Args):
+    from_km: float | None = Field(None, ge=0, le=1000, description="Where it begins, in km from the route's start")
+    to_km: float | None = Field(None, ge=0, le=1000, description="Where it ends, in km from the route's start")
+    from_at: mcp.Point | None = Field(None, description="Or where it begins, [lon, lat] on the route's line")
+    to_at: mcp.Point | None = Field(None, description="Or where it ends, [lon, lat] on the route's line")
+
+
+def _parts(parts: list[Along] | None) -> list[dict] | None:
+    return [{"from_point": p.from_at, "to_point": p.to_at, "from_m": p.from_km * 1000 if p.from_km is not None else None,
+             "to_m": p.to_km * 1000 if p.to_km is not None else None} for p in parts] if parts else None
+
+
 class ReportIssue(mcp.Args):
     route: str = Field(max_length=40, description="The route, by its code or id")
     kind: Kind
     text: str = Field(min_length=1, max_length=2000, description="What it is, as the person said it")
-    about: About = Field("spot", description="A spot on the route, the stretch there, or the whole route")
-    at: mcp.Point | None = Field(None, description="Where on the route, [lon, lat]: needed for a spot or a stretch")
+    about: About = Field("spot", description="A spot on the route, one or more parts of it, or the whole route")
+    at: mcp.Point | None = Field(None, description="A spot: where on the route, [lon, lat]")
+    at_km: float | None = Field(None, ge=0, le=1000, description="Or a spot in km from the route's start")
+    parts: list[Along] | None = Field(None, max_length=issues.MOST_PARTS, description="Parts: where each begins and ends")
     state: State = "reported"
     valid_from: dt.date | None = Field(None, description="A notice (closed, warning): from this day")
     valid_until: dt.date | None = Field(None, description="A notice: until this day. None: until further notice")
@@ -144,12 +184,13 @@ class ReportIssue(mcp.Args):
 @mcp.tool("Report an issue or put up a notice", changes=True, operations=True, feature="issues")
 def report_issue(c: mcp.Call, a: ReportIssue) -> dict:
     """Report something on a route that is wrong or to be done, or say to walkers that it is closed or that
-    they are warned, from a date until a date. A spot or a stretch needs `at`, within 50 m of the route's line.
-    Only what the person has said. Dry, it says what would be kept."""
+    they are warned, from a date until a date. At a spot (`at`, within 50 m of the route's line, or `at_km` from
+    its start), along parts of it (`parts`: from and to, in km from the start or as points: clearing from one
+    bend to another), or of the whole route. Only what the person has said. Dry, it says what would be kept."""
     rid = mcp._route_id(c.conn, a.route)
-    return issues.report(c.conn, c.author, route=rid, kind=a.kind, text=a.text, about=a.about,
-                         lon=a.at[0] if a.at else None, lat=a.at[1] if a.at else None, state=a.state,
-                         valid_from=a.valid_from, valid_until=a.valid_until)
+    spot = {"point": a.at, "m": a.at_km * 1000 if a.at_km is not None else None}
+    return issues.report(c.conn, c.author, route=rid, kind=a.kind, text=a.text, about=a.about, spot=spot,
+                         parts=_parts(a.parts), state=a.state, valid_from=a.valid_from, valid_until=a.valid_until)
 
 
 class ChangeIssue(mcp.Args):
