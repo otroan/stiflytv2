@@ -251,6 +251,12 @@ if (await js(`hasPhotos()`)) {
     await js(`(async () => { document.getElementById("photo").close(); for (const p of photoList) await send("DELETE", "photos/" + p.id); await loadPhotos(); })()`);
     editing = false;
   } else check("the photos of the area are on the map", await until(`photosFor === area`, 15));
+  // A button among the map's own hides them, and shows them again; the choice is remembered.
+  const pressed = await js(`photoSwitch.getAttribute("aria-pressed")`);
+  await clickOn(`document.querySelector("button.photo-switch")`);
+  check("the photo button hides the photos on the map, and says so", await until(`map.getLayoutProperty("photos", "visibility") === "none" && photoSwitch.getAttribute("aria-pressed") === "false" && localStorage.getItem("stiflyt2.photos") === "off"`, 5));
+  await clickOn(`document.querySelector("button.photo-switch")`);
+  check("and shows them again", await until(`map.getLayoutProperty("photos", "visibility") === "visible" && photoSwitch.getAttribute("aria-pressed") === "true"`, 5), pressed);
   await clickOn(`document.getElementById("tab-routes")`);
   await until(`view === "routes"`, 10);
 } else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));

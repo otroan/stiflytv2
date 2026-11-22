@@ -7,6 +7,17 @@ const hasPhotos = () => (me.features || []).includes("photos");
 const mayAddPhotos = () => hasPhotos() && (me.features || []).some(f => f === "routes" || f === "signs");
 const photoUrl = (p, size) => new URL(`photos/${p.id}/${size}`, API).href;
 const photoBox = document.getElementById("photo");
+// The photos on the map can be switched off and on, by a button among the map's own; the choice is remembered.
+let photosShown = localStorage.getItem("stiflyt2.photos") !== "off";
+const photoSwitch = el("button", { type: "button", class: "photo-switch", onclick: () => {
+  photosShown = !photosShown;
+  localStorage.setItem("stiflyt2.photos", photosShown ? "on" : "off");
+  drawPhotos();
+} }, svg("svg", { width: 18, height: 18, viewBox: "0 0 18 18", "aria-hidden": "true", style: "display:block;margin:auto" },
+  svg("path", { d: "M2.5 6.2c0-.9.7-1.6 1.6-1.6h1.8l1.2-1.8h3.8l1.2 1.8h1.8c.9 0 1.6.7 1.6 1.6v6.6c0 .9-.7 1.6-1.6 1.6H4.1c-.9 0-1.6-.7-1.6-1.6z", fill: "none", stroke: "currentColor", "stroke-width": 1.5, "stroke-linejoin": "round" }),
+  svg("circle", { cx: 9, cy: 9.4, r: 2.6, fill: "none", stroke: "currentColor", "stroke-width": 1.5 })));
+const photoControl = { onAdd() { this.box = el("div", { class: "maplibregl-ctrl maplibregl-ctrl-group", hidden: "" }, photoSwitch); return this.box; }, onRemove() { this.box.remove(); } };
+map.addControl(photoControl, "top-right");
 
 async function loadPhotos() {
   if (!hasPhotos() || !area) { photosAll = null; photosFor = null; return; }
@@ -121,7 +132,11 @@ async function placedPhoto(e) {
 // The photos on the map: a point where each was taken, among the routes and the issues.
 function drawPhotos() {
   whenLoaded(() => {
-    const on = hasPhotos() && photosAll && photosFor === area && (view === "routes" || view === "issues");
+    const here = hasPhotos() && (view === "routes" || view === "issues"), on = here && photosShown && photosAll && photosFor === area;
+    photoControl.box.hidden = !here;
+    photoSwitch.setAttribute("aria-pressed", String(photosShown));
+    photoSwitch.title = photosShown ? "Hide the photos on the map" : "Show the photos on the map";
+    photoSwitch.setAttribute("aria-label", photoSwitch.title);
     for (const id of ["photos", "photo-groups", "photo-counts"]) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
     map.getSource("photos").setData({ type: "FeatureCollection", features: (on ? photosAll : []).filter(p => p.lon !== null).map(p => ({ type: "Feature",
       properties: { id: p.id }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } })) });
