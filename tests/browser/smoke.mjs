@@ -97,6 +97,9 @@ const alone = await onMap(`(() => { const f = lines.features.find(f => f.propert
 if (alone) {
   await sleep(1500);
   const again = await onMap(`map.getCenter().toArray()`);
+  await mouse("mouseMoved", again.x + 2, again.y); await mouse("mouseMoved", again.x, again.y);
+  check("pointing at a route on the map says which, how long it is, and what the stretch is", await until(`Boolean(document.querySelector(".map-tip"))
+    && /\\d km/.test(document.querySelector(".map-tip").textContent) && /This stretch: /.test(document.querySelector(".map-tip").textContent)`, 5), await text(".map-tip"));
   await click(again);
   check("a click on a route on the map opens it", await until(`Boolean(route)`, 10), await text("#panel h2"));
   await js(`visit({ route: null })`);

@@ -161,6 +161,15 @@ dialog#photo::backdrop { background: rgba(18, 26, 32, .72); }
 .photo-large { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; }
 .photo-about { padding: 10px 14px 12px; }
 .photo-about input[type=text] { width: 100%; font: inherit; padding: 4px 6px; }
+/* The small box that says what is under the pointer on the map. */
+.map-tip { pointer-events: none; }
+.map-tip .maplibregl-popup-content { padding: 7px 10px; font-size: 13px; line-height: 1.35; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); }
+.map-tip .maplibregl-popup-tip { display: none; }
+.map-tip .tip-route + .tip-route { margin-top: 4px; }
+.map-tip .tip-stretch { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.map-tip .tip-closed { color: #c62828; font-weight: 600; }
+.map-tip .tip-photo { display: flex; gap: 8px; align-items: center; }
+.map-tip .tip-photo img { border-radius: 3px; object-fit: cover; }
 .photo-drop { margin: 6px 0 10px; padding: 14px 12px; border: 2px dashed #b4bec6; border-radius: 6px; text-align: center; background: #fafbfc; }
 .photo-drop.over { border-color: #3949ab; background: #eef0fb; }
 .maplibregl-ctrl button.photo-switch { color: var(--muted); }

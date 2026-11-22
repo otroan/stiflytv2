@@ -154,6 +154,59 @@ map.on("click", e => {
     el("div", { class: "sub" }, `${at.length} routes go here.`),
     el("ul", {}, ...at.map(r => el("li", {}, el("button", { class: "link", onclick: () => showRoute(r.code) }, r.code), r.name ? ` ${r.name}` : ""))))).addTo(map);
 });
+// What is under the pointer, said in a small box that follows it: the routes of a line, with their length, grading,
+// climb, and whether they are closed or have open issues, and what the stretch is; an issue; a photo.
+const tip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "map-tip", offset: 16, maxWidth: "320px" });
+let tipSays = "";
+const STRETCH = { trail: "path", tractor_road: "tractor road", road: "road", glacier: "glacier", water: "over water", off_trail: "no path", connector: "connector", other: "other" };
+function showTip(e) {
+  const box = [[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]];
+  const visible = id => map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== "none";
+  const hit = layers => { const on = layers.filter(visible); return on.length ? map.queryRenderedFeatures(box, { layers: on })[0] : null; };
+  let key = "", body = null;
+  const group = hit(["photo-groups"]), shot = !group && hit(["photos"]), issue = !group && !shot && hit(["entries", "entry-lines"]);
+  if (group) {
+    key = `g${group.properties.cluster_id}`;
+    body = () => el("div", {}, el("strong", {}, `${group.properties.point_count} photos`), el("div", { class: "sub" }, "Click to come nearer"));
+  } else if (shot) {
+    const p = (photosAll || []).find(x => x.id === shot.properties.id);
+    key = `p${shot.properties.id}`;
+    body = () => el("div", { class: "tip-photo" }, p ? el("img", { src: photoUrl(p, "thumb"), alt: "", width: 96, height: 96 }) : "",
+      el("div", {}, el("strong", {}, p && p.caption || "A photo"), p && whenTaken(p) ? el("div", { class: "sub" }, `Taken ${whenTaken(p)}`) : ""));
+  } else if (issue) {
+    const x = (entries || []).find(y => y.id === issue.properties.id);
+    key = `e${issue.properties.id}`;
+    body = () => x ? el("div", {}, kindTag(x), " ", el("span", { class: "sub" }, placeSaid(x)), el("div", {}, x.text.length > 120 ? `${x.text.slice(0, 120)}…` : x.text)) : el("div", {}, "An issue");
+  } else {
+    const at = routesAt(e.point), line = hit(["routes", "routes-ice"]);
+    if (at.length && !several) {
+      const p = line ? line.properties : {};
+      key = `r${at.map(r => r.id).join()}|${p.edge_id || ""}`;
+      body = () => {
+        const shown = at.slice(0, 3);
+        const about = r => {
+          if (r.on_foot_m === undefined) return "";
+          const closed = typeof inForce === "function" ? inForce(r.id) : [], open = typeof entriesOn === "function" ? entriesOn(r.id).filter(x => x.open && !x.active) : [];
+          return el("div", { class: "sub" }, [km(r.on_foot_m / 1000), r.grading && GRADING[r.grading] ? GRADING[r.grading].split(",")[0].toLowerCase() : null,
+            r.up_m ? `${Math.round(r.up_m).toLocaleString("en")} m up` : null].filter(Boolean).join(", "),
+            ...closed.slice(0, 1).map(x => el("span", { class: "tip-closed" }, x.kind === "closed" ? " Closed" : " Warning")),
+            open.length ? ` ${open.length} open ${open.length === 1 ? "issue" : "issues"}` : "");
+        };
+        return el("div", {},
+          ...shown.map(r => el("div", { class: "tip-route" }, el("strong", {}, r.code), r.name ? ` ${r.name}` : "", about(r))),
+          at.length > shown.length ? el("div", { class: "sub" }, `and ${at.length - shown.length} more`) : "",
+          p.kind ? el("div", { class: "sub tip-stretch" }, `This stretch: ${STRETCH[p.kind] || p.kind}, ${p.marked === true ? "marked" : p.marked === false ? "not marked" : "marking not said"}`
+            + (at.length > 1 ? `, shared by ${at.length} routes` : "")) : "");
+      };
+    }
+  }
+  if (!body) { tip.remove(); tipSays = ""; return; }
+  if (key !== tipSays) { tip.setDOMContent(body()); tipSays = key; }
+  tip.setLngLat(e.lngLat);
+  if (!tip.isOpen()) tip.addTo(map);
+}
+map.getCanvas().addEventListener("mouseleave", () => { tip.remove(); tipSays = ""; });
+map.on("movestart", () => { tip.remove(); tipSays = ""; });
 // The routes in use that run where the map was clicked: of the area, or with none chosen, of any.
 function routesAt(point) {
   const ids = new Map();
@@ -164,7 +217,8 @@ function routesAt(point) {
   return area ? (over ? over.routes.filter(r => ids.has(r.id)) : []) : [...ids].map(([id, code]) => ({ id, code }));
 }
 map.on("mousemove", e => {
-  if (placing) return;
+  if (placing || map.isMoving()) { tip.remove(); tipSays = ""; return; }
+  showTip(e);
   const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
                   ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : [])];
   map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
