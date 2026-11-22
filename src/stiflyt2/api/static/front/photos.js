@@ -3,6 +3,9 @@
 // role as well; the server refuses the rest.
 let photosAll = null, photosFor = null;      // the photos of the area, as fetched
 let photoList = [], photoAt = 0;             // the photos the box steps through, and which is shown
+let photoReport = null;                      // what the last photos added came to: { added, again, unplaced, failed }
+let photoBusy = null;                        // photos being added: { done, of }
+let photoMore = 120;                         // how many of the area's photos the part shows
 const hasPhotos = () => (me.features || []).includes("photos");
 const mayAddPhotos = () => hasPhotos() && (me.features || []).some(f => f === "routes" || f === "signs");
 const photoUrl = (p, size) => new URL(`photos/${p.id}/${size}`, API).href;
@@ -27,20 +30,24 @@ async function loadPhotos() {
 }
 // Photos sent from the page as they are: each its own request, so that one that fails does not stop the rest.
 async function addPhotos(files, params) {
-  const failed = [];
-  let n = 0;
+  const told = { added: 0, again: 0, unplaced: 0, failed: [] };
+  photoBusy = { done: 0, of: files.length };
   hint.hidden = false;
   for (const f of files) {
-    hint.replaceChildren(`Adding photos: ${++n} of ${files.length}…`);
+    hint.replaceChildren(`Adding photos: ${photoBusy.done + 1} of ${files.length}…`);
+    if (view === "photos") renderPhotos();
     const url = new URL("photos", API);
     for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined) url.searchParams.set(k, v);
     try {
       const r = await fetch(url, { method: "POST", headers: { ...THROUGH, "Content-Type": f.type || "application/octet-stream" }, body: f });
-      if (!r.ok) { let said = `${r.status}`; try { said = (await r.json()).detail; } catch {} failed.push(`${f.name}: ${said}`); }
-    } catch (err) { failed.push(`${f.name}: ${err.message}`); }
+      if (!r.ok) { let said = `${r.status}`; try { said = (await r.json()).detail; } catch {} told.failed.push(`${f.name}: ${said}`); }
+      else { const p = await r.json(); if (p.again) told.again++; else { told.added++; if (p.lon === null) told.unplaced++; } }
+    } catch (err) { told.failed.push(`${f.name}: ${err.message}`); }
+    photoBusy.done++;
   }
+  photoBusy = null; photoReport = told;
   hint.hidden = true;
-  problem = failed.length ? `Not added: ${failed.join("; ")}` : null;
+  problem = told.failed.length && view !== "photos" ? `Not added: ${told.failed.join("; ")}` : null;
   if (shownRoute) shownRoute.photos = null;
   if (entryShown) entryShown.photos = null;
   await Promise.all([loadPhotos(), loadEntries()]);
@@ -50,6 +57,41 @@ function addPhotosButton(params, label = "Add photos") {
   if (!mayAddPhotos()) return "";
   const pick = el("input", { type: "file", accept: "image/*,.heic,.heif", multiple: "", hidden: "", onchange: e => { const files = [...e.target.files]; if (files.length) addPhotos(files, params); } });
   return el("span", {}, pick, el("button", { class: "btn", type: "button", title: "Placed where the camera says they were taken; without that, here", onclick: () => pick.click() }, label));
+}
+// The photos of an area as a part of its own: adding many at once (for operations and the route responsible), those
+// that wait to be placed, and all of them, the newest taken first.
+const photoFiles = list => [...list].filter(f => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
+function renderPhotos() {
+  const back = el("div", { class: "backbar" }, el("button", { class: "btn", onclick: () => visit({ area: null, route: null, site: null, entry: null }) }, "‹ Areas"));
+  const all = photosAll || [], waiting = all.filter(p => p.lon === null), R = photoReport;
+  const many = (n, one, more) => `${n} ${n === 1 ? one : more}`;
+  let drop = "";
+  if (mayAddPhotos()) {
+    const pick = el("input", { type: "file", accept: "image/*,.heic,.heif", multiple: "", hidden: "", onchange: e => { const f = photoFiles(e.target.files); if (f.length) addPhotos(f, { area }); } });
+    const folder = el("input", { type: "file", webkitdirectory: "", multiple: "", hidden: "", onchange: e => { const f = photoFiles(e.target.files); if (f.length) addPhotos(f, { area }); } });
+    drop = el("div", { class: "photo-drop", ondragover: e => { e.preventDefault(); e.currentTarget.classList.add("over"); }, ondragleave: e => e.currentTarget.classList.remove("over"),
+        ondrop: e => { e.preventDefault(); e.currentTarget.classList.remove("over"); const f = photoFiles(e.dataTransfer.files); if (f.length) addPhotos(f, { area }); } },
+      pick, folder,
+      el("div", {}, photoBusy ? `Adding photos: ${photoBusy.done} of ${photoBusy.of} done…` : "Drop photos here, or"),
+      photoBusy ? el("progress", { max: photoBusy.of, value: photoBusy.done, style: "width:100%" }) : el("div", { class: "actions", style: "justify-content:center" },
+        el("button", { class: "btn main", type: "button", onclick: () => pick.click() }, "Choose photos"),
+        el("button", { class: "btn", type: "button", title: "Every photo in a folder, as from a trip", onclick: () => folder.click() }, "Choose a folder")),
+      el("div", { class: "sub" }, "Each is placed where its camera says it was taken. The same photo is never kept twice. JPEG, PNG, HEIC and WebP, up to 40 MB."));
+  }
+  panel.replaceChildren(back,
+    el("h2", { class: "area" }, `Photos in ${area}`),
+    el("div", { class: "sub", style: "margin-bottom:8px" }, `${many(all.length, "photo", "photos")} from the routes here. Only those who are signed in see them.`),
+    drop,
+    R ? el("div", { class: R.failed.length ? "error" : "said", role: "status", style: "margin:8px 0" },
+      [R.added && `${many(R.added, "photo", "photos")} added`, R.again && `${many(R.again, "was", "were")} here already`, R.unplaced && `${R.unplaced} with no position from the camera`,
+       R.failed.length && `${R.failed.length} not added`].filter(Boolean).join("; ") + ".",
+      ...R.failed.map(f => el("div", { class: "sub" }, f))) : "",
+    waiting.length ? el("h2", { class: "next" }, `${many(waiting.length, "photo waits", "photos wait")} to be placed`) : "",
+    waiting.length ? el("div", { class: "sub" }, "Open one and choose \u201cPlace it on the map\u201d.") : "",
+    waiting.length ? photoRow(waiting) : "",
+    all.length ? el("h2", { class: "next" }, "All of them, the newest first") : "",
+    all.length ? photoRow(all.slice(0, photoMore)) : el("div", { class: "sub" }, photosAll ? "None yet." : "Loading…"),
+    all.length > photoMore ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => { photoMore += 240; render(); } }, `Show more (${all.length - photoMore} left)`)) : "");
 }
 // A row of thumbnails; a click shows the photo large, with the others of the row to step through.
 function photoRow(list) {
@@ -132,7 +174,7 @@ async function placedPhoto(e) {
 // The photos on the map: a point where each was taken, among the routes and the issues.
 function drawPhotos() {
   whenLoaded(() => {
-    const here = hasPhotos() && (view === "routes" || view === "issues"), on = here && photosShown && photosAll && photosFor === area;
+    const here = hasPhotos() && (view === "routes" || view === "issues" || view === "photos"), on = here && photosShown && photosAll && photosFor === area;
     photoControl.box.hidden = !here;
     photoSwitch.setAttribute("aria-pressed", String(photosShown));
     photoSwitch.title = photosShown ? "Hide the photos on the map" : "Show the photos on the map";

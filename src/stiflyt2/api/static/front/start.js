@@ -1,6 +1,6 @@
 // The front page starts: the browser's back, the tabs, Escape, and what the address asks for.
 window.addEventListener("popstate", () => arrive(here()));
-for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-trips", "trips"]])
+for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-trips", "trips"]])
   document.getElementById(id).addEventListener("click", e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); visit({ view: is, route: null, site: null, entry: null }); });
 
 document.addEventListener("keydown", e => {
@@ -21,6 +21,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     // The parts that are features of their own (ADR-005) are there only for one who has them.
     document.getElementById("tab-trips").hidden = !(me.features || []).includes("trips");
     document.getElementById("tab-issues").hidden = !hasIssues();
+    document.getElementById("tab-photos").hidden = !hasPhotos();
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     document.getElementById("who").replaceChildren(me.name ? (me.operates ? `Signed in as ${me.name}. What you decide about signs is kept under that name. ` : `Signed in as ${me.name}, to look. Changing signs needs the operations role. `) : "Read-only. ", out);
     areas = await get("owned/areas");

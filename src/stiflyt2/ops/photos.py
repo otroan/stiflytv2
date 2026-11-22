@@ -179,7 +179,8 @@ def add(conn, author, data: bytes, *, lon: float | None = None, lat: float | Non
         placed = "hand"
     else:
         lon = lat = placed = None
-    where = (area or "").lower() or (_area_at(conn, lon, lat) if lon is not None else None) or (linked or {}).get("area")
+    # Of the area where it was taken, when a route is near; else of the one it was added in.
+    where = (_area_at(conn, lon, lat) if lon is not None else None) or (area or "").lower() or (linked or {}).get("area") or None
     _keep(path(sha, "original", ext), data)
     _keep(path(sha, "1600"), shown)
     _keep(path(sha, "thumb"), thumb)

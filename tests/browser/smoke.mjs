@@ -221,13 +221,15 @@ if (await js(`hasIssues()`)) {
 if (await js(`hasPhotos()`)) {
   if (EDIT) {
     editing = true;
-    await js(`visit({ view: "issues", entry: null, route: null })`);
-    await until(`view === "issues" && Array.isArray(entries)`, 10);
+    await clickOn(`document.getElementById("tab-photos")`);
+    check("the photos part offers to add photos, by dropping them, choosing them or a folder", await until(`view === "photos" && /Photos in/.test(document.querySelector("#panel h2").textContent)
+      && Boolean(document.querySelector("#panel .photo-drop")) && /Choose a folder/.test(document.querySelector("#panel .photo-drop").textContent)`, 10), await text("#panel"));
     await js(`(async () => { const c = document.createElement("canvas"); c.width = 640; c.height = 480; const g = c.getContext("2d"); g.fillStyle = "#4a7"; g.fillRect(0, 0, 640, 480);
       g.fillStyle = "#fff"; g.fillText(String(Date.now()), 20, 40);
       const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9)); await addPhotos([new File([blob], "trial.jpg", { type: "image/jpeg" })], { area }); })()`);
-    check("a photo with no position is added, and waits to be placed", await until(`(photosAll || []).some(p => p.lon === null) && /to be placed/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
-    await js(`[...document.querySelectorAll("#panel button.link")].find(b => /to be placed/.test(b.textContent)).click()`);
+    check("a photo with no position is added, it says so, and the photo waits to be placed", await until(`(photosAll || []).some(p => p.lon === null)
+      && /1 photo added; 1 with no position from the camera/.test(document.getElementById("panel").textContent) && /1 photo waits to be placed/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
+    await js(`document.querySelector("#panel .photo-row .photo-thumb").click()`);
     check("it is shown large, with a way to place it", await until(`document.getElementById("photo").open && document.querySelector("#photo img.photo-large").complete && document.querySelector("#photo img.photo-large").naturalWidth === 640`, 10), await text("#photo"));
     await js(`[...document.querySelectorAll("#photo button")].find(b => b.textContent === "Place it on the map").click()`);
     await js(`map.jumpTo({ center: map.getCenter().toArray(), zoom: 14 })`);
@@ -250,7 +252,11 @@ if (await js(`hasPhotos()`)) {
     check("clicked, the circle comes nearer and then shows the three in the box", await js(`document.getElementById("photo").open && photoList.length === 3`), await text("#photo .photo-about"));
     await js(`(async () => { document.getElementById("photo").close(); for (const p of photoList) await send("DELETE", "photos/" + p.id); await loadPhotos(); })()`);
     editing = false;
-  } else check("the photos of the area are on the map", await until(`photosFor === area`, 15));
+  } else {
+    check("the photos of the area are on the map", await until(`photosFor === area`, 15));
+    await clickOn(`document.getElementById("tab-photos")`);
+    check("the photos part shows the area's photos, the newest first", await until(`view === "photos" && document.querySelectorAll("#panel .photo-thumb").length === Math.min(photosAll.length, photoMore)`, 15), await text("#panel h2"));
+  }
   // A button among the map's own hides them, and shows them again; the choice is remembered.
   const pressed = await js(`photoSwitch.getAttribute("aria-pressed")`);
   await clickOn(`document.querySelector("button.photo-switch")`);

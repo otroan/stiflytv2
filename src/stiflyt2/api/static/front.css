@@ -161,6 +161,8 @@ dialog#photo::backdrop { background: rgba(18, 26, 32, .72); }
 .photo-large { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; }
 .photo-about { padding: 10px 14px 12px; }
 .photo-about input[type=text] { width: 100%; font: inherit; padding: 4px 6px; }
+.photo-drop { margin: 6px 0 10px; padding: 14px 12px; border: 2px dashed #b4bec6; border-radius: 6px; text-align: center; background: #fafbfc; }
+.photo-drop.over { border-color: #3949ab; background: #eef0fb; }
 .maplibregl-ctrl button.photo-switch { color: var(--muted); }
 .maplibregl-ctrl button.photo-switch[aria-pressed=true] { color: #fff; background: #3949ab; }
 @media (max-width: 760px) {
