@@ -1,12 +1,12 @@
 // The base maps, and the control on the map that switches between them. Shared by the pages: what is
 // chosen in one is what the other opens with.
 const BASEMAPS = [
-  { id: "grey", label: "Grey", source: { type: "raster", tileSize: 256, maxzoom: 18, attribution: "© Kartverket",
+  { id: "grey", label: "Topographic map, grey (Kartverket)", source: { type: "raster", tileSize: 256, maxzoom: 18, attribution: "© Kartverket",
       tiles: ["https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/webmercator/{z}/{y}/{x}.png"] } },
-  { id: "colour", label: "Colour", source: { type: "raster", tileSize: 256, maxzoom: 18, attribution: "© Kartverket",
+  { id: "colour", label: "Topographic map, in colour (Kartverket)", source: { type: "raster", tileSize: 256, maxzoom: 18, attribution: "© Kartverket",
       tiles: ["https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png"] } },
   // To look at beside Kartverket's. Not a source for the routes: nothing is traced from it.
-  { id: "osm", label: "OpenStreetMap", source: { type: "raster", tileSize: 256, maxzoom: 19, attribution: "© OpenStreetMap contributors",
+  { id: "osm", label: "OpenStreetMap (made by its users)", source: { type: "raster", tileSize: 256, maxzoom: 19, attribution: "© OpenStreetMap contributors",
       tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"] } },
 ];
 const baseChosen = () => { const b = localStorage.getItem("stiflyt2.base"); return BASEMAPS.some(m => m.id === b) ? b : "grey"; };
@@ -29,7 +29,7 @@ class BaseControl {
     this.box.className = "maplibregl-ctrl maplibregl-ctrl-group basemaps";
     const open = document.createElement("button");
     open.type = "button";
-    open.title = "Base map: grey, colour or OpenStreetMap";
+    open.title = "Base map: Kartverket's topographic map in grey or in colour, or OpenStreetMap";
     open.setAttribute("aria-label", "Base map");
     open.setAttribute("aria-expanded", "false");
     open.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" style="display:block;margin:auto"><path d="M9 2l7 3.6L9 9.2 2 5.6z" fill="none" stroke="#16242e" stroke-width="1.5" stroke-linejoin="round"/><path d="M2 9l7 3.6L16 9M2 12.4L9 16l7-3.6" fill="none" stroke="#16242e" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
