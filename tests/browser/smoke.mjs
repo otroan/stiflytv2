@@ -240,6 +240,15 @@ if (await js(`hasPhotos()`)) {
     await js(`[...document.querySelectorAll("#photo button")].find(b => b.textContent === "Take it away").click()`);
     check("taken away, the trial photo is gone", await until(`!(photosAll || []).some(p => p.id === ${JSON.stringify(shot)})`, 10));
     await js(`document.getElementById("photo").open && document.getElementById("photo").close()`);
+    // Three taken at one spot are one circle with their number; clicked, it comes nearer, and then shows the three together.
+    const trio = await js(`(async () => { const c = map.getCenter().toArray(), files = [];
+      for (const i of [1, 2, 3]) { const k = document.createElement("canvas"); k.width = 320; k.height = 240; const g = k.getContext("2d"); g.fillStyle = "#" + (i * 3) + "a7"; g.fillRect(0, 0, 320, 240);
+        g.fillStyle = "#fff"; g.fillText(i + " " + Date.now(), 20, 40); files.push(new File([await new Promise(r => k.toBlob(r, "image/jpeg", 0.9))], "t" + i + ".jpg", { type: "image/jpeg" })); }
+      await addPhotos(files, { area, lon: c[0], lat: c[1] }); map.jumpTo({ center: c, zoom: 12 }); return JSON.stringify(c); })()`);
+    check("photos at one spot are one circle with their number", await until(`map.queryRenderedFeatures({ layers: ["photo-groups"] }).some(f => f.properties.point_count === 3)`, 15));
+    for (let i = 0; i < 8 && !(await js(`document.getElementById("photo").open`)); i++) { await click(await onMap(trio)); await sleep(1200); }
+    check("clicked, the circle comes nearer and then shows the three in the box", await js(`document.getElementById("photo").open && photoList.length === 3`), await text("#photo .photo-about"));
+    await js(`(async () => { document.getElementById("photo").close(); for (const p of photoList) await send("DELETE", "photos/" + p.id); await loadPhotos(); })()`);
     editing = false;
   } else check("the photos of the area are on the map", await until(`photosFor === area`, 15));
   await clickOn(`document.getElementById("tab-routes")`);

@@ -11,7 +11,7 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, photos: { type: "geojson", data: empty },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
     },
     layers: [
       ...baseLayers(),
@@ -55,9 +55,15 @@ const map = new maplibregl.Map({
         paint: { "circle-radius": ["case", ["get", "chosen"], 9, ["get", "open"], 6.5, 4.5],
                  "circle-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
                  "circle-stroke-color": ["case", ["get", "chosen"], css("--ink"), "#fff"], "circle-stroke-width": ["case", ["get", "chosen"], 3, 1.5] } },
-      // Where a photo was taken (the feature `photos`).
-      { id: "photos", type: "circle", source: "photos", minzoom: 11, layout: { visibility: "none" },
-        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 16, 6], "circle-color": PHOTO_BLUE, "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } },
+      // Where a photo was taken (the feature `photos`); photos near each other are one circle with their number.
+      { id: "photo-groups", type: "circle", source: "photos", filter: ["has", "point_count"], layout: { visibility: "none" },
+        paint: { "circle-radius": ["step", ["get", "point_count"], 11, 10, 14, 50, 18], "circle-color": PHOTO_BLUE, "circle-opacity": 0.9,
+                 "circle-stroke-color": "#fff", "circle-stroke-width": 2 } },
+      { id: "photo-counts", type: "symbol", source: "photos", filter: ["has", "point_count"], layout: { visibility: "none",
+          "text-field": ["get", "point_count_abbreviated"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-allow-overlap": true },
+        paint: { "text-color": "#fff" } },
+      { id: "photos", type: "circle", source: "photos", filter: ["!", ["has", "point_count"]], layout: { visibility: "none" },
+        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 4, 16, 6.5], "circle-color": PHOTO_BLUE, "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } },
       { id: "entry-pick-at", type: "circle", source: "entry-pick", filter: ["==", ["geometry-type"], "Point"],
         paint: { "circle-radius": 7, "circle-color": "#fff", "circle-stroke-color": ISSUE_AMBER, "circle-stroke-width": 3 } },
     ],
@@ -129,7 +135,10 @@ map.on("click", e => {
   }
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
   const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
-  const shot = map.getLayoutProperty("photos", "visibility") === "visible" && map.queryRenderedFeatures(box, { layers: ["photos"] })[0];
+  const shown = map.getLayoutProperty("photos", "visibility") === "visible";
+  const group = shown && map.queryRenderedFeatures(box, { layers: ["photo-groups"] })[0];
+  if (group) { openGroup(group); return; }
+  const shot = shown && map.queryRenderedFeatures(box, { layers: ["photos"] })[0];
   if (shot) { openPhoto(shot.properties.id); return; }
   const issue = map.getLayoutProperty("entries", "visibility") === "visible" && map.queryRenderedFeatures(box, { layers: ["entries", "entry-lines"] })[0];
   if (issue) { openEntry(issue.properties.id); return; }
@@ -157,7 +166,7 @@ function routesAt(point) {
 map.on("mousemove", e => {
   if (placing) return;
   const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
-                  ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos"] : [])];
+                  ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : [])];
   map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);

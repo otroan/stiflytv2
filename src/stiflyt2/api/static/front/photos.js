@@ -93,6 +93,17 @@ function drawPhoto() {
 photoBox.addEventListener("keydown", e => { if (e.key === "ArrowLeft" && photoList.length > 1) { photoAt = (photoAt - 1 + photoList.length) % photoList.length; drawPhoto(); } if (e.key === "ArrowRight" && photoList.length > 1) { photoAt = (photoAt + 1) % photoList.length; drawPhoto(); } });
 photoBox.addEventListener("click", e => { if (e.target === photoBox) photoBox.close(); });
 
+// A circle of photos: a click comes nearer, until they part; photos taken at one spot are shown in the box together.
+async function openGroup(group) {
+  const source = map.getSource("photos"), id = group.properties.cluster_id;
+  try {
+    const zoom = await source.getClusterExpansionZoom(id);
+    if (zoom <= 17 && zoom > map.getZoom()) { map.easeTo({ center: group.geometry.coordinates, zoom, animate: !calm }); return; }
+    const leaves = await source.getClusterLeaves(id, 200, 0);
+    const list = leaves.map(f => (photosAll || []).find(p => p.id === f.properties.id)).filter(Boolean);
+    if (list.length) showPhoto(list, 0);
+  } catch { /* the map is as it was */ }
+}
 // Where a photo was taken: the next click on the map.
 function placePhoto(id) {
   placing = { photo: id };
@@ -111,7 +122,7 @@ async function placedPhoto(e) {
 function drawPhotos() {
   whenLoaded(() => {
     const on = hasPhotos() && photosAll && photosFor === area && (view === "routes" || view === "issues");
-    map.setLayoutProperty("photos", "visibility", on ? "visible" : "none");
+    for (const id of ["photos", "photo-groups", "photo-counts"]) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
     map.getSource("photos").setData({ type: "FeatureCollection", features: (on ? photosAll : []).filter(p => p.lon !== null).map(p => ({ type: "Feature",
       properties: { id: p.id }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } })) });
   });
