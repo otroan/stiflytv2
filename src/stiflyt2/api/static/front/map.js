@@ -11,7 +11,7 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, since: { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
     },
     layers: [
       ...baseLayers(),
@@ -27,6 +27,9 @@ const map = new maplibregl.Map({
       { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
       { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 5], "line-dasharray": [0, 2], "line-opacity": 0.75 } },
+      // How long since each stretch was inspected, or had a work party (the feature `reports`): the latest on top.
+      { id: "since", type: "line", source: "since", layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "t"] },
+        paint: { "line-color": ["get", "colour"], "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 6] } },
       { id: "route-open", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6] } },
       { id: "route-open-ice", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
@@ -121,6 +124,7 @@ function drawMap() {
 map.on("click", e => {
   if (placing && placing.issue) { placedEntry(e); return; }
   if (placing && placing.photo) { placedPhoto(e); return; }
+  if (placing && placing.reportPart !== undefined) { placedReportPart(e); return; }
   if (placing === "site") { stopPlacing(); change(async () => { open = (await send("POST", "signs/sites", { area, lon: e.lngLat.lng, lat: e.lngLat.lat })).key; }); return; }
   if (placing && placing.to) {
     const wanted = { post: placing.to, lon: e.lngLat.lng, lat: e.lngLat.lat };

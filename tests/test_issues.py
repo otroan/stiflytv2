@@ -15,6 +15,7 @@ from stiflyt2.config import settings
 from stiflyt2.domain import routes
 from stiflyt2.domain import undo as routes_undo
 from stiflyt2.domain.places import Invalid
+from stiflyt2.ops import along as on_route
 from stiflyt2.ops import anchor, issues, undo
 
 AUTHOR = Author("Test Editor", "viewer")
@@ -69,7 +70,7 @@ def off_line(conn, edge, lonlat):
 
 def test_an_issue_is_at_a_spot_along_parts_of_a_route_or_of_the_whole_route(conn):
     route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
-    long_m = issues._Route(conn, route).metres
+    long_m = on_route.Route(conn, route).metres
     edge, beside = along(conn, route)
     tree = act(conn, lambda: issues.report(conn, AUTHOR, route=route, kind="clearing", text="A birch across the path",
                                             spot={"point": beside}))

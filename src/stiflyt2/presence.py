@@ -22,7 +22,7 @@ features.feature("presence", "see who else is at work in the pages now, and be s
                  "ask to be given the feature `presence`")
 
 FRESH_S = 90            # a page that has not said where it is for this long is closed
-PAGES = ("editor", "routes", "signs", "trips", "issues", "photos")
+PAGES = ("editor", "routes", "signs", "trips", "issues", "photos", "reports")
 _TEXT = re.compile(r"[^\w\s/().,'’–-]", re.UNICODE)
 
 

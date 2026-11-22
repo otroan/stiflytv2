@@ -170,6 +170,15 @@ dialog#photo::backdrop { background: rgba(18, 26, 32, .72); }
 .map-tip .tip-closed { color: #c62828; font-weight: 600; }
 .map-tip .tip-photo { display: flex; gap: 8px; align-items: center; }
 .map-tip .tip-photo img { border-radius: 3px; object-fit: cover; }
+/* Reports (the feature `reports`): how long since, as skisporet.no shows a track. */
+.tag.report { background: #e3ecf6; color: #1d4f7a; }
+.tag.report.work { background: #e2f1e3; color: #1e5b22; }
+.tag.report.note { background: #ece9f5; color: #4a3d7a; }
+.age-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; flex: none; align-self: center; }
+.since-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
+.since-legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: 3px; margin-right: 4px; }
+ol.covers { margin: 4px 0; padding-left: 20px; color: var(--ink); }
+ol.covers li { margin-bottom: 6px; }
 .photo-drop { margin: 6px 0 10px; padding: 14px 12px; border: 2px dashed #b4bec6; border-radius: 6px; text-align: center; background: #fafbfc; }
 .photo-drop.over { border-color: #3949ab; background: #eef0fb; }
 .maplibregl-ctrl button.photo-switch { color: var(--muted); }

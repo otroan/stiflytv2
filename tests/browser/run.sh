@@ -32,7 +32,7 @@ export STIFLYT2_API_DSN="dbname=stiflyt2_test user=stiflyt2_api $conn" STIFLYT2_
 import psycopg
 with psycopg.connect(dbname='stiflyt2_test', autocommit=True) as c:
     c.execute('SET ROLE stiflyt2_owner')
-    for key in ('trips', 'presence', 'issues', 'photos'):
+    for key in ('trips', 'presence', 'issues', 'photos', 'reports'):
         c.execute(\"INSERT INTO access.feature (key, state, by) VALUES (%s, 'all', 'the walk-through') ON CONFLICT (key) DO UPDATE SET state = 'all'\", (key,))
 "
 nohup .venv/bin/uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101 --app-dir src > /tmp/stiflyt2-test-viewer.log 2>&1 &

@@ -148,8 +148,17 @@ def _entry(conn, entry: str | None) -> dict | None:
     return found[0]
 
 
+def _report(conn, report: str | None) -> dict | None:
+    if not report:
+        return None
+    found = _rows(conn, "SELECT id::text, area FROM ops.report WHERE id = %(r)s::uuid", {"r": report}) if _uuid(report) else []
+    if not found:
+        raise NotFound("no such report")
+    return found[0]
+
+
 def add(conn, author, data: bytes, *, lon: float | None = None, lat: float | None = None, entry: str | None = None,
-        caption: str | None = None, area: str | None = None, origin: str = "upload") -> dict:
+        caption: str | None = None, area: str | None = None, origin: str = "upload", report: str | None = None) -> dict:
     """Keep a photo. Where it was taken is the camera's position, else `lon`, `lat`, else it waits to be placed.
 
     The same file added again is the photo already kept, as it is (`again`).
@@ -173,6 +182,7 @@ def add(conn, author, data: bytes, *, lon: float | None = None, lat: float | Non
     camera = _camera(img)
     shown, thumb, width, height = _copies(img)
     linked = _entry(conn, entry)
+    of_report = _report(conn, report)
     if camera["lon"] is not None:
         lon, lat, placed = camera["lon"], camera["lat"], "camera"
     elif lon is not None and lat is not None:
@@ -180,20 +190,22 @@ def add(conn, author, data: bytes, *, lon: float | None = None, lat: float | Non
     else:
         lon = lat = placed = None
     # Of the area where it was taken, when a route is near; else of the one it was added in.
-    where = (_area_at(conn, lon, lat) if lon is not None else None) or (area or "").lower() or (linked or {}).get("area") or None
+    where = ((_area_at(conn, lon, lat) if lon is not None else None) or (area or "").lower() or (linked or {}).get("area")
+             or (of_report or {}).get("area") or None)
     _keep(path(sha, "original", ext), data)
     _keep(path(sha, "1600"), shown)
     _keep(path(sha, "thumb"), thumb)
     made = conn.execute(f"""
         INSERT INTO ops.photo (sha256, ext, bytes, width, height, taken_at, geom, placed, facing, area, caption,
-                               entry_id, origin, made_by, updated_by)
+                               entry_id, report_id, origin, made_by, updated_by)
         VALUES (%(sha)s, %(ext)s, %(bytes)s, %(w)s, %(h)s, %(taken)s,
                 CASE WHEN %(lon)s::float8 IS NULL THEN NULL ELSE {_POINT} END, %(placed)s, %(facing)s, %(area)s,
-                %(caption)s, %(entry)s::uuid, %(origin)s, %(who)s, %(who)s)
+                %(caption)s, %(entry)s::uuid, %(report)s::uuid, %(origin)s, %(who)s, %(who)s)
         RETURNING id::text""",
         {"sha": sha, "ext": ext, "bytes": len(data), "w": width, "h": height, "taken": camera["taken_at"],
          "lon": lon, "lat": lat, "placed": placed, "facing": camera["facing"], "area": where,
          "caption": (caption or "").strip()[:500] or None, "entry": linked["id"] if linked else None,
+         "report": of_report["id"] if of_report else None,
          "origin": origin[:200], "who": str(author)}).fetchone()[0]
     _event(conn, author, made, "photo.added", {"placed": placed, "entry": linked["id"] if linked else None, "origin": origin[:200]})
     return one(conn, made)
@@ -201,14 +213,14 @@ def add(conn, author, data: bytes, *, lon: float | None = None, lat: float | Non
 
 _SHOWN = """
     SELECT p.id::text, p.sha256, p.ext, p.bytes, p.width, p.height, p.taken_at, p.placed, p.facing, p.area, p.caption,
-           p.entry_id::text AS entry, p.origin, p.made_at, p.made_by, p.updated_at, p.updated_by,
+           p.entry_id::text AS entry, p.report_id::text AS report, p.origin, p.made_at, p.made_by, p.updated_at, p.updated_by,
            round(ST_X(ST_Transform(p.geom, 4326))::numeric, 6)::float8 AS lon,
            round(ST_Y(ST_Transform(p.geom, 4326))::numeric, 6)::float8 AS lat
     FROM ops.photo p"""
 
 
 def listing(conn, area: str | None = None, route: str | None = None, entry: str | None = None,
-            unplaced: bool = False) -> list[dict]:
+            unplaced: bool = False, report: str | None = None) -> list[dict]:
     """The photos of an area, those taken near a route (within 75 m of its line), those of an issue, or those that
     wait to be placed: the newest taken first."""
     where, params = [], {}
@@ -227,6 +239,11 @@ def listing(conn, area: str | None = None, route: str | None = None, entry: str 
             raise NotFound("no such issue")
         where.append("p.entry_id = %(entry)s::uuid")
         params["entry"] = entry
+    if report:
+        if not _uuid(report):
+            raise NotFound("no such report")
+        where.append("p.report_id = %(report)s::uuid")
+        params["report"] = report
     if unplaced:
         where.append("p.geom IS NULL")
     sql = _SHOWN + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY p.taken_at DESC NULLS LAST, p.made_at DESC"

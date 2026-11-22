@@ -218,7 +218,7 @@ function entrySaid(h) {
 // `entryAsk.draft`, so that it is drawn again as it was when parts are added on the map.
 function entryForm() {
   const was = entryAsk.id ? (entryShown && entryShown.told) || (entries || []).find(x => x.id === entryAsk.id) : null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   const d = entryAsk.draft || (entryAsk.draft = was
     ? { kind: was.kind, text: was.text, about: was.about, from: was.valid_from || "", until: was.valid_until || "", parts: [...was.parts], lines: [...was.lines], changed: false }
     : { kind: "clearing", text: "", about: "spot", from: today, until: "", parts: [], lines: [], changed: false });

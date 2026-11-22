@@ -97,6 +97,7 @@ function renderRoute() {
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",
       el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")),
     ...(hasIssues() ? routeIssues(r) : []),
+    ...(hasReports() ? routeUpkeep(r) : []),
     ...(hasPhotos() ? routePhotos(r) : []));
   if (D && H) drawProfile(profile, D, H);
 }

@@ -41,10 +41,11 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get(V1)
     def listed(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
                route: Annotated[str | None, Query(max_length=40)] = None,
-               entry: Annotated[str | None, Query(max_length=40)] = None, unplaced: bool = False) -> list[dict]:
-        """The photos of an area, of a route (taken within 75 m of it), of an issue, or those waiting to be placed."""
+               entry: Annotated[str | None, Query(max_length=40)] = None, unplaced: bool = False,
+               report: Annotated[str | None, Query(max_length=40)] = None) -> list[dict]:
+        """The photos of an area, of a route (taken within 75 m of it), of an issue or a report, or those to be placed."""
         with read.connection() as conn:
-            return photos.listing(conn, area, route, entry, unplaced)
+            return photos.listing(conn, area, route, entry, unplaced, report)
 
     @app.post(V1, status_code=201)
     async def add(request: Request, author: Adder,
@@ -53,12 +54,14 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                   entry: Annotated[str | None, Query(max_length=40)] = None,
                   caption: Annotated[str | None, Query(max_length=500)] = None,
                   area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
-                  origin: Annotated[str | None, Query(max_length=200)] = None) -> dict:
+                  origin: Annotated[str | None, Query(max_length=200)] = None,
+                  report: Annotated[str | None, Query(max_length=40)] = None) -> dict:
         """Add a photo: the file as the body. Placed where the camera says, else at `lon`, `lat`, else it waits."""
         data = await request.body()
         with write.connection() as conn:
             return undo.kept_as_made(conn, author, lambda: photos.add(
-                conn, author, data, lon=lon, lat=lat, entry=entry, caption=caption, area=area, origin=origin or "upload"))
+                conn, author, data, lon=lon, lat=lat, entry=entry, caption=caption, area=area, origin=origin or "upload",
+                report=report))
 
     @app.get(f"{V1}/{{photo}}")
     def single(photo: Id, _: May) -> dict:

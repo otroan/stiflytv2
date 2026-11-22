@@ -22,18 +22,18 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: ["signs", "trips", "issues", "photos"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue") };
+  return { view: ["signs", "trips", "issues", "photos", "reports"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
 }
 function addressOf(at) {
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos"].includes(at.view) ? at.view : null,
+  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports"].includes(at.view) ? at.view : null,
       route: at.view === "routes" && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
-      issue: at.view === "issues" && at.area ? at.entry : null }))
+      issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
 }
 function visit(next, sure) {
-  const to = { view, area, route, site: open, entry: entryOpen, ...next };
+  const to = { view, area, route, site: open, entry: entryOpen, report: reportOpen, ...next };
   // Leaving a sign site with decisions that are not saved: it is asked first what is to become of them.
   if (!sure && view === "signs" && open && pending.changes.length && (to.view !== "signs" || to.area !== area || (to.site || null) !== open)) {
     beforeLeavingSite(() => visit(next, true));
@@ -51,6 +51,8 @@ function arrive(to, fitting = true) {
   view = to.view; route = view === "routes" && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
   entryOpen = view === "issues" && wanted ? to.entry || null : null;
   if (view !== "issues" || entryOpen) entryAsk = null;
+  reportOpen = view === "reports" && wanted ? to.report || null : null;
+  if (view !== "reports" || reportOpen) reportAsk = null;
   editing = null; problem = null;
   if (view !== "signs" || moved) lookingAtAdrift = false;
   leaveProfile(); pointRoute(null);
@@ -60,9 +62,10 @@ function arrive(to, fitting = true) {
   if (!moved) { render(); if (goingIn && found) freshen(); return Promise.resolve(); }
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
   entries = null; entriesFor = null; entriesProblem = null; entryShown = null; photosAll = null; photosFor = null;
+  reportsAll = upkeep = sinceLines = null; reportsFor = null; reportShown = null;
   if (area) localStorage.setItem("stiflyt2.area", area); else localStorage.removeItem("stiflyt2.area");
   render();
-  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos()]) : Promise.resolve()).then(() => { if (fitting) fit(); });
+  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos(), loadReports()]) : Promise.resolve()).then(() => { if (fitting) fit(); });
 }
 async function loadArea() {
   const asked = area;
@@ -128,7 +131,7 @@ async function change(request) {
 }
 function render() {
   document.body.dataset.view = view;
-  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-trips", "trips"]]) {
+  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-trips", "trips"]]) {
     const tab = document.getElementById(id);
     if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
     tab.href = addressOf({ view: is, area }).href;
@@ -138,6 +141,7 @@ function render() {
   else if (view === "trips") renderTrips();
   else if (view === "issues") renderIssues();
   else if (view === "photos") renderPhotos();
+  else if (view === "reports") renderReports();
   else if (!found) panel.replaceChildren(foundProblem ? el("div", { class: "error" }, `Could not get the signs: ${foundProblem}`) : el("div", { class: "sub" }, "Working out the signs…"));
   else if (lookingAtAdrift && !open) renderAdrift();
   else { const site = open && found.sites.find(s => s.key === open); if (site) renderSite(site); else renderList(); }
@@ -148,6 +152,7 @@ function render() {
   drawTrip();
   drawIssues();
   drawPhotos();
-  const url = addressOf({ view, area, route, site: open, entry: entryOpen });       // what a change of yours led to is in the address too
+  drawReports();
+  const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

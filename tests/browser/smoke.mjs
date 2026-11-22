@@ -270,6 +270,35 @@ if (await js(`hasPhotos()`)) {
   await until(`view === "routes"`, 10);
 } else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));
 
+// Reports (the feature `reports`): how long since each route was inspected, as a list and on the map; a report made in the form.
+if (await js(`hasReports()`)) {
+  await clickOn(`document.getElementById("tab-reports")`);
+  check("the reports part lists the routes, those longest since first, with what the colours mean", await until(`view === "reports" && Array.isArray(upkeep)
+    && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
+  if (EDIT) {
+    editing = true;
+    const target = await js(`upkeep[0].code`);
+    await js(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Report").click()`);
+    await until(`Boolean(reportAsk) && Boolean(document.querySelector("form.entry-form select"))`, 10);
+    await js(`(() => { const s = [...document.querySelectorAll("form.entry-form select")].find(x => x.getAttribute("aria-label") === "Add a route"); s.value = upkeep[0].id; s.dispatchEvent(new Event("change")); })()`);
+    await until(`reportAsk.covers.length === 1`, 5);
+    await js(`document.querySelector("form.entry-form input[name=condition]").click()`);
+    await js(`(() => { const t = document.querySelector("form.entry-form textarea"); t.value = "Trial inspection"; t.dispatchEvent(new Event("input")); document.querySelector("form.entry-form").requestSubmit(); })()`);
+    check("a report is made in the form, and opens", await until(`Boolean(reportOpen) && /Inspection/.test(document.querySelector("#panel h2").textContent) && /Trial inspection/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
+    check("the route it covered is no longer never inspected, and is green on the map", await until(`upkeep.find(r => r.code === ${JSON.stringify(target)}).inspection !== null
+      && map.getSource("since") && sinceLines.length > 0`, 10));
+    await js(`showRoute(${JSON.stringify(target)})`);
+    check("the route says when it was last inspected", await until(`/Last inspected: \\d/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
+    await js(`openReport(reportsAll.find(r => r.text === "Trial inspection").id)`);
+    await until(`Boolean(reportOpen) && Boolean([...document.querySelectorAll("#panel button")].find(b => b.textContent === "Take it away"))`, 10);
+    await js(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Take it away").click()`);
+    check("taken away, the trial report is gone", await until(`!reportOpen && !(reportsAll || []).some(r => r.text === "Trial inspection")`, 10));
+    editing = false;
+  }
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("the reports part is not there for one who does not have the feature", await js(`document.getElementById("tab-reports").hidden`));
+
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   const holds = await js("me.role"), where = await js("area");
@@ -531,7 +560,7 @@ if (EDIT) {
 } else console.log("    (not asked to change anything: undo, redo, dragging, places, saving, changing route and signs are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
-const boxes = said.filter(s => !/^Take .* into |^Take this (issue|photo) away/.test(s));       // those ask before two places are made one, or an issue is taken away, and are answered yes
+const boxes = said.filter(s => !/^Take .* into |^Take this (issue|photo|report) away/.test(s));       // those ask before two places are made one, or an issue is taken away, and are answered yes
 check("and put up no box to say that something went wrong", boxes.length === 0, boxes.join(" | "));
 const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r))      // that one was asked for as a reader, to be refused
   && !(TOKEN && r === "403 /api/v1/here"));            // and a script is not somebody at work in the pages

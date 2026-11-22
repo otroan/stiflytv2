@@ -1351,6 +1351,38 @@ inspections are to come as well.
 Not yet: notices in what is handed to UT.no; replacing a sign tied to the
 sign order; planning a work trip round the open issues.
 
+## Reports: when each route was last inspected and worked on
+
+Inspections, work parties (dugnad) and diary notes, with the feature
+`reports`; reporting needs the editor or operations role as well. A report
+says what was done on which day, and where: whole routes, or parts of them
+(two clicks on the route, or from and to in km), several routes in one
+report. An inspection says the state found (good, fair, poor); a work party
+how many people and hours, and what was done (clearing, marking, signs,
+bridges, boards, drainage). The report itself, as a document, is kept
+elsewhere (SharePoint): a report here links to it. A report may say issues
+are done, and photos may be of it.
+
+From the reports, each time it is asked, comes when each route was last
+inspected and last had a work party, as skisporet.no shows when a ski track
+was last prepared: the part **Reports** lists the routes of an area, those
+longest since first, and colours the map stretch by stretch (green under
+half the interval, yellow under all of it, red over it, grey never). A route
+is due for inspection every third year and a work party every tenth;
+between, the issues reported on it say what is to be done. A route's panel
+says when it was last inspected and worked on, and lists its reports.
+
+Where a report was is kept as issues keep it (positions along stretches,
+ADR-004); for a whole route, the stretches it walked that day, so that a
+route carried on later is not inspected where it was not. Kept in
+`ops.report` and `ops.report_part` (import migration `0020`).
+
+Over the API: `GET /api/v1/reports?area=|route=`, `GET /api/v1/reports/status?area=`,
+`GET /api/v1/reports/coverage?area=&kind=inspection|work`, `GET` one,
+`POST`, `PATCH`, `DELETE`, `POST /api/v1/reports/parts`,
+`GET|POST /api/v1/reports/undo`. An assistant has `route_upkeep` and
+`report_work`.
+
 ## Photos: a feature of its own
 
 Photos from the routes, for those who are signed in and have the feature

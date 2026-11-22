@@ -49,6 +49,14 @@ step is still started on their word; the details of each are further down.
    reports and inspections as entries that close issues; notices handed to
    UT.no; trips planned round the open issues; the parts of an issue on the
    route's height profile.
+   *Reports begun 2026-11-23* as the feature `reports` (README, "Reports"):
+   inspections, work parties and diary notes; how long since, as a list and
+   a map. Decided: inspection every 3 years, a work party every 10, else as
+   the issues say; documents stay in SharePoint (a link). Left: the fields
+   of the form DNT Oslo og omegn uses today; taking in the history each area
+   contact keeps (the route responsible has Breheimen's); trips planned
+   round what is due; reporting from the field on a phone; the diary as a
+   route's timeline of everything.
 3. **Photos and GPX.** A photo is placed by the position in its file and can
    hang on an entry or a sign site. A GPX track is a layer and something to
    compare a route with. Whether a route may be laid on tracks is not

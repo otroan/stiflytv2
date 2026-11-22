@@ -53,6 +53,9 @@ _WHAT = {
     "photo.added": "a photo added",
     "photo.changed": "what was said of a photo",
     "photo.taken_away": "a photo taken away",
+    "report.added": "a report added",
+    "report.changed": "what was said in a report",
+    "report.taken_away": "a report taken away",
 }
 
 

@@ -66,6 +66,8 @@ async function send(method, path, body, more) {
 }
 const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Today where the person is, as a date field says it: not in UTC, which is yesterday until after midnight here.
+const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const km = v => `${v.toLocaleString("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 function svg(tag, attrs = {}, ...children) {
   const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -82,7 +84,7 @@ function go(center, zoom) {
 // who have it see this one the same way.
 function presence(me, box, where) {
   if (!box || !me || !me.name || !(me.features || []).includes("presence")) return;
-  const PAGE = { editor: "route editor", routes: "routes", signs: "signs", trips: "trips", issues: "issues", photos: "photos" };
+  const PAGE = { editor: "route editor", routes: "routes", signs: "signs", trips: "trips", issues: "issues", photos: "photos", reports: "reports" };
   let every = null;
   const tell = async () => {
     if (document.hidden) return;

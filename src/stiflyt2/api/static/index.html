@@ -2365,7 +2365,7 @@ function renderOwnedRoute(route, problem, note) {
   }
 
   // Discontinued: given up in the terrain and kept here. Said with why and since when.
-  const D = route.discontinued, today = new Date().toISOString().slice(0, 10);
+  const D = route.discontinued, today = localDay();
   const whyInput = el("input", { type: "text", value: D ? D.why : "", placeholder: "Why, e.g. danger of rockfall", "aria-label": "Why the route is discontinued", maxlength: 400, required: true });
   const sinceInput = el("input", { type: "date", value: D ? D.since : today, max: today, "aria-label": "Discontinued since", required: true });
   const discForm = el("form", { hidden: true, class: "actions", style: "flex-direction:column;align-items:stretch", onsubmit: e => { e.preventDefault();
