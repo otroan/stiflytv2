@@ -43,7 +43,8 @@ THUMB_PX = 240
 NEAR_ROUTE_M = 75           # a route's photos are those taken this near its line
 AREA_M = 2000               # a photo is of the area of the route nearest it, this near
 SIZES = ("thumb", "1600", "original")
-_EXT = {"JPEG": "jpg", "PNG": "png", "HEIF": "heic", "WEBP": "webp"}
+# MPO is a JPEG with more pictures in it (depth, HDR), as phones write them: it is shown as the JPEG it begins with.
+_EXT = {"JPEG": "jpg", "MPO": "jpg", "PNG": "png", "HEIF": "heic", "WEBP": "webp"}
 _TYPE = {"jpg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp"}
 _POINT = "ST_Transform(ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326), 25833)"
 

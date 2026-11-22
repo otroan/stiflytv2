@@ -104,6 +104,15 @@ def test_a_photo_is_kept_once_where_the_camera_says_it_was_taken_with_copies_tha
         act(conn, lambda: photos.add(conn, AUTHOR, b"not a picture at all"))
 
 
+def test_a_photo_as_a_phone_writes_it_with_more_pictures_in_it_is_kept_as_jpeg(conn):
+    first, second = Image.new("RGB", (400, 300), (5, 90, 5)), Image.new("RGB", (400, 300), (90, 5, 5))
+    buf = io.BytesIO()
+    first.save(buf, "MPO", save_all=True, append_images=[second])
+    assert Image.open(io.BytesIO(buf.getvalue())).format == "MPO"
+    p = act(conn, lambda: photos.add(conn, AUTHOR, buf.getvalue()))
+    assert (p["ext"], p["width"], p["height"]) == ("jpg", 400, 300)
+
+
 def test_a_photo_with_no_position_waits_to_be_placed_and_can_show_an_issue(conn):
     route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
     p = act(conn, lambda: photos.add(conn, AUTHOR, jpeg(colour=(10, 20, 30))))
