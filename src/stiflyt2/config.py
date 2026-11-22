@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # what one maintainer looks after, and this is the one chosen until a person chooses otherwise.
     home_maintainer: str = "DNT | DNT Oslo og omegn"
     data_dir: Path = Path("var/raw")
+    # Photos, each kept once by the digest of its file, with a smaller copy to show and a thumbnail. Not in the
+    # nightly copies off the server: they are to go to object storage (docs/TODO.md).
+    photos_dir: Path = Path("var/photos")
     user_agent: str = "stiflyt2-importer/0.1 (DNT route maintenance)"
     # A delivery in which more than this share of a layer's features changed is refused.
     max_churn: float = 0.5

@@ -67,6 +67,7 @@ def database(tmp_path_factory):
     # The same for sign-in: the tests run the service locally unless one of them says otherwise.
     settings.google_client_id = settings.google_client_secret = settings.session_secret = settings.public_url = ""
     settings.data_dir = tmp_path_factory.mktemp("raw")
+    settings.photos_dir = tmp_path_factory.mktemp("photos")
     yield
 
 

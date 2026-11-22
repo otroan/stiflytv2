@@ -59,10 +59,10 @@ function arrive(to, fitting = true) {
   if (!route) shownRoute = null;
   if (!moved) { render(); if (goingIn && found) freshen(); return Promise.resolve(); }
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
-  entries = null; entriesFor = null; entriesProblem = null; entryShown = null;
+  entries = null; entriesFor = null; entriesProblem = null; entryShown = null; photosAll = null; photosFor = null;
   if (area) localStorage.setItem("stiflyt2.area", area); else localStorage.removeItem("stiflyt2.area");
   render();
-  return (area ? Promise.all([loadArea(), load(), loadEntries()]) : Promise.resolve()).then(() => { if (fitting) fit(); });
+  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos()]) : Promise.resolve()).then(() => { if (fitting) fit(); });
 }
 async function loadArea() {
   const asked = area;
@@ -146,6 +146,7 @@ function render() {
   drawMap();
   drawTrip();
   drawIssues();
+  drawPhotos();
   const url = addressOf({ view, area, route, site: open, entry: entryOpen });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

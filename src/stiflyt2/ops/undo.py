@@ -50,6 +50,9 @@ _WHAT = {
     "entry.reported": "an issue reported",
     "entry.changed": "what was said of an issue",
     "entry.taken_away": "an issue taken away",
+    "photo.added": "a photo added",
+    "photo.changed": "what was said of a photo",
+    "photo.taken_away": "a photo taken away",
 }
 
 
@@ -105,7 +108,7 @@ def undo(conn, author, txid: int | None = None) -> dict:
     if txid is not None and txid != latest["txid"]:
         raise Conflict("something else has been decided since: look again at what would be undone")
     if latest["in_the_way"]:
-        raise Conflict(f"{latest['in_the_way']} came after, and is about the same sign, post, site or issue: it would be lost")
+        raise Conflict(f"{latest['in_the_way']} came after, and is about the same thing: it would be lost")
     rows = _rows(conn, """SELECT id, tbl, op, key::text AS key, old FROM ops.undo_log
                           WHERE txid = %(t)s AND undone_at IS NULL ORDER BY id DESC FOR UPDATE""",
                  {"t": latest["txid"]})
@@ -173,10 +176,20 @@ def discard(conn, author) -> dict:
     if not now["changes"]:
         raise Conflict("there is nothing that is not saved")
     if now["in_the_way"]:
-        raise Conflict(f"{now['in_the_way']} came after, and is about the same sign, post, site or issue: "
+        raise Conflict(f"{now['in_the_way']} came after, and is about the same thing: "
                        "it cannot be discarded as a whole")
     told = [undo(conn, author, c["txid"])["undone"] for c in now["changes"]]
     return {"undone": told, "next": last(conn, author)}
+
+
+def kept_as_made(conn, author, act):
+    """Do it, and save it as made when nothing else of the person's waits to be saved or discarded: an issue or a
+    photo said in a form, not a decision among others at a sign site. Undo still takes it back."""
+    waiting = bool(item(conn, author)["changes"])
+    done = act()
+    if not waiting:
+        save(conn, author)
+    return done
 
 
 def stands(conn) -> None:

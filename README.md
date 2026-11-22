@@ -1348,9 +1348,39 @@ unless told otherwise), when the person has the feature. Kept in `ops.entry`
 (import migrations `0017`, `0018`), where reports from work parties and
 inspections are to come as well.
 
-Not yet: notices in what is handed to UT.no; photos on an issue (step 3);
-replacing a sign tied to the sign order; planning a work trip round the
-open issues.
+Not yet: notices in what is handed to UT.no; replacing a sign tied to the
+sign order; planning a work trip round the open issues.
+
+## Photos: a feature of its own
+
+Photos from the routes, for those who are signed in and have the feature
+`photos`; adding and changing them needs the editor or operations role as
+well. They are never shown to anyone who is not signed in.
+
+On the front page a photo is a blue point on the map where it was taken; a
+click shows it large, with what it shows, when it was taken and by whom,
+the photos before and after, "Show where", "Move it", the file as it came,
+and "Take it away" (Undo brings it back). A route lists the photos taken
+within 75 m of it, an issue those that show it, each with "Add photos".
+Where a photo was taken is the camera's position; one with none is placed
+where it was added from (the issue), or waits to be placed by a click on the
+map ("… photos wait to be placed", among the issues). JPEG, PNG, HEIC from
+an iPhone, and WebP, up to 40 MB.
+
+Each photo is kept once, by the SHA-256 digest of its file (the same file
+added twice is the one already there), on the server's disk
+(`settings.photos_dir`, `var/photos/`): the file as it came, a copy 1600 px
+long to show and a square thumbnail, both turned upright and without the
+camera's data. What is known of it is in `ops.photo` (import migration
+`0019`). A photo keeps its own position, as the camera had it, and is not
+hung on the stretches. **The files are not in the nightly copies off the
+server yet**: they are to go to object storage (`docs/TODO.md`).
+
+Over the API: `GET /api/v1/photos?area=|route=|entry=|unplaced=true`,
+`POST /api/v1/photos` with the file as the body and `lon`, `lat`, `entry`,
+`caption`, `area` in the query, `GET /api/v1/photos/{id}/thumb|1600|original`,
+`PATCH` (`caption`, `lon`/`lat`, `entry`) and `DELETE` on one. An assistant
+has `route_photos`.
 
 ## Setup
 

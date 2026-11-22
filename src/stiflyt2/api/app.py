@@ -25,6 +25,7 @@ from stiflyt2.api import issues as issues_api
 from stiflyt2.api import lookup as lookup_api
 from stiflyt2.api import mcp as mcp_api
 from stiflyt2.api import owned_routes as routes_api
+from stiflyt2.api import photos as photos_api
 from stiflyt2.api import places as places_api
 from stiflyt2.api import presence as presence_api
 from stiflyt2.api import signs as signs_api
@@ -189,6 +190,7 @@ def create_app() -> FastAPI:
     trips_api.register(app, pool)
     presence_api.register(app, pool)
     issues_api.register(app, pool, writes)
+    photos_api.register(app, pool, writes)
     return app
 
 

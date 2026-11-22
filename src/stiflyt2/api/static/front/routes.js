@@ -96,8 +96,21 @@ function renderRoute() {
     el("div", { class: "actions", style: "margin-top:12px" },
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",
       el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")),
-    ...(hasIssues() ? routeIssues(r) : []));
+    ...(hasIssues() ? routeIssues(r) : []),
+    ...(hasPhotos() ? routePhotos(r) : []));
   if (D && H) drawProfile(profile, D, H);
+}
+// The photos taken near a route (the feature `photos`), fetched when the route is opened, and a way to add more.
+function routePhotos(r) {
+  const mine = shownRoute;
+  if (mine && (mine.photos === undefined || mine.photos === null)) {
+    mine.photos = false;
+    get("photos", { route: r.id }).then(list => { mine.photos = list; if (shownRoute === mine && view === "routes") renderRoute(); }).catch(() => {});
+  }
+  const list = mine && mine.photos;
+  return [el("h2", { class: "next" }, "Photos"),
+    list && list.length ? photoRow(list) : el("div", { class: "sub" }, list ? "None taken within 75 m of it yet." : "Loading…"),
+    el("div", { class: "actions" }, addPhotosButton({ area }))];
 }
 // What is open on a route, and a way to report more (the feature `issues`).
 function routeIssues(r) {

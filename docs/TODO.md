@@ -53,6 +53,14 @@ step is still started on their word; the details of each are further down.
    hang on an entry or a sign site. A GPX track is a layer and something to
    compare a route with. Whether a route may be laid on tracks is not
    decided.
+   *Photos begun 2026-11-22* as the feature `photos` (README, "Photos"):
+   kept on the server's disk, for signed-in people only; v1's photos with a
+   position taken in. **Left, and to be reminded of: object storage** (an
+   account, preferably in DNT's name, and a key on the server) as the copy
+   of the photo files off the server: until then they are in no backup.
+   Also left: photos on a sign site and in the route editor; v1's photos
+   without a position (placed by hand in v1, which only its database says);
+   GPX.
 4. **The route card**: a page to print with what a work party needs, from
    all of the above: map cut-outs, profile, open work, signs, heritage
    sites.

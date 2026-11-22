@@ -147,12 +147,19 @@ function renderIssues() {
     el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => placeEntry(null) }, "Report an issue")),
     el("div", { class: "filter", role: "group", "aria-label": "Which issues are listed" }, chip("open", `Open (${counts.open})`), chip("shut", `Done or dismissed (${counts.shut})`), chip("all", "All")),
     adrift ? el("div", { class: "sub" }, `${adrift} no longer lie on a route in use: open each to move it onto a route, or take it away.`) : "",
+    unplacedPhotos(),
     el("ul", { style: "margin-top:6px" }, ...listed.map(e => el("li", { class: "hit entry", tabindex: 0, onclick: () => openEntry(e.id), onkeydown: enter(() => openEntry(e.id)) },
       kindTag(e),
       el("span", { class: "grow" }, el("span", { class: "said clip" }, e.text),
         el("span", { class: "sub" }, ` ${placeSaid(e)}${e.active ? ", in force" : e.notice && e.lapsed ? ", lapsed" : ""}${e.adrift ? ", adrift" : ""}`)),
       el("span", { class: "far" }, e.open ? (e.state === "planned" ? "planned" : whenSaid(e.made_at)) : (statesOf(e)[e.state] || e.state).toLowerCase())))),
     listed.length ? "" : el("div", { class: "sub" }, entryShow === "open" ? "Nothing open. Report one with the button, or by clicking a route after it." : "None."));
+}
+// Photos added here with no position from their camera: a person says where each was taken.
+function unplacedPhotos() {
+  const waiting = (photosAll || []).filter(p => p.lon === null);
+  return waiting.length ? el("div", { class: "sub" }, el("button", { class: "link", onclick: () => showPhoto(waiting, 0) },
+    `${waiting.length} ${waiting.length === 1 ? "photo waits" : "photos wait"} to be placed on the map`)) : "";
 }
 function renderEntry(told) {
   const listedE = (entries || []).find(x => x.id === entryOpen);
@@ -185,8 +192,20 @@ function renderEntry(told) {
       el("button", { class: "btn", title: e.about === "part" ? "What it is, its parts, or its dates" : "What it is, or its dates", onclick: () => { entryAsk = { id: e.id }; render(); } }, "Change it…"),
       e.about === "spot" ? el("button", { class: "btn", title: "Click the route where it is", onclick: () => moveEntry(e.id) }, "Move it") : "",
       el("button", { class: "btn quiet", title: "It is taken away. Undo brings it back.", onclick: () => { if (confirm("Take this issue away? Undo brings it back.")) entryChange(() => send("DELETE", `issues/${e.id}`)).then(ok => { if (ok) visit({ entry: null }); }); } }, "Take it away")),
+    ...(hasPhotos() ? entryPhotos(e) : []),
     history.length ? el("h2", { class: "next" }, "What has happened") : "",
     history.length ? el("ol", { class: "history" }, ...history.map(h => el("li", {}, el("span", { class: "far" }, whenSaid(h.at)), " ", h.who, ": ", entrySaid(h)))) : "");
+}
+// The photos of an issue, and a way to add more: placed where their cameras say, else at the issue.
+function entryPhotos(e) {
+  const mine = entryShown;
+  if (mine && (mine.photos === undefined || mine.photos === null)) {
+    mine.photos = false;
+    get("photos", { entry: e.id }).then(list => { mine.photos = list; if (entryShown === mine && view === "issues") render(); }).catch(() => {});
+  }
+  const list = mine && mine.photos;
+  return [list && list.length ? photoRow(list) : "",
+    el("div", { class: "actions" }, addPhotosButton({ entry: e.id, area, lon: e.lon, lat: e.lat }, list && list.length ? "Add more photos" : "Add photos of it"))];
 }
 // An event of an issue in words.
 function entrySaid(h) {

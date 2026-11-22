@@ -151,6 +151,16 @@ ol.history li { margin: 3px 0; }
 form.entry-form select, form.entry-form textarea { display: block; width: 100%; margin-top: 3px; }
 .field.parts ol { margin: 4px 0; padding-left: 20px; color: var(--ink); }
 .filter.states { margin: 0; }
+/* Photos (the feature `photos`). */
+.photo-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.photo-thumb { padding: 0; border: 0; border-radius: 3px; overflow: hidden; cursor: pointer; line-height: 0; background: var(--wash); }
+.photo-thumb img { width: 72px; height: 72px; object-fit: cover; }
+.photo-thumb:focus-visible { outline: 2px solid var(--path); outline-offset: 2px; }
+dialog#photo { max-width: min(1100px, 94vw); padding: 0; border: 0; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .35); }
+dialog#photo::backdrop { background: rgba(18, 26, 32, .72); }
+.photo-large { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; }
+.photo-about { padding: 10px 14px 12px; }
+.photo-about input[type=text] { width: 100%; font: inherit; padding: 4px 6px; }
 @media (max-width: 760px) {
   body { flex-direction: column-reverse; }
   #side { width: 100%; max-height: 52vh; border-right: 0; border-top: 1px solid var(--line); }

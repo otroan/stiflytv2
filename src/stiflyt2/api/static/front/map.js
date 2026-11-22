@@ -2,6 +2,7 @@
 const empty = { type: "FeatureCollection", features: [] };
 const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
 const NOTICE_RED = "#c62828", ISSUE_AMBER = "#ef8f00", ISSUE_DONE = "#9aa5ad";     // an issue: a notice to walkers, work, done
+const PHOTO_BLUE = "#3949ab";   // where a photo was taken
 
 const map = new maplibregl.Map({
   container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
@@ -10,7 +11,7 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, photos: { type: "geojson", data: empty },
     },
     layers: [
       ...baseLayers(),
@@ -54,6 +55,9 @@ const map = new maplibregl.Map({
         paint: { "circle-radius": ["case", ["get", "chosen"], 9, ["get", "open"], 6.5, 4.5],
                  "circle-color": ["case", ["!", ["get", "open"]], ISSUE_DONE, ["get", "notice"], NOTICE_RED, ISSUE_AMBER],
                  "circle-stroke-color": ["case", ["get", "chosen"], css("--ink"), "#fff"], "circle-stroke-width": ["case", ["get", "chosen"], 3, 1.5] } },
+      // Where a photo was taken (the feature `photos`).
+      { id: "photos", type: "circle", source: "photos", minzoom: 11, layout: { visibility: "none" },
+        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 16, 6], "circle-color": PHOTO_BLUE, "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } },
       { id: "entry-pick-at", type: "circle", source: "entry-pick", filter: ["==", ["geometry-type"], "Point"],
         paint: { "circle-radius": 7, "circle-color": "#fff", "circle-stroke-color": ISSUE_AMBER, "circle-stroke-width": 3 } },
     ],
@@ -110,6 +114,7 @@ function drawMap() {
 
 map.on("click", e => {
   if (placing && placing.issue) { placedEntry(e); return; }
+  if (placing && placing.photo) { placedPhoto(e); return; }
   if (placing === "site") { stopPlacing(); change(async () => { open = (await send("POST", "signs/sites", { area, lon: e.lngLat.lng, lat: e.lngLat.lat })).key; }); return; }
   if (placing && placing.to) {
     const wanted = { post: placing.to, lon: e.lngLat.lng, lat: e.lngLat.lat };
@@ -124,6 +129,8 @@ map.on("click", e => {
   }
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
   const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+  const shot = map.getLayoutProperty("photos", "visibility") === "visible" && map.queryRenderedFeatures(box, { layers: ["photos"] })[0];
+  if (shot) { openPhoto(shot.properties.id); return; }
   const issue = map.getLayoutProperty("entries", "visibility") === "visible" && map.queryRenderedFeatures(box, { layers: ["entries", "entry-lines"] })[0];
   if (issue) { openEntry(issue.properties.id); return; }
   const hit = map.queryRenderedFeatures(box, { layers: [view === "signs" ? "sites" : "sites-small"] })[0];
@@ -149,7 +156,8 @@ function routesAt(point) {
 }
 map.on("mousemove", e => {
   if (placing) return;
-  const issues = map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : [];
+  const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
+                  ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos"] : [])];
   map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);

@@ -71,15 +71,6 @@ class Undo(BaseModel):
     txid: int | None = None
 
 
-def _kept_as_made(conn, author, act):
-    """Do it, and save it as made when nothing else of the person's waits to be saved or discarded."""
-    waiting = bool(undo.item(conn, author)["changes"])
-    done = act()
-    if not waiting:
-        undo.save(conn, author)
-    return done
-
-
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get(V1)
     def listed(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
@@ -116,20 +107,20 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     def report(body: Report, author: May) -> dict:
         """Report an issue or put up a notice: at a spot on a route, along one of its stretches, or of the whole route."""
         with write.connection() as conn:
-            return _kept_as_made(conn, author, lambda: issues.report(conn, author, **body.model_dump()))
+            return undo.kept_as_made(conn, author, lambda: issues.report(conn, author, **body.model_dump()))
 
     @app.patch(f"{V1}/{{entry}}")
     def change(entry: Id, body: Change, author: May) -> dict:
         """Say something else of an issue: its state, text, kind, dates, or where it is."""
         said = body.model_dump(exclude_unset=True)
         with write.connection() as conn:
-            return _kept_as_made(conn, author, lambda: issues.change(conn, author, entry, said))
+            return undo.kept_as_made(conn, author, lambda: issues.change(conn, author, entry, said))
 
     @app.delete(f"{V1}/{{entry}}", status_code=204)
     def take_away(entry: Id, author: May) -> Response:
         """Take an issue away. Undo brings it back."""
         with write.connection() as conn:
-            _kept_as_made(conn, author, lambda: issues.take_away(conn, author, entry))
+            undo.kept_as_made(conn, author, lambda: issues.take_away(conn, author, entry))
         return Response(status_code=204)
 
 

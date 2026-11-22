@@ -217,6 +217,35 @@ if (await js(`hasIssues()`)) {
   await until(`view === "routes"`, 10);
 } else check("the issues tab is not there for one who does not have the feature", await js(`document.getElementById("tab-issues").hidden`));
 
+// Photos (the feature `photos`): one made in the page, with nothing from a camera, waits to be placed; a click places it.
+if (await js(`hasPhotos()`)) {
+  if (EDIT) {
+    editing = true;
+    await js(`visit({ view: "issues", entry: null, route: null })`);
+    await until(`view === "issues" && Array.isArray(entries)`, 10);
+    await js(`(async () => { const c = document.createElement("canvas"); c.width = 640; c.height = 480; const g = c.getContext("2d"); g.fillStyle = "#4a7"; g.fillRect(0, 0, 640, 480);
+      g.fillStyle = "#fff"; g.fillText(String(Date.now()), 20, 40);
+      const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9)); await addPhotos([new File([blob], "trial.jpg", { type: "image/jpeg" })], { area }); })()`);
+    check("a photo with no position is added, and waits to be placed", await until(`(photosAll || []).some(p => p.lon === null) && /to be placed/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
+    await js(`[...document.querySelectorAll("#panel button.link")].find(b => /to be placed/.test(b.textContent)).click()`);
+    check("it is shown large, with a way to place it", await until(`document.getElementById("photo").open && document.querySelector("#photo img.photo-large").complete && document.querySelector("#photo img.photo-large").naturalWidth === 640`, 10), await text("#photo"));
+    await js(`[...document.querySelectorAll("#photo button")].find(b => b.textContent === "Place it on the map").click()`);
+    await js(`map.jumpTo({ center: map.getCenter().toArray(), zoom: 14 })`);
+    await sleep(800);
+    await click(await onMap(`map.getCenter().toArray()`));
+    check("placed by a click, it is a point on the map", await until(`(photosAll || []).some(p => p.placed === "hand") && map.queryRenderedFeatures({ layers: ["photos"] }).length > 0`, 15));
+    const shot = await js(`photosAll.find(p => p.placed === "hand").id`);
+    await js(`openPhoto(${JSON.stringify(shot)})`);
+    await until(`document.getElementById("photo").open`, 5);
+    await js(`[...document.querySelectorAll("#photo button")].find(b => b.textContent === "Take it away").click()`);
+    check("taken away, the trial photo is gone", await until(`!(photosAll || []).some(p => p.id === ${JSON.stringify(shot)})`, 10));
+    await js(`document.getElementById("photo").open && document.getElementById("photo").close()`);
+    editing = false;
+  } else check("the photos of the area are on the map", await until(`photosFor === area`, 15));
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));
+
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   const holds = await js("me.role"), where = await js("area");
@@ -478,7 +507,7 @@ if (EDIT) {
 } else console.log("    (not asked to change anything: undo, redo, dragging, places, saving, changing route and signs are not tried)");
 
 check("the pages threw nothing", thrown.length === 0, thrown.join(" | "));
-const boxes = said.filter(s => !/^Take .* into |^Take this issue away/.test(s));       // those ask before two places are made one, or an issue is taken away, and are answered yes
+const boxes = said.filter(s => !/^Take .* into |^Take this (issue|photo) away/.test(s));       // those ask before two places are made one, or an issue is taken away, and are answered yes
 check("and put up no box to say that something went wrong", boxes.length === 0, boxes.join(" | "));
 const unasked = refused.filter(r => !r.startsWith("403 /api/v1/signs/undo") && !(EDIT && /^404 \/api\/v1\/places\/[0-9a-f-]{36}$/.test(r))      // that one was asked for as a reader, to be refused
   && !(TOKEN && r === "403 /api/v1/here"));            // and a script is not somebody at work in the pages
