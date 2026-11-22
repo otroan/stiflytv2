@@ -40,6 +40,7 @@ class Cover(BaseModel):
 class Report(BaseModel):
     kind: Kind
     done_on: dt.date
+    year_only: bool = False                     # only the year of done_on is known
     covers: Annotated[list[Cover], Field(min_length=1, max_length=reports.MOST_ROUTES)]
     text: str | None = Field(None, max_length=4000)
     condition: Literal["good", "fair", "poor"] | None = None
@@ -62,6 +63,7 @@ class Undo(BaseModel):
 class Change(BaseModel):
     kind: Kind | None = None
     done_on: dt.date | None = None
+    year_only: bool | None = None
     covers: Annotated[list[Cover], Field(min_length=1, max_length=reports.MOST_ROUTES)] | None = None
     text: str | None = Field(None, max_length=4000)
     condition: Literal["good", "fair", "poor"] | None = None
@@ -165,6 +167,7 @@ class Covered(mcp.Args):
 class ReportWork(mcp.Args):
     kind: Kind = Field(description="inspection, work (a work party, dugnad) or note (a diary note)")
     done_on: dt.date
+    year_only: bool = Field(False, description="True: only the year of done_on is known")
     routes: list[Covered] = Field(min_length=1, max_length=reports.MOST_ROUTES)
     text: str | None = Field(None, max_length=4000)
     condition: Literal["good", "fair", "poor"] | None = Field(None, description="An inspection: the state found")
@@ -182,7 +185,7 @@ def report_work(c: mcp.Call, a: ReportWork) -> dict:
     covers = [{"route": mcp._route_id(c.conn, r.route),
                "parts": [{"from_m": r.from_km * 1000, "to_m": r.to_km * 1000}] if r.from_km is not None and r.to_km is not None else None}
               for r in a.routes]
-    told = reports.report(c.conn, c.author, kind=a.kind, done_on=a.done_on, covers=covers, text=a.text, condition=a.condition,
+    told = reports.report(c.conn, c.author, kind=a.kind, done_on=a.done_on, year_only=a.year_only, covers=covers, text=a.text, condition=a.condition,
                           persons=a.persons, hours=a.hours, done=a.done, link=a.link)
     told.pop("lines", None)
     return told

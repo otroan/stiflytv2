@@ -83,12 +83,15 @@ def test_when_a_route_was_last_inspected_and_worked_on_is_worked_out_from_the_re
     act(conn, lambda: reports.report(conn, AUTHOR, kind="inspection", done_on=TODAY - dt.timedelta(days=30), covers=[{"route": route}], condition="good"))
     assert {x["id"]: x for x in reports.status(conn, "bre")}[route]["inspection"]["due"] is False
 
+    # Only the year known, as from an area contact's overview: told as the year, counted from its middle.
+    year = act(conn, lambda: reports.report(conn, AUTHOR, kind="work", done_on=dt.date(2015, 3, 3), year_only=True, covers=[{"route": other}]))
+    assert (year["year_only"], year["done_on"]) == (True, dt.date(2015, 7, 1))
     # The lines of what was covered, the latest last, for a map of how long since.
     lines = reports.coverage(conn, "bre", "work")
-    assert lines and all(line["done_on"] == years_ago(2) for line in lines)
+    assert lines and lines[-1]["done_on"] == years_ago(2) and lines[0]["done_on"] == dt.date(2015, 7, 1)
     # A route's reports are those that cover some of it: here also those of the route it shares stretches with.
     assert work["id"] in [r["id"] for r in reports.listing(conn, route=other)]
-    assert [r["kind"] for r in reports.listing(conn, "bre")] == ["inspection", "work", "inspection"]
+    assert [r["kind"] for r in reports.listing(conn, "bre")] == ["inspection", "work", "inspection", "work"]
 
     for wrong, said in (({"kind": "inspection", "done_on": TODAY + dt.timedelta(days=2), "covers": [{"route": route}]}, "still to come"),
                         ({"kind": "work", "done_on": TODAY, "covers": []}, "which routes"),

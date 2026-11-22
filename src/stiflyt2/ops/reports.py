@@ -79,11 +79,14 @@ def _covers(conn, covers: list[dict]) -> list[dict]:
     return kept
 
 
-def _said(kind: str, done_on, condition, persons, hours, done, link, text) -> dict:
+def _said(kind: str, done_on, condition, persons, hours, done, link, text, year_only: bool = False) -> dict:
     if kind not in KINDS:
         raise Invalid(f"a report is one of {', '.join(KINDS)}")
     if isinstance(done_on, str):
         done_on = dt.date.fromisoformat(done_on)
+    if year_only and done_on:
+        # Only the year is known: counted from the middle of it, or from today in a year that is not half over.
+        done_on = min(dt.date(done_on.year, 7, 1), dt.date.today())
     # A day ahead is let through: the page says the day where the person is, the server where it is.
     if not done_on or done_on > dt.date.today() + dt.timedelta(days=1) or done_on.year < 1950:
         raise Invalid("say the day it was done: not a day still to come")
@@ -95,7 +98,7 @@ def _said(kind: str, done_on, condition, persons, hours, done, link, text) -> di
     link = (link or "").strip() or None
     if link and (urlparse(link).scheme not in ("http", "https") or not urlparse(link).netloc):
         raise Invalid("the link is to be an address beginning with https://")
-    return {"kind": kind, "done_on": done_on, "condition": condition if kind == "inspection" else None,
+    return {"kind": kind, "done_on": done_on, "year_only": bool(year_only), "condition": condition if kind == "inspection" else None,
             "persons": persons if kind == "work" else None, "hours": hours if kind == "work" else None,
             "done": done if kind == "work" else [], "link": link, "text": (text or "").strip()[:4000] or None}
 
@@ -118,14 +121,15 @@ def _close(conn, author, report: str, entries: list[str]) -> list[str]:
 
 def report(conn, author, *, kind: str, done_on, covers: list[dict], text: str | None = None,
            condition: str | None = None, persons: int | None = None, hours: float | None = None,
-           done: list[str] | None = None, link: str | None = None, closes: list[str] | None = None) -> dict:
+           done: list[str] | None = None, link: str | None = None, closes: list[str] | None = None,
+           year_only: bool = False) -> dict:
     """Report what was done on which day, on which routes: each `{"route": id}` for the whole of it, or with
     `"parts"` as issues have them. Issues it says are done (`closes`) are done, by this report."""
-    said = _said(kind, done_on, condition, persons, hours, done, link, text)
+    said = _said(kind, done_on, condition, persons, hours, done, link, text, year_only)
     kept = _covers(conn, covers)
     made = conn.execute("""
-        INSERT INTO ops.report (kind, done_on, area, text, condition, persons, hours, done, link, made_by, updated_by)
-        VALUES (%(kind)s, %(done_on)s, lower(left(%(code)s, 3)), %(text)s, %(condition)s, %(persons)s, %(hours)s,
+        INSERT INTO ops.report (kind, done_on, year_only, area, text, condition, persons, hours, done, link, made_by, updated_by)
+        VALUES (%(kind)s, %(done_on)s, %(year_only)s, lower(left(%(code)s, 3)), %(text)s, %(condition)s, %(persons)s, %(hours)s,
                 %(done)s, %(link)s, %(who)s, %(who)s) RETURNING id::text""",
         {**said, "code": kept[0]["code"], "who": str(author)}).fetchone()[0]
     _keep_covers(conn, made, kept)
@@ -153,7 +157,7 @@ def change(conn, author, report: str, said: dict) -> dict:
     was = _kept(conn, report)
     now = _said(said.get("kind", was["kind"]), said.get("done_on", was["done_on"]), said.get("condition", was["condition"]),
                 said.get("persons", was["persons"]), said.get("hours", was["hours"]), said.get("done", was["done"]),
-                said.get("link", was["link"]), said.get("text", was["text"]))
+                said.get("link", was["link"]), said.get("text", was["text"]), said.get("year_only", was["year_only"]))
     changed = [k for k, v in now.items() if v != was[k] and not (k == "hours" and v is not None and was[k] is not None
                                                                   and float(v) == float(was[k]))]
     if "covers" in said:
@@ -163,7 +167,7 @@ def change(conn, author, report: str, said: dict) -> dict:
         changed.append("covers")
     if not changed:
         return one(conn, report)
-    conn.execute("""UPDATE ops.report SET kind = %(kind)s, done_on = %(done_on)s, text = %(text)s, condition = %(condition)s,
+    conn.execute("""UPDATE ops.report SET kind = %(kind)s, done_on = %(done_on)s, year_only = %(year_only)s, text = %(text)s, condition = %(condition)s,
                         persons = %(persons)s, hours = %(hours)s, done = %(done)s, link = %(link)s,
                         updated_at = now(), updated_by = %(who)s WHERE id = %(id)s::uuid""",
                  {**now, "who": str(author), "id": report})
@@ -233,7 +237,7 @@ def _shown(conn, reports: list[dict]) -> list[dict]:
     told = []
     for r in reports:
         mine = [c for c in covered if c["report"] == str(r["id"])]
-        told.append({"id": str(r["id"]), "kind": r["kind"], "says": KINDS[r["kind"]], "done_on": r["done_on"],
+        told.append({"id": str(r["id"]), "kind": r["kind"], "says": KINDS[r["kind"]], "done_on": r["done_on"], "year_only": r["year_only"],
                      "area": r["area"], "text": r["text"], "condition": r["condition"], "persons": r["persons"],
                      "hours": float(r["hours"]) if r["hours"] is not None else None, "done": r["done"], "link": r["link"],
                      "covers": [{"route": c["route"], "whole": c["whole"], "parts": c["parts"]} for c in mine],
@@ -277,7 +281,7 @@ def status(conn, area: str | None = None) -> list[dict]:
             mine = [x for x in reports if x["kind"] == kind and legs & set(x["edges"])]
             last = mine[0] if mine else None
             item[kind] = None if not last else {
-                "done_on": last["done_on"], "report": last["id"], "condition": last["condition"],
+                "done_on": last["done_on"], "year_only": last["year_only"], "report": last["id"], "condition": last["condition"],
                 "all_of_it": legs <= set(last["edges"]), "years": round((today - last["done_on"]).days / 365.25, 1),
                 "due": (today - last["done_on"]).days > DUE_YEARS[kind] * 365.25}
         told.append(item)

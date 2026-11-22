@@ -15,6 +15,7 @@ const hasReports = () => (me.features || []).includes("reports");
 const mayReport = () => hasReports() && (me.features || []).some(f => f === "routes" || f === "signs");
 const ageOf = (last, kind) => !last ? "never" : last.due ? "due" : last.years > DUE[kind] / 2 ? "ageing" : "recent";
 const dayIs = d => d ? new Date(`${d}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+const whenDone = r => r.year_only ? String(r.done_on).slice(0, 4) : dayIs(r.done_on);     // only the year, where only it is known
 const reportTag = r => el("span", { class: `tag report ${r.kind}` }, REPORT_KINDS[r.kind] || r.kind);
 const coversSaid = r => r.covers.map(c => !c.route ? "a route that is gone" : c.whole ? c.route.code
   : `${c.route.code} ${c.parts.map(p => `${kmOf(p.from_m)}–${kmOf(p.to_m)} km`).join(", ")}`).join("; ");
@@ -54,7 +55,7 @@ function undoReport() {
 }
 // A new report: of a route, when one is given, else of none yet.
 function newReport(route) {
-  reportAsk = { kind: "inspection", done_on: localDay(), covers: route ? [{ route: route.id, code: route.code, name: route.name, whole: true, parts: [], lines: [] }] : [],
+  reportAsk = { kind: "inspection", done_on: localDay(), year_only: false, covers: route ? [{ route: route.id, code: route.code, name: route.name, whole: true, parts: [], lines: [] }] : [],
                 text: "", condition: null, persons: "", hours: "", done: [], link: "", closes: [] };
   visit({ view: "reports", report: null, route: null, site: null, entry: null });
 }
@@ -113,7 +114,7 @@ function renderReports() {
     })),
     reportsAll && reportsAll.length ? el("h2", { class: "next" }, "Reports, the latest first") : "",
     reportsAll && reportsAll.length ? el("ul", {}, ...reportsAll.slice(0, 60).map(r => el("li", { class: "hit entry", tabindex: 0, onclick: () => openReport(r.id), onkeydown: enter(() => openReport(r.id)) },
-      reportTag(r), el("span", { class: "grow" }, el("span", {}, dayIs(r.done_on)), el("span", { class: "sub" }, ` ${coversSaid(r)}`), r.text ? el("div", { class: "said clip" }, r.text) : "")))) : "");
+      reportTag(r), el("span", { class: "grow" }, el("span", {}, whenDone(r)), el("span", { class: "sub" }, ` ${coversSaid(r)}`), r.text ? el("div", { class: "said clip" }, r.text) : "")))) : "");
 }
 function renderReport(told) {
   if (!reportShown || reportShown.id !== reportOpen) fetchReport(reportOpen);
@@ -124,7 +125,7 @@ function renderReport(told) {
   const mine = reportShown && reportShown.photos;
   if (reportShown && mine === undefined) { reportShown.photos = null; if (hasPhotos()) get("photos", { report: r.id }).then(l => { if (reportShown) { reportShown.photos = l; render(); } }).catch(() => {}); }
   panel.replaceChildren(back,
-    el("h2", {}, reportTag(r), ` ${dayIs(r.done_on)}`),
+    el("h2", {}, reportTag(r), ` ${whenDone(r)}`),
     told,
     el("dl", { class: "facts" },
       ...fact("Where", ...r.covers.flatMap((c, i) => [i ? "; " : "", c.route ? el("button", { class: "link", onclick: () => showRoute(c.route.code) }, c.route.code) : "a route that is gone",
@@ -139,7 +140,7 @@ function renderReport(told) {
     mine && mine.length ? photoRow(mine) : "",
     el("div", { class: "actions" },
       hasPhotos() ? addPhotosButton({ report: r.id, area }, mine && mine.length ? "Add more photos" : "Add photos of it") : "",
-      mayReport() ? el("button", { class: "btn", onclick: () => { reportAsk = { id: r.id, kind: r.kind, done_on: r.done_on, text: r.text || "", condition: r.condition, persons: r.persons ?? "", hours: r.hours ?? "", done: [...r.done], link: r.link || "", closes: [],
+      mayReport() ? el("button", { class: "btn", onclick: () => { reportAsk = { id: r.id, kind: r.kind, done_on: r.done_on, year_only: r.year_only, text: r.text || "", condition: r.condition, persons: r.persons ?? "", hours: r.hours ?? "", done: [...r.done], link: r.link || "", closes: [],
         covers: r.covers.filter(c => c.route).map(c => ({ route: c.route.id, code: c.route.code, name: (over && over.routes.find(x => x.id === c.route.id) || {}).name, whole: c.whole, parts: c.parts, lines: [] })), changedCovers: false }; render(); } }, "Change it…") : "",
       mayReport() ? el("button", { class: "btn quiet", title: "Undo brings it back", onclick: () => { if (confirm("Take this report away? Undo brings it back.")) reportChange(() => send("DELETE", `reports/${r.id}`)).then(ok => { if (ok) visit({ report: null }); }); } }, "Take it away") : ""));
 }
@@ -162,13 +163,17 @@ function reportForm() {
   }));
   const field = (label, input) => el("label", { class: "field" }, label, input);
   const kind = el("select", { onchange: e => { d.kind = e.target.value; render(); } }, ...Object.entries(REPORT_KINDS).map(([k, says]) => el("option", { value: k, selected: d.kind === k }, says)));
-  const day = el("input", { type: "date", value: d.done_on, max: today, oninput: e => { d.done_on = e.target.value; } });
+  const day = d.year_only
+    ? el("input", { type: "number", min: 1950, max: Number(today.slice(0, 4)), step: 1, style: "width:6em", value: String(d.done_on).slice(0, 4), oninput: e => { d.done_on = `${e.target.value}-07-01`; } })
+    : el("input", { type: "date", value: d.done_on, max: today, oninput: e => { d.done_on = e.target.value; } });
+  const yearOnly = el("label", { style: "margin-left:10px" }, el("input", { type: "checkbox", checked: d.year_only ? "" : false,
+    onchange: e => { d.year_only = e.target.checked; if (d.year_only) d.done_on = `${String(d.done_on).slice(0, 4)}-07-01`; render(); } }), " Only the year is known");
   const open = typeof entries !== "undefined" && entries ? entries.filter(e => e.open && !e.notice && e.routes.some(r => d.covers.some(c => c.route === r.id))) : [];
   const done = async e => {
     e.preventDefault();
     if (!d.covers.length) { problem = "Say which routes it was on."; render(); return; }
     if (d.covers.some(c => !c.whole && !c.parts.length)) { problem = "Say which part of the route: where it begins and where it ends."; render(); return; }
-    const body = { kind: d.kind, done_on: d.done_on, text: d.text || null, link: d.link || null,
+    const body = { kind: d.kind, done_on: d.done_on, year_only: Boolean(d.year_only), text: d.text || null, link: d.link || null,
                    condition: d.kind === "inspection" ? d.condition : null, persons: d.kind === "work" && d.persons !== "" ? Number(d.persons) : null,
                    hours: d.kind === "work" && d.hours !== "" ? Number(d.hours) : null, done: d.kind === "work" ? d.done : [] };
     if (!d.id || d.changedCovers) body.covers = d.covers.map(c => c.whole ? { route: c.route } : { route: c.route, parts: c.parts.map(p => ({ from_m: p.from_m, to_m: p.to_m })) });
@@ -182,7 +187,7 @@ function reportForm() {
   return el("form", { class: "entry-form", onsubmit: done },
     el("h2", {}, d.id ? "Change the report" : "A report"),
     field("What it is", kind),
-    field("The day it was done", day),
+    el("label", { class: "field" }, d.year_only ? "The year it was done" : "The day it was done", el("div", {}, day, yearOnly)),
     el("div", { class: "field" }, "Where", covers, onRoutes.length ? add : ""),
     d.kind === "inspection" ? el("div", { class: "field" }, "The state found ", ...Object.entries(CONDITION_WORDS).map(([k, says]) => el("label", { style: "margin-right:10px" },
       el("input", { type: "radio", name: "condition", checked: d.condition === k ? "" : false, onchange: () => { d.condition = k; } }), ` ${says}`))) : "",
@@ -224,12 +229,12 @@ function routeUpkeep(r) {
   const line = (kind, label) => {
     const last = s && s[kind];
     return el("div", {}, el("i", { class: "age-dot", style: `background:${AGE_COLOURS[ageOf(last, kind)]}` }), ` ${label}: `,
-      last ? `${dayIs(last.done_on)}${last.condition ? ` (${CONDITION_WORDS[last.condition].toLowerCase()})` : ""}${last.all_of_it ? "" : ", part of it"}${last.due ? ": due" : ""}` : "never reported");
+      last ? `${whenDone(last)}${last.condition ? ` (${CONDITION_WORDS[last.condition].toLowerCase()})` : ""}${last.all_of_it ? "" : ", part of it"}${last.due ? ": due" : ""}` : "never reported");
   };
   const list = mine && mine.reports;
   return [el("h2", { class: "next" }, "Upkeep"),
     line("inspection", "Last inspected"), line("work", "Last work party"),
     list && list.length ? el("ul", { style: "margin-top:6px" }, ...list.slice(0, 8).map(x => el("li", { class: "hit entry", tabindex: 0, onclick: () => openReport(x.id), onkeydown: enter(() => openReport(x.id)) },
-      reportTag(x), el("span", { class: "grow" }, dayIs(x.done_on), x.text ? el("span", { class: "sub" }, ` ${x.text.length > 50 ? `${x.text.slice(0, 50)}…` : x.text}`) : "")))) : "",
+      reportTag(x), el("span", { class: "grow" }, whenDone(x), x.text ? el("span", { class: "sub" }, ` ${x.text.length > 50 ? `${x.text.slice(0, 50)}…` : x.text}`) : "")))) : "",
     mayReport() ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => newReport(r) }, "Report work on this route")) : ""];
 }
