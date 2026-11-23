@@ -86,6 +86,9 @@ def test_when_a_route_was_last_inspected_and_worked_on_is_worked_out_from_the_re
     # Only the year known, as from an area contact's overview: told as the year, counted from its middle.
     year = act(conn, lambda: reports.report(conn, AUTHOR, kind="work", done_on=dt.date(2015, 3, 3), year_only=True, covers=[{"route": other}]))
     assert (year["year_only"], year["done_on"]) == (True, dt.date(2015, 7, 1))
+    # Whose: the home maintainer's routes are ours to report on; another association's are in the tool, and not.
+    assert all(s["ours"] for s in reports.status(conn, "bre") if s["id"] in (route, other))
+    assert not {s["id"]: s for s in reports.status(conn, "bre", "Bergen og Hordaland Turlag")}[route]["ours"]
     # The lines of what was covered, the latest last, for a map of how long since.
     lines = reports.coverage(conn, "bre", "work")
     assert lines and lines[-1]["done_on"] == years_ago(2) and lines[0]["done_on"] == dt.date(2015, 7, 1)

@@ -83,3 +83,32 @@ def sql(column: str, route: str | None = None) -> str:
     named = f"EXISTS (SELECT 1 FROM unnest({column}) m WHERE {NORM_SQL.format(m='m')} = ANY(%(kin)s::text[]))"
     also = f" OR {route} = ANY(%(home)s::text[])" if route else ""
     return f"(%(kin)s::text[] IS NULL OR {named}{also})"
+
+
+def looks_after(conn, routes: list[str], name: str | None) -> dict[str, dict]:
+    """For routes of ours: whether this maintainer looks after them (`ours`), and who they say does.
+
+    A route is theirs where it or one of its stretches names them; where it names nobody, it may be anybody's and
+    counts as theirs; where it says only "DNT", as `home_dnt` says for the candidate it was made from.
+    """
+    if not routes:
+        return {}
+    said = {r: [m for m in (by or []) + (legs or []) if m] for r, by, legs in conn.execute("""
+        SELECT r.id::text, r.maintainers,
+               (SELECT array_agg(DISTINCT m) FROM core.route_leg l, unnest(l.maintainers) m WHERE l.route_id = r.id)
+        FROM core.route r WHERE r.id = ANY(%s::uuid[])""", (routes,))}
+    made_from: dict[str, set] = {}
+    for route, candidate in conn.execute("""SELECT subject_id::text, detail->>'candidate_id' FROM core.source_reference
+                                            WHERE subject_type = 'route' AND ref_type = 'adopted_from'
+                                              AND subject_id = ANY(%s::uuid[])""", (routes,)):
+        made_from.setdefault(route, set()).add(candidate)
+    want = norm(name) if name else None
+    home = set(home_dnt(conn)) if want == HOME else set()
+    told = {}
+    for r in routes:
+        names = sorted({norm(m) for m in said.get(r, [])})
+        ours = (not want or not names or want in names
+                or (names == [BARE] and bool(made_from.get(r, set()) & home)))
+        told[r] = {"ours": ours, "maintainers": sorted(set(said.get(r, [])))}
+    return told
+

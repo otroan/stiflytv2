@@ -84,10 +84,12 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return reports.listing(conn, area, route)
 
     @app.get(f"{V1}/status")
-    def status(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None) -> list[dict]:
-        """Each route in use: when it was last inspected and last had a work party, and whether it is due."""
+    def status(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
+               maintainer: Annotated[str | None, Query(max_length=120)] = None) -> list[dict]:
+        """Each route in use: when it was last inspected and last had a work party, whether it is due, and whether the
+        maintainer asked for (the home maintainer, when none is) looks after it."""
         with read.connection() as conn:
-            return reports.status(conn, area)
+            return reports.status(conn, area, maintainer)
 
     @app.get(f"{V1}/coverage")
     def coverage(_: May, kind: Literal["inspection", "work"],

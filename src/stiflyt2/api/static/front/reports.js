@@ -17,6 +17,7 @@ const ageOf = (last, kind) => !last ? "never" : last.due ? "due" : last.years > 
 const dayIs = d => d ? new Date(`${d}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 const whenDone = r => r.year_only ? String(r.done_on).slice(0, 4) : dayIs(r.done_on);     // only the year, where only it is known
 const reportTag = r => el("span", { class: `tag report ${r.kind}` }, REPORT_KINDS[r.kind] || r.kind);
+const whoSaid = r => [...new Set((r.maintainers || []).map(m => m.replace(/^DNT ?\| ?/i, "")))].join(", ") || "nobody said";
 const coversSaid = r => r.covers.map(c => !c.route ? "a route that is gone" : c.whole ? c.route.code
   : `${c.route.code} ${c.parts.map(p => `${kmOf(p.from_m)}–${kmOf(p.to_m)} km`).join(", ")}`).join("; ");
 
@@ -95,7 +96,9 @@ function renderReports() {
   const half = DUE[sinceKind] / 2;
   const legend = el("div", { class: "since-legend" }, ...[["recent", `under ${half} years`], ["ageing", `${half}–${DUE[sinceKind]} years`], ["due", `over ${DUE[sinceKind]} years: due`], ["never", "never, or not reported"]]
     .map(([age, says]) => el("span", {}, el("i", { style: `background:${AGE_COLOURS[age]}` }), says)));
-  const rows = upkeep.slice().sort((a, b) => (a[sinceKind] ? a[sinceKind].done_on : "") < (b[sinceKind] ? b[sinceKind].done_on : "") ? -1 : 1);
+  // Another association's routes are in the tool, and are not ours to report on: apart, folded away.
+  const sorted = upkeep.slice().sort((a, b) => (a[sinceKind] ? a[sinceKind].done_on : "") < (b[sinceKind] ? b[sinceKind].done_on : "") ? -1 : 1);
+  const rows = sorted.filter(r => r.ours !== false), others = sorted.filter(r => r.ours === false);
   const due = rows.filter(r => !r[sinceKind] || r[sinceKind].due).length;
   panel.replaceChildren(back,
     el("h2", { class: "area" }, `Reports in ${area}`),
@@ -112,6 +115,10 @@ function renderReports() {
         el("span", { class: "far" }, last ? `${new Date(`${last.done_on}T12:00:00`).getFullYear()}${last.all_of_it ? "" : ", part"}` : "never"),
         el("i", { class: "age-dot", style: `background:${AGE_COLOURS[age]}`, title: age }));
     })),
+    others.length ? el("details", { class: "how", style: "margin-top:8px" }, el("summary", {}, `Other associations' routes (${others.length}): not reported here`),
+      el("ul", {}, ...others.map(r => el("li", { class: "hit", tabindex: 0, onclick: () => showRoute(r.code), onkeydown: enter(() => showRoute(r.code)) },
+        el("span", { class: "code" }, r.code), el("span", { class: "grow" }, (over && over.routes.find(x => x.id === r.id) || {}).name || r.name || ""),
+        el("span", { class: "far" }, whoSaid(r)))))) : "",
     reportsAll && reportsAll.length ? el("h2", { class: "next" }, "Reports, the latest first") : "",
     reportsAll && reportsAll.length ? el("ul", {}, ...reportsAll.slice(0, 60).map(r => el("li", { class: "hit entry", tabindex: 0, onclick: () => openReport(r.id), onkeydown: enter(() => openReport(r.id)) },
       reportTag(r), el("span", { class: "grow" }, el("span", {}, whenDone(r)), el("span", { class: "sub" }, ` ${coversSaid(r)}`), r.text ? el("div", { class: "said clip" }, r.text) : "")))) : "");
@@ -251,6 +258,9 @@ function drawReports() {
   whenLoaded(() => {
     const on = view === "reports" && hasReports() && reportsFor === area;
     map.setPaintProperty("routes", "line-color", on ? AGE_COLOURS.never : css("--sign"));
+    // Another association's routes are faint: a stretch that none of ours walks.
+    const ours = on && upkeep ? upkeep.filter(r => r.ours !== false).map(r => r.id) : [];
+    if (on && ours.length) map.setPaintProperty("routes", "line-opacity", ["case", ["any", ...ours.map(id => ["in", `|${id}|`, ["get", "ids"]])], 0.85, 0.2]);
     const half = DUE[sinceKind] / 2, now = Date.now();
     map.getSource("since").setData({ type: "FeatureCollection", features: on && sinceLines && !reportAsk ? sinceLines.map(s => {
       const years = (now - new Date(`${s.done_on}T12:00:00`).getTime()) / 3.15576e10;
@@ -274,6 +284,7 @@ function routeUpkeep(r) {
       last ? `${whenDone(last)}${last.condition ? ` (${CONDITION_WORDS[last.condition].toLowerCase()})` : ""}${last.all_of_it ? "" : ", part of it"}${last.due ? ": due" : ""}` : "never reported");
   };
   const list = mine && mine.reports;
+  if (s && s.ours === false) return [el("h2", { class: "next" }, "Upkeep"), el("div", { class: "sub" }, `Looked after by ${whoSaid(s)}: not reported here.`)];
   return [el("h2", { class: "next" }, "Upkeep"),
     line("inspection", "Last inspected"), line("work", "Last work party"),
     list && list.length ? el("ul", { style: "margin-top:6px" }, ...list.slice(0, 8).map(x => el("li", { class: "hit entry", tabindex: 0, onclick: () => openReport(x.id), onkeydown: enter(() => openReport(x.id)) },

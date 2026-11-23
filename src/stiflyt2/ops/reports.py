@@ -25,6 +25,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from stiflyt2 import features
+from stiflyt2.config import settings
+from stiflyt2.domain import whose
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import along as on_route
 from stiflyt2.ops import anchor
@@ -278,16 +280,19 @@ def one(conn, report: str) -> dict:
     return told
 
 
-def status(conn, area: str | None = None) -> list[dict]:
+def status(conn, area: str | None = None, maintainer: str | None = None) -> list[dict]:
     """Each route in use of an area: when it was last inspected and last had a work party, whether that covered all
-    of it or part, and whether it is due. Those due longest first."""
+    of it or part, and whether it is due. Those due longest first. Each says who looks after it, and whether that is
+    the maintainer asked for (`ours`; the home maintainer when none is asked for): another association's routes are
+    in the tool, and are not theirs to report on."""
     routes = _routes_of(conn, area)
+    whom = whose.looks_after(conn, [r["id"] for r in routes], maintainer or settings.home_maintainer)
     reports = _shown(conn, _rows(conn, "SELECT * FROM ops.report WHERE kind IN ('inspection', 'work') ORDER BY done_on DESC"))
     today = dt.date.today()
     told = []
     for r in routes:
         legs = set(r["edges"])
-        item = {"id": r["id"], "code": r["code"], "name": r["name"]}
+        item = {"id": r["id"], "code": r["code"], "name": r["name"], **whom.get(r["id"], {"ours": True, "maintainers": []})}
         for kind in ("inspection", "work"):
             mine = [x for x in reports if x["kind"] == kind and legs & set(x["edges"])]
             last = mine[0] if mine else None
