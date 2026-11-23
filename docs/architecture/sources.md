@@ -149,10 +149,15 @@ adding when a pilot municipality has migrated.
 
 ## OpenStreetMap (loaded 2026-11-15, to look at)
 
-- Ways with a `highway` tag, from the Overpass API
-  (`https://overpass-api.de/api/interpreter`), per named bounding box in 25 km
-  tiles, one request at a time. The service is shared and often busy: the
-  Jotunheimen box took nine minutes with its waits.
+- Ways with a `highway` tag, every tag, cut per named bounding box (by its
+  extent in degrees; a way over the edge comes whole) from Geofabrik's extract
+  of Norway (`https://download.geofabrik.de/europe/norway/norway-latest.osm.pbf`,
+  1.4 GB, made every night), read with GDAL's OSM driver (`osmconf.ini` beside
+  the adapter keeps every tag and closed ways as lines). The download is kept
+  while its checksum (`.md5` beside it) is the one served, so the boxes of a
+  night share it. Since 2026-11-23; before, from the Overpass API in 25 km
+  tiles, which says its public endpoint is for people at a browser, and was too
+  often at capacity at night.
 - **Open Database License (ODbL 1.0).** Showing it and comparing with it is
   free with the attribution "© OpenStreetMap contributors". Taking its lines
   over makes what is ours a derived database under the same licence, which
@@ -162,12 +167,12 @@ adding when a pilot municipality has migrated.
   ever should be is for the route responsible to decide.
 - A way is its OSM id and its tags. No editor names, versions or changesets
   are fetched.
-- The answer carries the time of the OSM data; that is left out of the
-  checksum, so unchanged data give no new snapshot.
-- The nightly refresh asks for a box again only when its last check is seven
-  days old (`EVERY_DAYS` in `importer/refresh.py`): with a box per area a
-  nightly round would be hours of requests to a shared service, for a layer
-  that is only looked at.
+- The checksum is over the ways of a box, not the file, so unchanged ways give
+  no new snapshot; coordinates are kept to 7 decimals, as OpenStreetMap stores
+  them. The snapshot's time is when Geofabrik made the file.
+- The nightly refresh checks the boxes when the last check of one of them is
+  seven days old (`EVERY_DAYS` in `importer/refresh.py`), and then every box
+  together, from one download.
 - Loaded for the boxes `jot` (11,042 ways) and `bre` (7,085): 16,329 in the
   index, of them 4,305 paths (3,338 km) and 1,518 tracks.
 

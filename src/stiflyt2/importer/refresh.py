@@ -103,7 +103,7 @@ def prune(keep: int, only: str | None = None) -> int:
     return pruned
 
 
-EVERY_DAYS = {"osm": 7}     # sources checked less often than nightly: the Overpass service is shared
+EVERY_DAYS = {"osm": 7}     # sources checked less often than nightly: OpenStreetMap is a download of all Norway
 
 
 def run(only: str | None = None) -> list[Check]:
@@ -125,6 +125,9 @@ def run(only: str | None = None) -> list[Check]:
                ORDER BY 1, 2""",
             (list(SOURCES), only, only),
         ).fetchall()
+    # One download of OpenStreetMap serves every box: when one is due, all are checked together.
+    if any(k == "osm" and (k, s) not in recent for k, s, _ in active):
+        recent = {r for r in recent if r[0] != "osm"}
     checks, busy = [], {}
     for source_key, scope, manifest in active:
         if (source_key, scope) in recent:

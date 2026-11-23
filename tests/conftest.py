@@ -146,7 +146,7 @@ def loaded(small, monkeypatch):
     """Every source has its base fixture as the active snapshot, and the index is built."""
     from test_fkb_wfs import BOX, Server
     from test_osm import BOX as OSM_BOX
-    from test_osm import Overpass
+    from test_osm import Geofabrik
 
     from stiflyt2.importer.adapters import (
         fkb_wfs,
@@ -168,10 +168,10 @@ def loaded(small, monkeypatch):
     teig.run("4644", FIXTURES / "teig.zip")
     vegnett.run("4644", FIXTURES / "vegnett.zip")
     fkb_wfs.run("index", BOX)
-    overpass = Overpass()
+    geofabrik = Geofabrik()
     monkeypatch.setattr(osm.httpx, "Client",
-                        lambda **kw: real(transport=httpx.MockTransport(overpass), **kw))
-    monkeypatch.setattr(osm, "PAUSE_S", 0)
+                        lambda **kw: real(transport=httpx.MockTransport(geofabrik), **kw))
+    monkeypatch.setattr(osm, "URL", Geofabrik.URL)
     osm.run("index", OSM_BOX)
     build.build()
 

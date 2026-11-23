@@ -293,13 +293,13 @@ per municipality. The area section says how much of the area each covers.
 `stiflyt2 import area ron` fetches what an area lacks: it works out the box
 from where Turrutebasen's routes with that prefix lie (2 km to spare) and the
 municipalities from the place names along them. What is fetched once is
-checked again every night; OpenStreetMap once a week, since its service is
-shared. A service that does not answer, or is too busy to (Overpass at
-capacity), is asked again the next night, and is told apart from a delivery
-refused as faulty: it is only warned of when it has not caught up (OpenStreetMap
-after 8 days, the others after 2). Overpass is waited for as it asks, longer
-each time, about 16 minutes, and once it has not answered for one box it is
-not asked for the others that night. With an area chosen the section says, per kind, whether it is loaded,
+checked again every night; OpenStreetMap once a week, every box together: it
+is cut from Geofabrik's extract of Norway (1.4 GB, made every night), which is
+fetched when its checksum says it is new. A service that does not answer is
+asked again the next night, and is told apart from a delivery refused as
+faulty: it is only warned of when it has not caught up (OpenStreetMap after 8
+days, the others after 2). Once it has not answered for one box, it is not
+asked for the others that night. With an area chosen the section says, per kind, whether it is loaded,
 in part or not, and when it was last checked.
 
 A click on a mapped path, a road or an OpenStreetMap way says where the line
