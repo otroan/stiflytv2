@@ -5,7 +5,7 @@ const REPORT_KINDS = { inspection: "Inspection", work: "Work party", note: "Diar
 const DONE_WORDS = { clearing: "Clearing", marking: "Marking", signs: "Signs", bridges: "Bridges", boards: "Boards", drainage: "Drainage", other: "Other" };
 const CONDITION_WORDS = { good: "Good", fair: "Fair", poor: "Poor" };
 const DUE = { inspection: 3, work: 10 };          // years: decided with the route responsible
-const AGE_COLOURS = { recent: "#2e7d32", ageing: "#f9a825", due: "#c62828", never: "#9aa5ad" };
+const AGE_COLOURS = { recent: "#2e7d32", ageing: "#f9a825", due: "#c62828", never: "#5f6b73" };
 let reportsAll = null, reportsFor = null, upkeep = null, sinceLines = null, reportUndo = null;
 let sinceKind = "inspection";       // what the list and the map say how long since: inspections, or work parties
 let reportOpen = null;              // the report that is open: its id, in the address as `report`
@@ -108,7 +108,7 @@ function renderReports() {
     el("ul", {}, ...rows.map(r => {
       const last = r[sinceKind], age = ageOf(last, sinceKind);
       return el("li", { class: "hit", tabindex: 0, onclick: () => showRoute(r.code), onkeydown: enter(() => showRoute(r.code)), onmouseenter: () => pointRoute(r.id), onmouseleave: () => pointRoute(null) },
-        el("span", { class: "code" }, r.code), el("span", { class: "grow" }, r.name || ""),
+        el("span", { class: "code" }, r.code), el("span", { class: "grow" }, (over && over.routes.find(x => x.id === r.id) || {}).name || r.name || ""),
         el("span", { class: "far" }, last ? `${new Date(`${last.done_on}T12:00:00`).getFullYear()}${last.all_of_it ? "" : ", part"}` : "never"),
         el("i", { class: "age-dot", style: `background:${AGE_COLOURS[age]}`, title: age }));
     })),

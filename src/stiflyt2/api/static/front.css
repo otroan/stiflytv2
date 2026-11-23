@@ -30,7 +30,7 @@ body[data-view=signs] #mapwrap .maplibregl-ctrl-top-right { top: 46px; }
 body:not([data-view=signs]) #basket, body:not([data-view=signs]) #basketbox, body:not([data-view=signs]) #chosen { display: none; }
 header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
 h1 { font: 600 20px/1.1 var(--tight); margin: 0; }
-nav { display: flex; gap: 14px; margin-top: 8px; font: 500 15px var(--tight); }
+nav { display: flex; gap: 12px; margin-top: 8px; font: 500 15px var(--tight); }
 nav a { color: var(--muted); text-decoration: none; padding-bottom: 2px; }
 nav a[aria-current] { color: var(--ink); border-bottom: 2px solid var(--sign); }
 nav a.away { margin-left: auto; }
