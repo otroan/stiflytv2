@@ -14,7 +14,9 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, since: { type: "geojson", data: empty }, owned: { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, since: { type: "geojson", data: empty }, owned: { type: "geojson", data: empty },
+      // The property map, from zoom 13: drawn among the owners, where a click asks who owns the ground.
+      parcels: { type: "vector", minzoom: 13, maxzoom: 15, tiles: [`${API}tiles/parcels/{z}/{x}/{y}.mvt`] }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
     },
     layers: [
       ...baseLayers(),
@@ -26,7 +28,11 @@ const map = new maplibregl.Map({
       // The parts of an issue while they are chosen: the same band, stronger.
       { id: "entry-pick", type: "line", source: "entry-pick", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ISSUE_AMBER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 6, 15, 16], "line-opacity": 0.7 } },
-      // A property (the feature `landowners`): the parcel clicked, under the routes.
+      // A property (the feature `landowners`): every parcel, faintly, among the owners; the parcel clicked, under the routes.
+      { id: "parcels-fill", type: "fill", source: "parcels", "source-layer": "parcels", minzoom: 13, layout: { visibility: "none" },
+        paint: { "fill-color": OWNED_PURPLE, "fill-opacity": 0.04 } },
+      { id: "parcels-edge", type: "line", source: "parcels", "source-layer": "parcels", minzoom: 13, layout: { visibility: "none" },
+        paint: { "line-color": OWNED_PURPLE, "line-opacity": 0.35, "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 16, 1.2] } },
       { id: "owned-fill", type: "fill", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "fill-color": OWNED_PURPLE, "fill-opacity": 0.12 } },
       { id: "owned-edge", type: "line", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "line-color": OWNED_PURPLE, "line-width": 2 } },
       // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
@@ -242,7 +248,10 @@ map.on("mousemove", e => {
   showTip(e);
   const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
                   ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : [])];
-  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (routesOpen() && routesAt(e.point).length) ? "pointer" : "";
+  // Among the owners every spot can be clicked: a hand where a property is drawn, else a crosshair (zoomed out, or none known).
+  const owners = view === "landowners" && area && map.getLayoutProperty("parcels-fill", "visibility") === "visible";
+  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (routesOpen() && routesAt(e.point).length) ? "pointer"
+    : owners ? (map.queryRenderedFeatures(e.point, { layers: ["parcels-fill"] }).length ? "pointer" : "crosshair") : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);
 });

@@ -3,6 +3,7 @@
   --ink: #16242e; --muted: #5a6872; --line: #dfe4e8; --wash: #f1f4f6; --path: #1565c0; --ice: #00838f;
   --sign: #7a1e2c;        /* a route of ours, and what is decided */
   --wood: #cdc8bc; --wood-edge: #9a9486; --green: #114232; --t: #d3161b;     /* a sign is weathered wood, or green (RAL 6005) */
+  --band: #c8161d;        /* the band at the top: the red of the T on the stones */
   --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
   --tight: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
 }
@@ -28,14 +29,19 @@ body { display: flex; font: 15px/1.4 var(--body); color: var(--ink); }
 body[data-view=signs] #mapwrap .maplibregl-ctrl-top-right { top: 46px; }
 /* The order and the signs chosen for it belong to the signs: among the routes they are out of the way. */
 body:not([data-view=signs]) #basket, body:not([data-view=signs]) #basketbox, body:not([data-view=signs]) #chosen { display: none; }
-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+/* The band at the top: a stone with the red T painted on it, as the routes are marked, on the red of the T. */
+header { padding: 0 0 8px; border-bottom: 1px solid var(--line); }
+header .top { display: flex; align-items: center; gap: 10px; padding: 9px 16px 9px 12px; background: var(--band); color: #fff;
+              box-shadow: inset 0 -1px 0 #0002; }
+header .tstone { flex: none; filter: drop-shadow(0 1px 1px #0004); }
+header h1 { color: #fff; font: 700 22px/1 var(--tight); letter-spacing: .02em; }
+header h1 small { font: 500 14px var(--tight); letter-spacing: 0; opacity: .78; margin-left: 2px; }
 h1 { font: 600 20px/1.1 var(--tight); margin: 0; }
-nav { display: flex; gap: 12px; margin-top: 8px; font: 500 15px var(--tight); }
+nav { display: flex; gap: 12px; margin-top: 8px; padding: 0 16px; font: 500 15px var(--tight); }
 nav a { color: var(--muted); text-decoration: none; padding-bottom: 2px; }
-nav a[aria-current] { color: var(--ink); border-bottom: 2px solid var(--sign); }
-header .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-header a.away { font: 500 14px var(--tight); color: var(--muted); text-decoration: none; }
-header a.away:hover { color: var(--ink); }
+nav a[aria-current] { color: var(--ink); border-bottom: 2px solid var(--band); }
+header a.away { margin-left: auto; font: 500 14px var(--tight); color: #fff; opacity: .88; text-decoration: none; }
+header a.away:hover, header a.away:focus-visible { opacity: 1; text-decoration: underline; }
 h2 { font: 600 15px/1.3 var(--body); margin: 14px 0 6px; }
 h2:first-child { margin-top: 0; }
 input[type=text], input[type=number], select, textarea { width: 100%; padding: 6px 8px; font: inherit; color: inherit;

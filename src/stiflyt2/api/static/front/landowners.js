@@ -94,7 +94,8 @@ function renderLandowners() {
   const rows = over ? over.routes.slice().sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true })) : [];
   panel.replaceChildren(back,
     el("h2", { class: "area" }, `Landowners in ${area}`),
-    el("div", { class: "sub" }, "Click the map where you want to know who owns the ground, or open a route for the properties it crosses, in order."),
+    el("div", { class: "sub" }, "Click the map where you want to know who owns the ground, or open a route for the properties it crosses, in order. "
+      + "Zoomed in, the properties are drawn."),
     !over ? el("div", { class: "sub" }, "Loading…") : el("ul", { style: "margin-top:8px" }, ...rows.map(r => el("li", { class: "hit", tabindex: 0, onclick: () => showRoute(r.code), onkeydown: enter(() => showRoute(r.code)),
       onmouseenter: () => pointRoute(r.id), onmouseleave: () => pointRoute(null) },
       el("span", { class: "code" }, r.code), el("span", { class: "grow" }, r.name || ""), el("span", { class: "far" }, km(r.on_foot_m / 1000))))));
@@ -105,6 +106,7 @@ function drawLandowners() {
   whenLoaded(() => {
     const on = view === "landowners" && hasLandowners();
     if (!on && ownedAt) { ownedAt = null; ownedPopup.remove(); }
+    for (const id of ["parcels-fill", "parcels-edge"]) map.setLayoutProperty(id, "visibility", on && area ? "visible" : "none");
     const features = [];
     if (on && ownedAt && ownedAt.found && ownedAt.found.outline) features.push({ type: "Feature", properties: {}, geometry: ownedAt.found.outline });
     if (on && route && ownedHot) features.push(...ownedHot.lines.map(coordinates => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } })));
