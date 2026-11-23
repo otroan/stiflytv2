@@ -1,7 +1,11 @@
 // The front page: where one is in it, what has been fetched, and what the side shows.
 let me = { operates: false }, areas = [], area = null, found = null, shown = "all", open = null, problem = null;
 let view = "routes";             // what the side shows of the area: its routes, or its signs
-let route = null;                // the code of the route that is open, among the routes
+let route = null;                // the code of the route that is open: among the routes, or in a part that says something of it
+// A route opens in the part one is in, where that part has something of its own to say of it (its reports, its issues),
+// so that its list, its colours on the map and its back button stay that part's.
+const ROUTE_VIEWS = ["routes", "reports", "issues"];
+let routeFrom = null;            // the issue or the report the open route was opened from: where its back button goes
 let over = null;                 // the area as a whole: its routes, and what they add up to
 let overProblem = null, foundProblem = null;
 let lines = null;                // every stretch of the routes in use, as the map draws them
@@ -27,7 +31,7 @@ function here() {
 function addressOf(at) {
   const url = new URL(location.href);
   for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports"].includes(at.view) ? at.view : null,
-      route: at.view === "routes" && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
+      route: ROUTE_VIEWS.includes(at.view) && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
       issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
@@ -48,17 +52,17 @@ function arrive(to, fitting = true) {
   const wanted = areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
   // Going in among the signs, or to a sign site: the signs are asked for as they are now.
   const goingIn = to.view === "signs" && wanted && (view !== "signs" || (to.site || null) !== open && Boolean(to.site));
-  view = to.view; route = view === "routes" && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
-  entryOpen = view === "issues" && wanted ? to.entry || null : null;
-  if (view !== "issues" || entryOpen) entryAsk = null;
-  reportOpen = view === "reports" && wanted ? to.report || null : null;
-  if (view !== "reports" || reportOpen) reportAsk = null;
+  view = to.view; route = ROUTE_VIEWS.includes(view) && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
+  entryOpen = view === "issues" && wanted && !route ? to.entry || null : null;
+  if (view !== "issues" || entryOpen || route) entryAsk = null;
+  reportOpen = view === "reports" && wanted && !route ? to.report || null : null;
+  if (view !== "reports" || reportOpen || route) reportAsk = null;
   editing = null; problem = null;
   if (view !== "signs" || moved) lookingAtAdrift = false;
   leaveProfile(); pointRoute(null);
   if (placing) stopPlacing();
   if (several) { several.remove(); several = null; }
-  if (!route) shownRoute = null;
+  if (!route) { shownRoute = null; routeFrom = null; }
   if (!moved) { render(); if (goingIn && found) freshen(); return Promise.resolve(); }
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
   entries = null; entriesFor = null; entriesProblem = null; entryShown = null; photosAll = null; photosFor = null;
@@ -137,7 +141,8 @@ function render() {
     tab.href = addressOf({ view: is, area }).href;
   }
   if (!area) renderAreas();
-  else if (view === "routes") { if (route) renderRoute(); else renderArea(); }
+  else if (route) renderRoute();
+  else if (view === "routes") renderArea();
   else if (view === "trips") renderTrips();
   else if (view === "issues") renderIssues();
   else if (view === "photos") renderPhotos();

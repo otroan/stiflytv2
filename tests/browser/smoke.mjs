@@ -246,7 +246,12 @@ if (await js(`hasIssues()`)) {
     const closed = await js(`entries.find(e => e.id === entryOpen).routes[0].code`);
     await clickOn(`[...document.querySelectorAll("#panel dl.facts button.link")].find(b => b.textContent === ${JSON.stringify(closed)})`);
     check("the route it closes says so at the top", await until(`route === ${JSON.stringify(closed)} && /Closed until further notice/.test(document.querySelector("#panel .notice-box") ? document.querySelector("#panel .notice-box").textContent : "")`, 10), await text("#panel .notice-box"));
-    await js(`visit({ route: null })`);
+    check("the route opens among the issues, its issues first, and its back button goes back to the issue", await js(`view === "issues" && document.querySelector("#panel h2.next").textContent === "Issues"
+      && document.querySelector("#panel .backbar .btn").textContent === "‹ The issue"`), await text("#panel .backbar"));
+    const theIssue = await js(`routeFrom.entry`);
+    await clickOn(`document.querySelector("#panel .backbar .btn")`);
+    check("and back, it is the issue again", await until(`view === "issues" && route === null && entryOpen === ${JSON.stringify(theIssue)}`, 10));
+    await js(`visit({ view: "routes", route: null, entry: null })`);
     check("and the area's list of routes marks it closed", await until(`[...document.querySelectorAll("#panel li.hit")].some(li => li.querySelector(".code").textContent === ${JSON.stringify(closed)} && /Closed/.test(li.textContent))`, 10));
     await js(`(() => { const e = entries.find(x => x.text === ${JSON.stringify(trial)}); openEntry(e.id); })()`);
     await until(`view === "issues" && Boolean(entryOpen)`, 10);
@@ -315,6 +320,31 @@ if (await js(`hasReports()`)) {
   await clickOn(`document.getElementById("tab-reports")`);
   check("the reports part lists the routes, those longest since first, with what the colours mean, and others' routes apart", await until(`view === "reports" && Array.isArray(upkeep)
     && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.filter(r => r.ours !== false).length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
+  // A route opens among the reports: the map keeps their colours, what they say of it comes first, and back is back to the list.
+  const listed = JSON.parse(await js(`JSON.stringify(upkeepListed().rows.map(r => r.code))`));
+  if (listed.length) {
+    await clickOn(`document.querySelector("#panel li.hit")`);
+    check("a route clicked in the reports list opens among the reports, its upkeep before its description", await until(`view === "reports" && route === ${JSON.stringify(listed[0])}
+      && document.getElementById("tab-reports").getAttribute("aria-current") === "page" && /view=reports/.test(location.search) && /route=/.test(location.search)
+      && (() => { const h = [...document.querySelectorAll("#panel h2")].map(x => x.textContent); return h.includes("Upkeep") && h.indexOf("Upkeep") < h.indexOf("Description"); })()`, 15), await text("#panel"));
+    check("the map keeps the colours of the reports, and the open route is an outline round them", await js(`map.getPaintProperty("routes", "line-color") === AGE_COLOURS.never
+      && JSON.stringify(map.getPaintProperty("route-open", "line-gap-width")) === JSON.stringify(SINCE_WIDTH)`));
+    check("its back button says it goes back to the reports", /^‹ Reports in /i.test(await text("#panel .backbar .btn")), await text("#panel .backbar .btn"));
+    if (listed.length > 1) {
+      await clickOn(`document.querySelector("#panel .backbar .step[aria-label='The next route in the list']")`);
+      check("› is the next route in the reports list", await until(`view === "reports" && route === ${JSON.stringify(listed[1])}`, 10), await js("route"));
+    }
+    await clickOn(`document.querySelector("#panel .backbar .btn")`);
+    check("back, the reports list is there again", await until(`view === "reports" && route === null && Boolean(document.querySelector("#panel .since-legend"))`, 10), await text("#panel h2"));
+    const ours = await js(`(() => { const mine = new Set(upkeepListed().rows.map(r => r.id)); const f = lines.features.filter(f => { const ids = f.properties.ids.split("|").filter(Boolean); return ids.length === 1 && mine.has(ids[0]); })
+      .sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0]; if (!f) return null; const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 13 }); return JSON.stringify(c); })()`);
+    if (ours) {
+      await sleep(1500);
+      await click(await onMap(ours));
+      check("a click on a route on the map opens it among the reports", await until(`view === "reports" && Boolean(route)`, 10), `${await js("view")} ${await js("route")}`);
+      await js(`visit({ route: null })`);
+    } else console.log("    (no stretch here is walked by one of our routes only: the click on the map among the reports is not checked)");
+  }
   if (EDIT) {
     editing = true;
     const target = await js(`upkeep[0].code`);

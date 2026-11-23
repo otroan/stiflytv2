@@ -11,7 +11,8 @@ function routesListed() {
 }
 function pointRoute(id) { whenLoaded(() => map.setFilter("route-hot", ["in", `|${id || "none"}|`, ["get", "ids"]])); }
 function showRoute(code) {
-  visit({ view: "routes", route: code });
+  if (!route) routeFrom = { entry: entryOpen, report: reportOpen };
+  visit({ view: ROUTE_VIEWS.includes(view) ? view : "routes", route: code, entry: null, report: null, site: null });
   document.getElementById("scroll").scrollTop = 0;
   const r = over && over.routes.find(x => x.code === code);
   if (r) fitTo(f => f.properties.ids.includes(`|${r.id}|`), 14);
@@ -114,20 +115,34 @@ function renderArea() {
     problem ? el("div", { class: "error" }, problem) : "",
     addedRoutes());
 }
+// Back from a route: to the issue or the report it was opened from, else to the list of the part one is in.
+function leaveRoute() { visit({ route: null, entry: routeFrom && routeFrom.entry || null, report: routeFrom && routeFrom.report || null }); }
+function backFromRoute() {
+  const AREA = area.toUpperCase();
+  return routeFrom && routeFrom.report ? "‹ The report" : routeFrom && routeFrom.entry ? "‹ The issue"
+    : view === "reports" ? `‹ Reports in ${AREA}` : view === "issues" ? `‹ Issues in ${AREA}` : `‹ ${AREA}`;
+}
+// The routes ‹ and › go through: the list of the part one is in, in its order. Issues have no list of routes.
+function routeSteps() {
+  if (view === "reports") { const { rows, others } = upkeepListed(); return others.some(x => x.code === route) ? others : rows; }
+  return view === "routes" ? routesListed() : [];
+}
 function renderRoute() {
-  const rows = routesListed(), r = over && over.routes.find(x => x.code === route), i = r ? rows.indexOf(r) : -1;
+  const rows = routeSteps(), r = over && over.routes.find(x => x.code === route), i = rows.findIndex(x => x.code === route);
   const step = (to, label, title) => el("button", { class: "btn step", title, "aria-label": title, disabled: !to, onclick: () => to && showRoute(to.code) }, label);
-  const back = el("div", { class: "backbar" }, el("button", { class: "btn", onclick: () => visit({ route: null }) }, `‹ ${area.toUpperCase()}`), el("span", { class: "grow" }),
-    step(rows[i - 1], "‹", "The route before in the list"), step(i < 0 ? null : rows[i + 1], "›", "The next route in the list"));
+  const back = el("div", { class: "backbar" }, el("button", { class: "btn", onclick: leaveRoute }, backFromRoute()), el("span", { class: "grow" }),
+    ...(rows.length ? [step(rows[i - 1], "‹", "The route before in the list"), step(i < 0 ? null : rows[i + 1], "›", "The next route in the list")] : []));
   if (!over) { panel.replaceChildren(back, overProblem ? el("div", { class: "error" }, `Could not get the routes: ${overProblem}`) : el("div", { class: "sub" }, "Loading…")); return; }
   if (!r) { panel.replaceChildren(back, el("div", { class: "sub" }, `No route in use here is called ${route}.`)); return; }
   if (!shownRoute || shownRoute.id !== r.id) {
     const mine = shownRoute = { id: r.id, detail: null, height: null, problem: null };
-    const again = () => { if (shownRoute === mine && view === "routes" && route === r.code) renderRoute(); };
+    const again = () => { if (shownRoute === mine && route === r.code) renderRoute(); };
     get(`owned/routes/${r.id}`).then(d => { mine.detail = d; again(); }).catch(err => { mine.problem = err.message; again(); });
     get(`owned/routes/${r.id}/height`).then(h => { mine.height = h; again(); }).catch(() => {});
   }
   const D = shownRoute.detail, H = shownRoute.height, profile = el("div", { class: "profile" });
+  // What the part one is in says of the route comes first: its reports among the reports, its issues among the issues.
+  const own = { issues: hasIssues() ? routeIssues(r) : [], reports: hasReports() ? routeUpkeep(r) : [] };
   leaveProfile();
   panel.replaceChildren(back,
     el("h2", {}, el("span", { class: "code" }, r.code), r.name || ""),
@@ -139,6 +154,7 @@ function renderRoute() {
       el("dt", {}, "Climbs"), el("dd", {}, ...(D ? climbs(D, H || D.height) : [el("span", { class: "sub" }, "…")])),
       r.grading ? el("dt", {}, "Grading") : "", r.grading ? el("dd", {}, grade(r.grading), GRADING[r.grading] || r.grading,
         r.grading_from === "set" ? "" : el("div", { class: "sub" }, "By its length and climb: nobody has set a grading. The ground can make it harder.")) : ""),
+    ...(own[view] || []),
     profile,
     el("h2", {}, "Description"),
     D ? (D.description ? el("div", { class: "said" }, D.description) : el("div", { class: "sub" }, "None is written yet."))
@@ -146,8 +162,8 @@ function renderRoute() {
     el("div", { class: "actions", style: "margin-top:12px" },
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",
       el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")),
-    ...(hasIssues() ? routeIssues(r) : []),
-    ...(hasReports() ? routeUpkeep(r) : []),
+    ...(view === "issues" ? [] : own.issues),
+    ...(view === "reports" ? [] : own.reports),
     ...(hasPhotos() ? routePhotos(r) : []));
   if (D && H) drawProfile(profile, D, H);
 }
@@ -156,7 +172,7 @@ function routePhotos(r) {
   const mine = shownRoute;
   if (mine && (mine.photos === undefined || mine.photos === null)) {
     mine.photos = false;
-    get("photos", { route: r.id }).then(list => { mine.photos = list; if (shownRoute === mine && view === "routes") renderRoute(); }).catch(() => {});
+    get("photos", { route: r.id }).then(list => { mine.photos = list; if (shownRoute === mine && route) renderRoute(); }).catch(() => {});
   }
   const list = mine && mine.photos;
   return [el("h2", { class: "next" }, "Photos"),

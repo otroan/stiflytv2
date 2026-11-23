@@ -6,7 +6,7 @@ for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else undoLast(); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) visit({ route: null }); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) leaveRoute(); } });
 
 (async () => {
   try {
@@ -15,7 +15,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     presence(me, document.getElementById("present"), () => {
       const site = view === "signs" && open && found && found.sites.find(s => s.key === open);
       const issue = view === "issues" && entryOpen && (entries || []).find(x => x.id === entryOpen);
-      return { page: view, area, route: view === "routes" ? route : issue && issue.routes.length ? issue.routes[0].code : null,
+      return { page: view, area, route: route || (issue && issue.routes.length ? issue.routes[0].code : null),
                site: site ? site.name || (site.near ? `by ${site.near.name}` : null) : issue ? `${ISSUE_KINDS[issue.kind]}, ${issue.text}`.slice(0, 60) : null };
     });
     // The parts that are features of their own (ADR-005) are there only for one who has them.

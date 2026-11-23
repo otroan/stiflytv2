@@ -86,6 +86,12 @@ async function setReportParts(row, asked) {
   render();
 }
 
+// The routes as the reports list has them, those longest since first. Another association's routes are in the tool,
+// and are not ours to report on: apart, folded away.
+function upkeepListed() {
+  const sorted = (upkeep || []).slice().sort((a, b) => (a[sinceKind] ? a[sinceKind].done_on : "") < (b[sinceKind] ? b[sinceKind].done_on : "") ? -1 : 1);
+  return { rows: sorted.filter(r => r.ours !== false), others: sorted.filter(r => r.ours === false) };
+}
 function renderReports() {
   const back = el("div", { class: "backbar" }, el("button", { class: "btn", onclick: () => visit({ area: null, route: null, site: null, entry: null, report: null }) }, "‹ Areas"));
   const told = problem ? el("div", { class: "error", role: "alert" }, problem) : "";
@@ -96,9 +102,7 @@ function renderReports() {
   const half = DUE[sinceKind] / 2;
   const legend = el("div", { class: "since-legend" }, ...[["recent", `under ${half} years`], ["ageing", `${half}–${DUE[sinceKind]} years`], ["due", `over ${DUE[sinceKind]} years: due`], ["never", "never, or not reported"]]
     .map(([age, says]) => el("span", {}, el("i", { style: `background:${AGE_COLOURS[age]}` }), says)));
-  // Another association's routes are in the tool, and are not ours to report on: apart, folded away.
-  const sorted = upkeep.slice().sort((a, b) => (a[sinceKind] ? a[sinceKind].done_on : "") < (b[sinceKind] ? b[sinceKind].done_on : "") ? -1 : 1);
-  const rows = sorted.filter(r => r.ours !== false), others = sorted.filter(r => r.ours === false);
+  const { rows, others } = upkeepListed();
   const due = rows.filter(r => !r[sinceKind] || r[sinceKind].due).length;
   panel.replaceChildren(back,
     el("h2", { class: "area" }, `Reports in ${area}`),
@@ -277,7 +281,7 @@ function drawReports() {
 // What the reports say of a route, in its panel: when it was last inspected and worked on, and its reports.
 function routeUpkeep(r) {
   const s = (upkeep || []).find(x => x.id === r.id), mine = shownRoute;
-  if (mine && mine.reports === undefined) { mine.reports = null; get("reports", { route: r.id }).then(l => { mine.reports = l; if (shownRoute === mine && view === "routes") renderRoute(); }).catch(() => {}); }
+  if (mine && mine.reports === undefined) { mine.reports = null; get("reports", { route: r.id }).then(l => { mine.reports = l; if (shownRoute === mine && route) renderRoute(); }).catch(() => {}); }
   const line = (kind, label) => {
     const last = s && s[kind];
     return el("div", {}, el("i", { class: "age-dot", style: `background:${AGE_COLOURS[ageOf(last, kind)]}` }), ` ${label}: `,

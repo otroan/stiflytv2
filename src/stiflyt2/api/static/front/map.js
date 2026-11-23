@@ -3,6 +3,8 @@ const empty = { type: "FeatureCollection", features: [] };
 const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
 const NOTICE_RED = "#c62828", ISSUE_AMBER = "#ef8f00", ISSUE_DONE = "#9aa5ad";     // an issue: a notice to walkers, work, done
 const PHOTO_BLUE = "#3949ab";   // where a photo was taken
+const OPEN_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6];      // the open route
+const SINCE_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 6];     // how long since a stretch was done
 
 const map = new maplibregl.Map({
   container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
@@ -29,9 +31,9 @@ const map = new maplibregl.Map({
         paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 5], "line-dasharray": [0, 2], "line-opacity": 0.75 } },
       // How long since each stretch was inspected, or had a work party (the feature `reports`): the latest on top.
       { id: "since", type: "line", source: "since", layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "t"] },
-        paint: { "line-color": ["get", "colour"], "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 6] } },
+        paint: { "line-color": ["get", "colour"], "line-width": SINCE_WIDTH } },
       { id: "route-open", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6] } },
+        paint: { "line-color": css("--sign"), "line-width": OPEN_WIDTH } },
       { id: "route-open-ice", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 15, 8], "line-dasharray": [0, 1.8] } },
       { id: "places", type: "circle", source: "places", minzoom: 10, paint: { "circle-radius": 3, "circle-color": "#fff", "circle-stroke-color": css("--ink"), "circle-stroke-width": 1.5 } },
@@ -89,9 +91,14 @@ function drawMap() {
     map.setLayoutProperty("sites-small", "visibility", among ? "visible" : "none");
     // The routes of the area stand out; those of other areas are there to be seen past.
     for (const id of ["routes", "routes-ice"]) map.setPaintProperty(id, "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
-    const walked = among && route && over && over.routes.find(r => r.code === route), mine = ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]];
-    map.setFilter("route-open", ["all", mine, ["!=", ["get", "kind"], "glacier"]]);
-    map.setFilter("route-open-ice", ["all", mine, ["==", ["get", "kind"], "glacier"]]);
+    const walked = route && over && over.routes.find(r => r.code === route), mine = ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]];
+    // Among the reports the open route is an outline, ice and all: the colour of how long since it was done is in it.
+    const outline = view === "reports";
+    map.setPaintProperty("route-open", "line-color", outline ? css("--ink") : css("--sign"));
+    map.setPaintProperty("route-open", "line-width", outline ? 2.5 : OPEN_WIDTH);
+    map.setPaintProperty("route-open", "line-gap-width", outline ? SINCE_WIDTH : 0);
+    map.setFilter("route-open", outline ? mine : ["all", mine, ["!=", ["get", "kind"], "glacier"]]);
+    map.setFilter("route-open-ice", outline ? ["in", "|none|", ["get", "ids"]] : ["all", mine, ["==", ["get", "kind"], "glacier"]]);
     map.setFilter("routes-ice", ["all", ["!", mine], ["==", ["get", "kind"], "glacier"]]);     // the open route's own dots alone: two rows of dots smear
     map.getSource("sites").setData({ type: "FeatureCollection", features: (found ? found.sites : []).map(s => ({ type: "Feature",
       properties: { key: s.key, name: s.name || (s.near ? `by ${s.near.name}` : ""), state: s.no_signs ? "none" : onOrder(s) ? "order" : waiting(s) ? "waiting" : "", open: s.key === open }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) });
@@ -148,8 +155,8 @@ map.on("click", e => {
   if (issue) { openEntry(issue.properties.id); return; }
   const hit = map.queryRenderedFeatures(box, { layers: [view === "signs" ? "sites" : "sites-small"] })[0];
   if (hit) { openSite(hit.properties.key); return; }
-  if (view !== "routes") return;
-  // Among the routes a click on one opens it; where several run together, it asks which.
+  if (!routesOpen()) return;
+  // Among the routes, the reports and the issues a click on one opens it there; where several run together, it asks which.
   const at = routesAt(e.point);
   if (several) { several.remove(); several = null; }
   if (!area && at.length) visit({ area: at[0].code.slice(0, 3).toLowerCase() });
@@ -211,6 +218,8 @@ function showTip(e) {
 }
 map.getCanvas().addEventListener("mouseleave", () => { tip.remove(); tipSays = ""; });
 map.on("movestart", () => { tip.remove(); tipSays = ""; });
+// Whether a click on a route opens it: in the parts a route opens in, and not while a report or an issue is being said.
+const routesOpen = () => ROUTE_VIEWS.includes(view) && !reportAsk && !entryAsk;
 // The routes in use that run where the map was clicked: of the area, or with none chosen, of any.
 function routesAt(point) {
   const ids = new Map();
@@ -225,7 +234,7 @@ map.on("mousemove", e => {
   showTip(e);
   const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
                   ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : [])];
-  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (view === "routes" && routesAt(e.point).length) ? "pointer" : "";
+  map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (routesOpen() && routesAt(e.point).length) ? "pointer" : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);
 });
