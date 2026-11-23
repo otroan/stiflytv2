@@ -57,7 +57,7 @@ def test_run_locally_it_answers_only_what_is_asked_straight_of_localhost(loaded,
         assert client.get(f"{V1}/areas").status_code == 200
         assert client.get(f"{V1}/auth/me").json() == {
             "name": "Test Editor", "email": None, "role": "editor", "edits": True, "operates": True, "through": "api",
-                "features": ["routes", "signs"], "sign_in": False, "really": None, "may_look_as": []}
+                "features": ["routes", "signs"], "sign_in": False, "really": None, "may_look_as": [], "profile": {"areas": [], "maintainer": None}}
         # Passed on by a proxy, or asked for under the public name: this way of running is not for the world.
         for headers in ({"X-Forwarded-For": "203.0.113.9"}, {"Host": "stiflyt2.example.org"}):
             refused = client.get(f"{V1}/areas", headers=headers)
@@ -95,7 +95,7 @@ def test_signing_in_with_google_lets_in_only_who_is_listed(signed, owner, monkey
     assert (back.status_code, back.headers["location"]) == (302, "/?area=jot")
     assert signed.get(f"{V1}/auth/me").json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "reader", "edits": False, "operates": False, "through": "viewer",
-        "features": [], "sign_in": True, "really": None, "may_look_as": []}
+        "features": [], "sign_in": True, "really": None, "may_look_as": [], "profile": {"areas": [], "maintainer": None}}
     assert signed.get("/").status_code == 200 and signed.get(f"{V1}/areas").status_code == 200
     assert "How to use it" in signed.get("/guide").text
 
@@ -145,7 +145,7 @@ def test_a_token_acts_as_its_person_and_what_it_does_is_recorded_as_having_come_
     as_her, as_him = {"Authorization": f"Bearer {hers}"}, {"Authorization": f"Bearer {his}"}
     assert signed.get(f"{V1}/auth/me", headers=as_her).json() == {
         "name": "Kari Nordmann", "email": KARI, "role": "editor", "edits": True, "operates": True, "through": "mcp",
-        "features": ["routes", "signs"], "sign_in": True, "really": None, "may_look_as": []}
+        "features": ["routes", "signs"], "sign_in": True, "really": None, "may_look_as": [], "profile": {"areas": [], "maintainer": None}}
     said = signed.post(f"{V1}/feedback", headers=as_her, json={"what": "report_gap", "message": "No way to do that"})
     assert owner.execute("SELECT who, through, what FROM feedback.entry WHERE id = %s", (said.json()["id"],)).fetchone() == (
         "Kari Nordmann", "mcp", "report_gap")

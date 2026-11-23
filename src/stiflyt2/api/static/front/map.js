@@ -247,15 +247,20 @@ function fit() {
   const lons = found.sites.map(s => s.lon), lats = found.sites.map(s => s.lat);
   map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 60, maxZoom: 13, animate: !calm });
 }
-// Only what is in use is drawn. Each stretch says whose it is in a form the map can be asked about.
+// Only what is in use is drawn. Each stretch says whose it is in a form the map can be asked about: its routes, and
+// the areas they are of, by their codes and as routes added to an area from another.
+let rawLines = null;
 function inUse(all) {
+  rawLines = all;
+  const addedTo = new Map();
+  for (const a of areas || []) for (const id of a.added || []) addedTo.set(id, [...(addedTo.get(id) || []), a.area]);
   const features = [];
   for (const f of all.features) {
     const of = (f.properties.routes || []).filter(r => r.in_use);
     if (!of.length) continue;
     f.properties.ids = `|${of.map(r => r.id).join("|")}|`;
     f.properties.codes_in_use = `|${of.map(r => r.code).join("|")}|`;
-    f.properties.areas = `|${[...new Set(of.map(r => r.code.slice(0, 3).toLowerCase()))].join("|")}|`;
+    f.properties.areas = `|${[...new Set(of.flatMap(r => [r.code.slice(0, 3).toLowerCase(), ...(addedTo.get(r.id) || [])]))].join("|")}|`;
     features.push(f);
   }
   return { type: "FeatureCollection", features };

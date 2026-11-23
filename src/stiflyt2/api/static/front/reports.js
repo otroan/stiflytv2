@@ -25,7 +25,7 @@ async function loadReports() {
   if (!hasReports() || !area) { reportsAll = upkeep = sinceLines = null; reportsFor = null; return; }
   const asked = area;
   try {
-    const [all, status, lines] = await Promise.all([get("reports", { area: asked }), get("reports/status", { area: asked }), get("reports/coverage", { area: asked, kind: sinceKind })]);
+    const [all, status, lines] = await Promise.all([get("reports", { area: asked }), get("reports/status", { area: asked, maintainer: (me.profile && me.profile.maintainer) || null }), get("reports/coverage", { area: asked, kind: sinceKind })]);
     if (asked !== area) return;
     reportsAll = all; upkeep = status; sinceLines = lines; reportsFor = asked;
   } catch { /* the part says it could not */ }

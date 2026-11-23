@@ -1351,6 +1351,30 @@ inspections are to come as well.
 Not yet: notices in what is handed to UT.no; replacing a sign tied to the
 sign order; planning a work trip round the open issues.
 
+## Your areas, and what an area is
+
+An area is the routes whose codes begin with its three letters, and routes
+added to it from another area: Breheimen is the bre routes and sun27, which
+the same people look after. In an area's list of routes such a route is
+marked "from sun"; at the foot of the list, "Routes from other areas" lists
+them, and the route responsible adds one by its code or takes it out (Undo
+puts it back). The area's issues, reports, photos and a trip of all its
+routes have them too; their codes stay what they are. Kept in
+`ops.area_route` by the route's id, followed as ADR-004 says (import
+migration `0022`).
+
+Each person has a profile: the areas they work with, the first of them the
+one the front page and the route editor open with, and whose routes are
+theirs (none said: the home maintainer, DNT Oslo og omegn). "Your areas…"
+on the list of areas chooses them; they are listed first. Reports lists the
+routes of that maintainer, and others' apart. Kept in `access.profile`, by
+e-mail address. `GET|PUT /api/v1/profile`, `GET /api/v1/areas/added`,
+`POST /api/v1/areas/{area}/added`, `DELETE /api/v1/areas/{area}/added/{route}`.
+
+Not yet: what one may change limited to one's areas or routes (a scope on a
+grant, `docs/TODO.md`); the signs of a route added from another area are
+still among its own area's.
+
 ## Reports: when each route was last inspected and worked on
 
 Inspections, work parties (dugnad) and diary notes, with the feature

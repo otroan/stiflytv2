@@ -252,7 +252,10 @@ def register(app: FastAPI, pool: ConnectionPool) -> None:
         who = person_of(request)
         holds = who.really or who.role
         looks = [name for name, _ in who.look_as] if who.features is not None else access.lesser(holds)
+        with pool.connection() as conn:
+            mine = access.profile(conn, who) if who.name else {"areas": [], "maintainer": None}
         return {"name": who.name, "email": who.email, "role": who.role, "edits": who.edits, "operates": who.operates,
+                "profile": mine,
                 "features": sorted(f for f in FEATURES if who.has(f)),
                 "through": who.through, "sign_in": signed_in(), "really": who.really,
                 "may_look_as": looks if who.name and who.through == "viewer" else []}

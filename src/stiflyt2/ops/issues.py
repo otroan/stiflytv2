@@ -35,6 +35,7 @@ from stiflyt2 import features
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import along as on_route
 from stiflyt2.ops import anchor
+from stiflyt2.ops import areas as areas_of
 
 features.feature("issues", "mark on the map what is wrong or to be done on a route, and say when a route is closed",
                  "ask to be given the feature `issues`")
@@ -314,8 +315,8 @@ def listing(conn, area: str | None = None, route: str | None = None) -> list[dic
     notices in force first among them, then the newest."""
     told = _shown(conn, _rows(conn, "SELECT * FROM ops.entry ORDER BY made_at"))
     if area:
-        area = area.lower()
-        told = [e for e in told if any(r["code"] and r["code"][:3].lower() == area for r in e["routes"])
+        area, more = area.lower(), set(areas_of.added_to(conn, area))
+        told = [e for e in told if any(r["code"] and r["code"][:3].lower() == area or r["id"] in more for r in e["routes"])
                 or (not e["routes"] and e["area"] == area)]
     if route:
         told = [e for e in told if any(r["id"] == route for r in e["routes"])]

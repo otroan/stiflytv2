@@ -31,6 +31,7 @@ from psycopg.types.json import Jsonb
 from stiflyt2 import features
 from stiflyt2.config import settings
 from stiflyt2.domain.places import Invalid, NotFound
+from stiflyt2.ops import areas as areas_of
 
 pillow_heif.register_heif_opener()
 
@@ -225,8 +226,11 @@ def listing(conn, area: str | None = None, route: str | None = None, entry: str 
     wait to be placed: the newest taken first."""
     where, params = [], {}
     if area:
-        where.append("p.area = %(area)s")
-        params["area"] = area.lower()
+        # Of the area, or taken near a route added to it from another.
+        where.append("""(p.area = %(area)s OR EXISTS (SELECT 1 FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+                         JOIN core.edge_revision v ON v.id = e.current_revision_id
+                         WHERE l.route_id = ANY(%(added)s::uuid[]) AND ST_DWithin(v.geom, p.geom, %(near)s)))""")
+        params.update(area=area.lower(), added=areas_of.added_to(conn, area), near=NEAR_ROUTE_M)
     if route:
         if not _uuid(route):
             raise NotFound("no such route")
@@ -261,9 +265,11 @@ def days(conn, area: str, routes: list[str] | None = None) -> list[dict]:
                ARRAY(SELECT DISTINCT r.id::text || ' ' || r.code FROM core.route_leg l
                      JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
                      JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
-                     WHERE ST_DWithin(v.geom, p.geom, %(near)s) AND lower(left(r.code, 3)) = %(area)s) AS near
-        FROM ops.photo p""") + " WHERE p.area = %(area)s AND p.taken_at IS NOT NULL AND p.geom IS NOT NULL ORDER BY p.taken_at",
-                  {"area": area.lower(), "near": NEAR_ROUTE_M})
+                     WHERE ST_DWithin(v.geom, p.geom, %(near)s) AND (lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))) AS near
+        FROM ops.photo p""") + """ WHERE p.taken_at IS NOT NULL AND p.geom IS NOT NULL AND (p.area = %(area)s OR EXISTS (
+            SELECT 1 FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
+            WHERE l.route_id = ANY(%(added)s::uuid[]) AND ST_DWithin(v.geom, p.geom, %(near)s))) ORDER BY p.taken_at""",
+                  {"area": area.lower(), "near": NEAR_ROUTE_M, "added": areas_of.added_to(conn, area)})
     told: dict = {}
     for p in found:
         near = [tuple(x.split(" ", 1)) for x in p.pop("near")]

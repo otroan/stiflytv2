@@ -7,6 +7,7 @@ from psycopg.rows import dict_row
 
 from stiflyt2 import height
 from stiflyt2.domain import routes
+from stiflyt2.ops import areas as areas_of
 
 _IN_USE = "t.status = 'active' AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL"
 _LEGS = """core.route t JOIN core.route_leg l ON l.route_id = t.id
@@ -20,18 +21,26 @@ def _rows(conn, sql: str, params: dict | None = None) -> list[dict]:
 
 
 def areas(conn) -> list[dict]:
-    """The areas that have routes of ours in use, by the three letters their codes start with.
+    """The areas that have routes of ours in use, by the three letters their codes start with, and with the routes
+    added to them from another area (`added`, ids).
 
     For each how many routes, and how far they go on foot when each is
     walked for itself. Lengths are in metres.
     """
-    return _rows(conn, f"""
-        SELECT lower(left(t.code, 3)) AS area, count(DISTINCT t.id)::int AS routes,
+    more = areas_of.added(conn)
+    pairs = [(a, r) for a, ids in more.items() for r in ids]
+    told = _rows(conn, f"""
+        WITH member AS (
+            SELECT lower(left(t.code, 3)) AS area, t.id FROM core.route t WHERE {_IN_USE} AND t.code ~* '^[a-z]{{3}}'
+            UNION SELECT m.area, m.id FROM unnest(%(a)s::text[], %(r)s::uuid[]) m(area, id))
+        SELECT m.area, count(DISTINCT m.id)::int AS routes,
                round(coalesce(sum({_LEN}) FILTER (WHERE v.kind <> 'water'), 0))::int AS route_m
-        FROM core.route t LEFT JOIN core.route_leg l ON l.route_id = t.id
+        FROM member m JOIN core.route t ON t.id = m.id LEFT JOIN core.route_leg l ON l.route_id = t.id
         LEFT JOIN core.edge e ON e.id = l.edge_id LEFT JOIN core.edge_revision v ON v.id = e.current_revision_id
-        WHERE {_IN_USE} AND t.code ~* '^[a-z]{{3}}'
-        GROUP BY 1 ORDER BY 2 DESC, 1""")
+        GROUP BY 1 ORDER BY 2 DESC, 1""", {"a": [a for a, _ in pairs], "r": [r for _, r in pairs]})
+    for a in told:
+        a["added"] = more.get(a["area"], [])
+    return told
 
 
 def area(conn, area: str) -> dict:
@@ -43,8 +52,8 @@ def area(conn, area: str) -> dict:
     climb give where none is set); and the places the routes pass, by kind.
     Lengths and heights are in metres.
     """
-    a = {"a": area.lower()}
-    mine = f"{_IN_USE} AND lower(left(t.code, 3)) = %(a)s"
+    a = {"a": area.lower(), "added": areas_of.added_to(conn, area)}
+    mine = f"{_IN_USE} AND (lower(left(t.code, 3)) = %(a)s OR t.id = ANY(%(added)s::uuid[]))"
     listed = _rows(conn, f"""
         SELECT t.id::text AS id, t.code, t.name, t.grading,
                round(coalesce(sum({_LEN}) FILTER (WHERE v.kind <> 'water'), 0))::int AS on_foot_m,

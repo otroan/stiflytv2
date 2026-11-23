@@ -68,6 +68,28 @@ check("the front page lists the areas", await until(`document.querySelectorAll("
 check("routes is the part that is open, and the basket is out of the way", await js(`document.getElementById("tab-routes").getAttribute("aria-current") === "page" && getComputedStyle(document.getElementById("basket")).display === "none"`));
 check("the routes are on the map", await until(`Boolean(lines) && lines.features.length > 0 && styled`));
 
+// Your areas (the profile): chosen and saved, listed first, and the front page opens with the first of them. And a route
+// added to an area from another counts there, also on the map.
+if (EDIT) {
+  editing = true;
+  await clickOn(`[...document.querySelectorAll("#panel button")].find(b => /areas…$/.test(b.textContent))`);
+  await until(`Boolean(choosingAreas)`, 5);
+  const mine = await js(`areas[areas.length - 1].area`);
+  await js(`[...document.querySelectorAll("#panel li.area")].find(li => li.querySelector(".code").textContent === ${JSON.stringify(mine)}).querySelector("input").click()`);
+  await js(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Save your areas").click()`);
+  check("your areas are saved, and listed first", await until(`!choosingAreas && me.profile.areas[0] === ${JSON.stringify(mine)} && /Your areas/.test(document.getElementById("panel").textContent)`, 10), await text("#panel"));
+  await open("");
+  check("the front page opens with the first of your areas", await until(`typeof area !== "undefined" && area === ${JSON.stringify(mine)} && Boolean(over)`, 20), await js("location.search"));
+  const lent = await js(`over.routes[0].code`);
+  await js(`(async () => { await send("POST", "areas/xyz/added", { code: ${JSON.stringify(lent)} }); areas = await get("owned/areas"); lines = inUse(rawLines); })()`);
+  check("a route added to another area counts there, in the areas and on the map", await until(`areas.some(a => a.area === "xyz" && a.routes === 1)
+    && lines.features.some(f => f.properties.codes_in_use.includes("|" + ${JSON.stringify(lent)} + "|") && f.properties.areas.includes("|xyz|"))`, 10));
+  await js(`(async () => { const id = areas.find(a => a.area === "xyz").added[0]; await send("DELETE", "areas/xyz/added/" + id); await send("PUT", "profile", { areas: [] }); me.profile = { areas: [], maintainer: null };
+    areas = await get("owned/areas"); lines = inUse(rawLines); visit({ area: null, route: null, site: null }); })()`);
+  await until(`area === null && document.querySelectorAll("#panel li.hit.area").length > 0`, 10);
+  editing = false;
+}
+
 // An area: what its routes add up to, and the routes.
 check("an area can be clicked", await clickOn(`document.querySelector("#panel li.hit.area")`));
 check("the area shows its numbers and its routes", await until(`document.querySelectorAll("#panel dl.facts dt").length >= 4 && document.querySelectorAll("#panel li.hit").length > 0 && Boolean(found)`), await text("#panel dl.facts"));

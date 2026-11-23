@@ -30,6 +30,7 @@ from stiflyt2.domain import whose
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import along as on_route
 from stiflyt2.ops import anchor
+from stiflyt2.ops import areas as areas_of
 
 features.feature("reports", "report inspections and work parties on the routes, and see when each was last done",
                  "ask to be given the feature `reports`")
@@ -233,14 +234,23 @@ def _coverage(conn, parts: list[dict]) -> list[dict]:
 
 
 def _routes_of(conn, area: str | None) -> list[dict]:
-    """The routes in use of an area, with their stretches."""
+    """The routes in use of an area (those added to it from another too), with their stretches."""
     found = _rows(conn, """
         SELECT r.id::text, r.code, coalesce(r.name, '') AS name, array_agg(DISTINCT l.edge_id::text) AS edges
         FROM core.route r JOIN core.route_leg l ON l.route_id = r.id
         WHERE r.status = 'active' AND r.discontinued_since IS NULL AND r.unpublished_why IS NULL
-          AND (%(area)s::text IS NULL OR lower(left(r.code, 3)) = %(area)s)
-        GROUP BY r.id ORDER BY length(r.code), r.code""", {"area": (area or "").lower() or None})
+          AND (%(area)s::text IS NULL OR lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))
+        GROUP BY r.id ORDER BY length(r.code), r.code""",
+                  {"area": (area or "").lower() or None, "added": areas_of.added_to(conn, area) if area else []})
     return found
+
+
+def _in_area(conn, area: str | None, told: list[dict]) -> list[dict]:
+    """The reports said in an area, or on a route added to it from another."""
+    if not area:
+        return told
+    more = set(areas_of.added_to(conn, area))
+    return [t for t in told if t["area"] == area.lower() or any(c["route"] and c["route"]["id"] in more for c in t["covers"])]
 
 
 def _shown(conn, reports: list[dict]) -> list[dict]:
@@ -261,9 +271,8 @@ def _shown(conn, reports: list[dict]) -> list[dict]:
 
 def listing(conn, area: str | None = None, route: str | None = None) -> list[dict]:
     """The reports of an area, or of a route (those that cover some of it now): the latest done first."""
-    rows = _rows(conn, """SELECT * FROM ops.report WHERE (%(area)s::text IS NULL OR area = %(area)s)
-                          ORDER BY done_on DESC, made_at DESC""", {"area": None if route else (area or "").lower() or None})
-    told = _shown(conn, rows)
+    rows = _rows(conn, "SELECT * FROM ops.report ORDER BY done_on DESC, made_at DESC")
+    told = _shown(conn, rows) if route else _in_area(conn, area, _shown(conn, rows))
     if route:
         legs = {e for r in _routes_of(conn, None) if r["id"] == route for e in r["edges"]}
         told = [t for t in told if legs & set(t["edges"])]
@@ -309,6 +318,5 @@ def coverage(conn, area: str | None, kind: str) -> list[dict]:
     stretch by stretch. The latest are last, to be drawn on top."""
     if kind not in ("inspection", "work"):
         raise Invalid("coverage is of inspections or work parties")
-    rows = _rows(conn, """SELECT * FROM ops.report WHERE kind = %(k)s AND (%(area)s::text IS NULL OR area = %(area)s)
-                          ORDER BY done_on""", {"k": kind, "area": (area or "").lower() or None})
-    return [{"report": t["id"], "done_on": t["done_on"], "line": line} for t in _shown(conn, rows) for line in t["lines"]]
+    rows = _rows(conn, "SELECT * FROM ops.report WHERE kind = %(k)s ORDER BY done_on", {"k": kind})
+    return [{"report": t["id"], "done_on": t["done_on"], "line": line} for t in _in_area(conn, area, _shown(conn, rows)) for line in t["lines"]]

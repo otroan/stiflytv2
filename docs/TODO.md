@@ -113,6 +113,18 @@ back (`tool.dump`: access, feedback and all of `ops`). The copy itself is
 pushed off the server every night and was read back from a fresh clone on
 2026-11-19.
 
+## What one may change, limited to one's areas (asked 2026-11-23, not built)
+
+The profile (README, "Your areas") says what a person works with; it does not
+limit what they may change. Wanted: an area contact for Breheimen changes
+only there; a route inspector for DNT Oslo og omegn all its mountain routes.
+Proposed: a scope on a grant (areas, or a maintainer), checked in one place
+after each change from what the transaction touched (the undo log): where
+it reaches a route outside the scope, the change is refused and rolled back.
+A stretch shared with a route outside is then for one whose scope has both.
+Looking stays open to everybody signed in. Roles "area contact" and "route
+inspector" as bundles of features; scopes set from the command line first.
+
 ## OpenStreetMap beyond the trip planner (a task of its own, noted 2026-11-19)
 
 OpenStreetMap's ways are loaded for every DNT Oslo area and shown as a layer.

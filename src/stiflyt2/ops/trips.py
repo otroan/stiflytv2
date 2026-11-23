@@ -48,6 +48,7 @@ from psycopg.rows import dict_row
 from stiflyt2 import features, height
 from stiflyt2.domain import routes as owned
 from stiflyt2.domain.places import Invalid, NotFound
+from stiflyt2.ops import areas as areas_of
 
 features.feature("trips", "plan trips that cover routes", "ask to be given the feature `trips`")
 
@@ -737,8 +738,9 @@ def for_routes(conn, *, routes: list[str] | None = None, area: str | None = None
             if lacking:
                 raise NotFound(f"no route of yours in use is called {', '.join(lacking)}")
         elif area:
-            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active'
-                                   AND discontinued_since IS NULL AND lower(left(code, 3)) = lower(%s)""", (area,)).fetchall()
+            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active' AND discontinued_since IS NULL
+                                   AND (lower(left(code, 3)) = lower(%s) OR id = ANY(%s::uuid[]))""",
+                                (area, areas_of.added_to(conn, area))).fetchall()
             if not found:
                 raise NotFound(f"no route of yours in use begins with {area.lower()}")
         else:

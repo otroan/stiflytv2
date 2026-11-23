@@ -292,3 +292,31 @@ def revoke(conn, token_id: int) -> None:
     if not conn.execute("UPDATE access.token SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL",
                         (token_id,)).rowcount:
         raise Refused(f"no token {token_id} is in use")
+
+
+# --- what a person works with ---------------------------------------------------------------------------------------
+
+def _profile_key(who) -> str | None:
+    return getattr(who, "email", None) or getattr(who, "name", None) or None
+
+
+def profile(conn, who) -> dict:
+    """What a person has said they work with: their areas (the first is the one the pages open with), and whose
+    routes are theirs (None: the home maintainer)."""
+    key = _profile_key(who)
+    found = conn.execute("SELECT areas, maintainer FROM access.profile WHERE who = %s", (key,)).fetchone() if key else None
+    return {"areas": list(found[0]) if found else [], "maintainer": found[1] if found else None}
+
+
+def set_profile(conn, who, areas: list[str], maintainer: str | None) -> dict:
+    key = _profile_key(who)
+    if not key:
+        raise Refused("only one who is known here has a profile")
+    areas = list(dict.fromkeys(a.lower() for a in areas))
+    if any(len(a) != 3 or not a.isalpha() for a in areas):
+        raise Refused("an area is three letters")
+    conn.execute("""INSERT INTO access.profile (who, areas, maintainer) VALUES (%s, %s, %s)
+                    ON CONFLICT (who) DO UPDATE SET areas = EXCLUDED.areas, maintainer = EXCLUDED.maintainer, updated_at = now()""",
+                 (key, areas, (maintainer or "").strip() or None))
+    return profile(conn, who)
+

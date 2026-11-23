@@ -16,16 +16,61 @@ function showRoute(code) {
   const r = over && over.routes.find(x => x.code === code);
   if (r) fitTo(f => f.properties.ids.includes(`|${r.id}|`), 14);
 }
+// The areas: yours first (your profile says which, in the order you chose them), then the others. "Your areas…" says
+// which are yours; the first is the one the front page opens with.
+let choosingAreas = null;           // the areas being chosen as yours, in order, while the list is a form
 function renderAreas() {
   const all = areas.reduce((sum, a) => ({ routes: sum.routes + a.routes, m: sum.m + a.route_m }), { routes: 0, m: 0 });
+  const mine = (me.profile && me.profile.areas) || [];
+  const row = a => choosingAreas
+    ? el("li", { class: "hit area" }, el("label", { class: "grow", style: "display:flex;gap:8px;align-items:baseline;cursor:pointer" },
+        el("input", { type: "checkbox", checked: choosingAreas.includes(a.area) ? "" : false,
+          onchange: e => { choosingAreas = e.target.checked ? [...choosingAreas, a.area] : choosingAreas.filter(x => x !== a.area); renderAreas(); } }),
+        el("span", { class: "code" }, a.area), choosingAreas.indexOf(a.area) === 0 ? el("span", { class: "sub" }, "opens first") : ""),
+        el("span", { class: "far" }, many(a.routes, "route", "routes")))
+    : el("li", { class: "hit area", tabindex: 0, onclick: () => visit({ area: a.area }), onkeydown: enter(() => visit({ area: a.area })) },
+        el("span", { class: "code grow" }, a.area), el("span", { class: "far" }, many(a.routes, "route", "routes")),
+        el("span", { class: "far", style: "min-width:62px;text-align:right" }, `${whole(a.route_m / 1000)} km`));
+  const yours = mine.map(m => areas.find(a => a.area === m)).filter(Boolean), others = areas.filter(a => !mine.includes(a.area));
+  const save = async () => {
+    try { me.profile = await send("PUT", "profile", { areas: choosingAreas, maintainer: (me.profile && me.profile.maintainer) || null }); choosingAreas = null; problem = null; }
+    catch (err) { problem = err.message; }
+    renderAreas();
+  };
   panel.replaceChildren(
     el("h2", {}, "Areas"),
     areas.length ? el("div", { class: "sub" }, view === "signs" ? "Choose an area for its signs." : "Where there are routes of yours in use. Choose an area for its routes and what they add up to.")
       : el("div", { class: "sub" }, "There are no routes of yours in use yet. They are made yours in the route editor."),
-    el("ul", { style: "margin-top:8px" }, ...areas.map(a => el("li", { class: "hit area", tabindex: 0, onclick: () => visit({ area: a.area }), onkeydown: enter(() => visit({ area: a.area })) },
-      el("span", { class: "code grow" }, a.area), el("span", { class: "far" }, many(a.routes, "route", "routes")),
-      el("span", { class: "far", style: "min-width:62px;text-align:right" }, `${whole(a.route_m / 1000)} km`)))),
+    problem ? el("div", { class: "error" }, problem) : "",
+    me.name ? el("div", { class: "actions" }, ...(choosingAreas
+      ? [el("button", { class: "btn main", onclick: save }, "Save your areas"), el("button", { class: "btn", onclick: () => { choosingAreas = null; renderAreas(); } }, "Cancel"),
+         el("span", { class: "sub" }, "Tick the areas you work with. The first you tick opens first.")]
+      : [el("button", { class: "btn", onclick: () => { choosingAreas = [...mine]; renderAreas(); } }, mine.length ? "Your areas…" : "Choose your areas…")])) : "",
+    !choosingAreas && yours.length ? el("h2", { class: "next" }, "Your areas") : "",
+    !choosingAreas && yours.length ? el("ul", {}, ...yours.map(row)) : "",
+    !choosingAreas && yours.length && others.length ? el("h2", { class: "next" }, "Other areas") : "",
+    el("ul", { style: "margin-top:8px" }, ...(choosingAreas ? areas : others).map(row)),
     areas.length > 1 ? el("div", { class: "sub", style: "margin-top:8px" }, `${many(all.routes, "route", "routes")} and ${whole(all.m / 1000)} km in all.`) : "");
+}
+// The routes added to this area from another (sun27 in Breheimen), and, for the route responsible, a way to add more.
+function addedRoutes() {
+  const here = areas.find(a => a.area === area), added = here ? here.added || [] : [];
+  const can = (me.features || []).includes("routes");
+  if (!added.length && !can) return "";
+  const code = el("input", { type: "text", placeholder: "Its code, as sun27", maxlength: 20, style: "width:9em", "aria-label": "The code of a route of another area" });
+  const change = async request => {
+    try { await request(); problem = null; areas = await get("owned/areas"); if (rawLines) lines = inUse(rawLines); whenLoaded(() => map.getSource("routes").setData(lines)); await loadArea(); }
+    catch (err) { problem = err.message; render(); }
+  };
+  return el("details", { class: "how", style: "margin-top:10px", open: added.length ? "" : false },
+    el("summary", {}, added.length ? `Routes from other areas here (${added.length})` : "Routes from other areas…"),
+    added.length ? el("ul", {}, ...added.map(id => {
+      const r = over && over.routes.find(x => x.id === id);
+      return el("li", {}, el("button", { class: "link", onclick: () => r && showRoute(r.code) }, r ? r.code : id), r && r.name ? ` ${r.name} ` : " ",
+        can ? el("button", { class: "link", title: "It is no longer counted to this area. Undo puts it back.", onclick: () => change(() => send("DELETE", `areas/${area}/added/${id}`)) }, "take out") : "");
+    })) : el("div", { class: "sub" }, "None. A route of another area that is looked after with these can be counted here too."),
+    can ? el("form", { class: "actions", onsubmit: e => { e.preventDefault(); if (code.value.trim()) change(() => send("POST", `areas/${area}/added`, { code: code.value.trim() })); } },
+      code, el("button", { class: "btn" }, "Add it here")) : "");
 }
 function renderArea() {
   const back = el("div", { class: "backbar" }, el("button", { class: "btn", onclick: () => visit({ area: null, route: null, site: null }) }, "‹ Areas"));
@@ -60,9 +105,12 @@ function renderArea() {
     el("ul", { style: "margin-top:6px" }, ...rows.map(r => el("li", { class: "hit", tabindex: 0, onclick: () => showRoute(r.code), onkeydown: enter(() => showRoute(r.code)),
         onmouseenter: () => pointRoute(r.id), onmouseleave: () => pointRoute(null), onfocus: () => pointRoute(r.id), onblur: () => pointRoute(null) },
       el("span", { class: "code" }, r.code), el("span", { class: "grow" }, r.name || el("span", { class: "sub" }, "no name"),
+        r.code.slice(0, 3).toLowerCase() !== area ? el("span", { class: "tag", title: "A route of another area, counted here too" }, ` from ${r.code.slice(0, 3).toLowerCase()}`) : "",
         ...inForce(r.id).slice(0, 1).flatMap(e => [" ", el("span", { class: "tag issue notice", title: e.text }, e.kind === "closed" ? "Closed" : "Warning")])),
       el("span", { class: "far" }, km(r.on_foot_m / 1000)), grade(r.grading)))),
-    S.routes && !rows.length ? el("div", { class: "sub" }, "None.") : "");
+    S.routes && !rows.length ? el("div", { class: "sub" }, "None.") : "",
+    problem ? el("div", { class: "error" }, problem) : "",
+    addedRoutes());
 }
 function renderRoute() {
   const rows = routesListed(), r = over && over.routes.find(x => x.code === route), i = r ? rows.indexOf(r) : -1;

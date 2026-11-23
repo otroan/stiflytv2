@@ -1577,6 +1577,13 @@ refreshEditing();
 const meAsked = get("auth/me");
 meAsked.then(me => {
   roleSwitch(me, document.querySelector("footer"));
+  // With nothing else asked for, the editor opens with the first of your areas, as your profile says.
+  const first = me.profile && me.profile.areas[0];
+  if (first && !asked.get("yours") && !asked.get("route")) {
+    let tries = 40;
+    const open = () => { if (areaSelect.value) return; if ([...areaSelect.options].some(o => o.value === first)) { areaSelect.value = first; areaSelect.dispatchEvent(new Event("change")); } else if (tries--) setTimeout(open, 250); };
+    open();
+  }
   presence(me, document.getElementById("present"), () => ({ page: "editor", area: areaSelect.value || null, route: openRoute ? openRoute.code : null }));
 }).catch(() => {});
 refreshOwned().catch(() => {});

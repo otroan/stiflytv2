@@ -56,6 +56,8 @@ _WHAT = {
     "report.added": "a report added",
     "report.changed": "what was said in a report",
     "report.taken_away": "a report taken away",
+    "area.route_added": "a route added to an area",
+    "area.route_taken_out": "a route taken out of an area",
 }
 
 

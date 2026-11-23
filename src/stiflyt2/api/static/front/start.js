@@ -30,7 +30,8 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     get("places.geojson").then(all => whenLoaded(() => map.getSource("places").setData({ type: "FeatureCollection", features: all.features.filter(f => f.properties.type === "place") }))).catch(() => {});
     // The address says where to start. With none, the area last looked at; with no such, the areas.
     const at = here();
-    if (!new URLSearchParams(location.search).has("area")) at.area = localStorage.getItem("stiflyt2.area") || localStorage.getItem("stiflyt2.signs.area");
+    // With no area in the address: the first of yours, as your profile says; else the one last looked at.
+    if (!new URLSearchParams(location.search).has("area")) at.area = (me.profile && me.profile.areas[0]) || localStorage.getItem("stiflyt2.area") || localStorage.getItem("stiflyt2.signs.area");
     await Promise.all([arrive(at, false), drawn]);
     if (!location.hash) fit();
   } catch (err) { panel.replaceChildren(el("div", { class: "error" }, `No contact with the server: ${err.message}`)); }
