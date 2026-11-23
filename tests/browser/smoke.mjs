@@ -84,8 +84,15 @@ if (EDIT) {
   await js(`(async () => { await send("POST", "areas/xyz/added", { code: ${JSON.stringify(lent)} }); areas = await get("owned/areas"); lines = inUse(rawLines); })()`);
   check("a route added to another area counts there, in the areas and on the map", await until(`areas.some(a => a.area === "xyz" && a.routes === 1)
     && lines.features.some(f => f.properties.codes_in_use.includes("|" + ${JSON.stringify(lent)} + "|") && f.properties.areas.includes("|xyz|"))`, 10));
-  await js(`(async () => { const id = areas.find(a => a.area === "xyz").added[0]; await send("DELETE", "areas/xyz/added/" + id); await send("PUT", "profile", { areas: [] }); me.profile = { areas: [], maintainer: null };
-    areas = await get("owned/areas"); lines = inUse(rawLines); visit({ area: null, route: null, site: null }); })()`);
+  // In that area its reports list has it; taken out in the page, every list of the area follows at once.
+  await js(`visit({ area: "xyz", view: "reports", route: null, site: null })`);
+  check("the area it was added to lists it among its routes to report on", await until(`reportsFor === "xyz" && upkeep.some(r => r.code === ${JSON.stringify(lent)})`, 15));
+  await js(`visit({ view: "routes" })`);
+  await until(`view === "routes" && Boolean(over) && Boolean([...document.querySelectorAll("#panel details button.link")].find(b => b.textContent === "take out"))`, 15);
+  await js(`[...document.querySelectorAll("#panel details button.link")].find(b => b.textContent === "take out").click()`);
+  check("taken out in the page, the area's reports list follows at once", await until(`Array.isArray(upkeep) && !upkeep.some(r => r.code === ${JSON.stringify(lent)})
+    && !areas.some(a => a.area === "xyz")`, 15));
+  await js(`(async () => { await send("PUT", "profile", { areas: [] }); me.profile = { areas: [], maintainer: null }; visit({ area: null, route: null, site: null }); })()`);
   await until(`area === null && document.querySelectorAll("#panel li.hit.area").length > 0`, 10);
   editing = false;
 }

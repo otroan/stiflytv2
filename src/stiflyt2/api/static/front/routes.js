@@ -59,7 +59,9 @@ function addedRoutes() {
   if (!added.length && !can) return "";
   const code = el("input", { type: "text", placeholder: "Its code, as sun27", maxlength: 20, style: "width:9em", "aria-label": "The code of a route of another area" });
   const change = async request => {
-    try { await request(); problem = null; areas = await get("owned/areas"); if (rawLines) lines = inUse(rawLines); whenLoaded(() => map.getSource("routes").setData(lines)); await loadArea(); }
+    // What the area's routes are changes its lists: its routes, and its issues, reports and photos, are asked for again.
+    try { await request(); problem = null; areas = await get("owned/areas"); if (rawLines) lines = inUse(rawLines); whenLoaded(() => map.getSource("routes").setData(lines));
+          await Promise.all([loadArea(), loadEntries(), loadPhotos(), loadReports()]); }
     catch (err) { problem = err.message; render(); }
   };
   return el("details", { class: "how", style: "margin-top:10px", open: added.length ? "" : false },
