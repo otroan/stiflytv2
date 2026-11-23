@@ -159,7 +159,9 @@ function renderRoute() {
     ...(own[view] || []),
     profile,
     el("h2", {}, "Description"),
-    D ? (D.description ? el("div", { class: "said" }, D.description) : el("div", { class: "sub" }, "None is written yet."))
+    D ? (D.description ? el("div", { class: "said" }, D.description) : el("div", { class: "sub" }, "None is written yet. ",
+        D.utno_id ? "" : el("a", { href: utnoSearch(r.name, r.code), target: "_blank", rel: "noopener", title: "A web search for the route's page on UT.no, in a tab of its own" }, "Search for it on UT.no"),
+        D.utno_id ? "" : ". In the route editor its page there is noted once, and its description taken."))
       : shownRoute.problem ? el("div", { class: "error" }, `Could not get the route: ${shownRoute.problem}`) : el("div", { class: "sub" }, "Loading…"),
     el("div", { class: "actions", style: "margin-top:12px" },
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",

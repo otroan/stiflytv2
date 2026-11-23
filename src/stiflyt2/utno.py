@@ -19,6 +19,7 @@ import re
 import threading
 import time
 from html.parser import HTMLParser
+from urllib.parse import quote
 
 import httpx
 
@@ -29,7 +30,8 @@ HOSTS = ("ut.no", "www.ut.no")
 PAGE = "https://ut.no/rutebeskrivelse/{number}"
 MOST = 2_000_000        # bytes of a page that are read
 APART_S = 1.0           # at least this long between two pages fetched
-_ADDRESS = re.compile(r"^(?:https?://)?(?:www\.)?ut\.no/rutebeskrivelse/(\d{1,12})(?:[/?#].*)?$", re.IGNORECASE)
+# The page itself, or the same page in UT.no's map (`/kart/rutebeskrivelse/…`), with or without its name after the number.
+_ADDRESS = re.compile(r"^(?:https?://)?(?:www\.)?ut\.no/(?:kart/)?rutebeskrivelse/(\d{1,12})(?:[/?#].*)?$", re.IGNORECASE)
 _DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 _turn, _last = threading.Lock(), [0.0]
 
@@ -52,6 +54,13 @@ def number(address: str | int) -> int:
 
 def address(route_number: int) -> str:
     return PAGE.format(number=route_number)
+
+
+def search(name: str | None, code: str) -> str:
+    """A web search for a route's page on UT.no, by the names of its ends, for a person to open in their browser.
+    There is no search here: UT.no's own runs in the browser through its API, which wants a client we do not have."""
+    words = " ".join(f'"{w.strip()}"' for w in re.split(r"\s+[–-]\s+", name or "") if w.strip()) or code
+    return "https://www.google.com/search?q=" + quote(f"site:ut.no rutebeskrivelse {words}")
 
 
 _BREAKS = {"p": "\n\n", "div": "\n\n", "ul": "\n\n", "ol": "\n\n", "h1": "\n\n", "h2": "\n\n", "h3": "\n\n",

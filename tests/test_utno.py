@@ -59,9 +59,18 @@ def site(monkeypatch):
     return site
 
 
+def test_a_route_is_searched_for_by_the_names_of_its_ends_in_a_web_search():
+    from urllib.parse import unquote
+
+    said = unquote(utno.search("Memurubu – Gjendesheim", "jot2"))
+    assert said.startswith("https://www.google.com/search?q=") and said.endswith('site:ut.no rutebeskrivelse "Memurubu" "Gjendesheim"')
+    assert unquote(utno.search(None, "jot2")).endswith("site:ut.no rutebeskrivelse jot2")
+
+
 def test_the_page_is_named_by_its_address_or_its_number_and_nothing_else_is_fetched():
     for said in ("https://ut.no/rutebeskrivelse/13394424", "https://www.ut.no/rutebeskrivelse/13394424/barstadvik-molladalen",
-                 "ut.no/rutebeskrivelse/13394424?utm=x", " 13394424 ", 13394424):
+                 "ut.no/rutebeskrivelse/13394424?utm=x", " 13394424 ", 13394424,
+                 "https://ut.no/kart/rutebeskrivelse/13394424/fra-turtagr-til-stlsdalen"):
         assert utno.number(said) == 13394424
     for said in ("https://elsewhere.example/rutebeskrivelse/13394424", "https://ut.no.elsewhere.example/rutebeskrivelse/1",
                  "https://ut.no/turforslag/115", "file:///etc/passwd", "jot64", "", "-4"):

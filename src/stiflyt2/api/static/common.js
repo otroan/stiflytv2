@@ -107,3 +107,9 @@ function presence(me, box, where) {
   tell();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) tell(); });
 }
+// A web search for a route's page on UT.no, by the names of its ends, opened in the person's own browser: there is no
+// search for it on the server (UT.no's own runs through its API, which wants a client we do not have).
+function utnoSearch(name, code) {
+  const words = (name || "").split(/\s+[–-]\s+/).map(w => w.trim()).filter(Boolean).map(w => `"${w}"`).join(" ") || code;
+  return `https://www.google.com/search?q=${encodeURIComponent(`site:ut.no rutebeskrivelse ${words}`)}`;
+}

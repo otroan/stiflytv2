@@ -2342,7 +2342,8 @@ function renderOwnedRoute(route, problem, note) {
   const askUtno = problem => {
     const where = el("input", { type: "text", placeholder: "https://ut.no/rutebeskrivelse/…", "aria-label": "Address of the route's page on UT.no", maxlength: 300, required: true, style: "flex:1;min-width:12em" });
     utnoBox.replaceChildren(el("form", { onsubmit: e => { e.preventDefault(); fromUtno(where.value); } },
-      el("div", { class: "sub" }, `Which page on UT.no is ${route.code}? Find the route there and paste the address of its page here. It is asked for once, and kept with the route.`),
+      el("div", { class: "sub" }, `Which page on UT.no is ${route.code}? Find the route there and paste the address of its page here. It is asked for once, and kept with the route. `,
+        el("a", { href: utnoSearch(route.name, route.code), target: "_blank", rel: "noopener" }, "Search for it"), ": UT.no's page says which route it is, and that is checked."),
       problem ? el("div", { class: "error", role: "alert" }, problem) : "",
       el("div", { class: "actions" }, where, el("button", { class: "btn main" }, "Fetch"),
         el("button", { class: "btn", type: "button", onclick: () => utnoBox.replaceChildren() }, "Cancel"))));

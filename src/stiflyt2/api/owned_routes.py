@@ -181,7 +181,8 @@ def utno_says(route: dict, address: str | None) -> dict:
     """What UT.no's page says about a route of ours, and whether it looks like the same route."""
     if not address and not route["utno_id"]:
         raise places.Invalid(f"which page on UT.no is {route['code']}? Give the address of the route's page there, "
-                             "like https://ut.no/rutebeskrivelse/13394424: it is asked for once, and kept")
+                             "like https://ut.no/rutebeskrivelse/13394424: it is asked for once, and kept. A web search "
+                             f"for it: {utno.search(route.get('name'), route['code'])}")
     found = utno.fetch(utno.number(address or route["utno_id"]))
     ours = {route["code"].lower(), *(s["code"].lower() for s in route["sources"] if s["code"]),
             *(e["value"].lower() for e in route["earlier"] if e["kind"] == "code")}

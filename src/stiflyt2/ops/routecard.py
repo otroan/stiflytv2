@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import height
+from stiflyt2 import height, utno
 from stiflyt2.domain import factsheet
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import along as on_route
@@ -87,6 +87,12 @@ def gather(conn, route: str, parts: list[str], notices: bool = True) -> dict:
     entries = issues.listing(conn, route=route) if notices or "issues" in parts else []
     card["notices"] = [x for x in entries if x["notice"] and x["active"]] if notices else []
     card["issues"] = _numbered([x for x in entries if x["open"] and not x["active"]])
+    said = facts["route"]
+    if "description" in parts and not said.get("description") and said.get("utno_id"):
+        try:        # none of our own: UT.no's, read from its page, said as UT.no's
+            card["utno"] = {"number": said["utno_id"], "text": utno.described(utno.fetch(int(said["utno_id"])))}
+        except (utno.Unavailable, Invalid, NotFound):
+            card["utno"] = None
     if "map" in parts or "profile" in parts:
         card["heights"] = height.of_route(conn, route, samples=True)
     if "map" in parts:
@@ -449,8 +455,11 @@ def render(card: dict, owners: dict | None = None, by: str | None = None) -> str
     if "profile" in parts:
         body.append(f"<section><h2>Height profile</h2>{_profile(card)}</section>")
     if "description" in parts:
-        said = route.get("description")
-        body.append("<section><h2>Description</h2>" + (_paras(said) if said else '<p class="none">None is written yet.</p>')
+        said, theirs = route.get("description"), (card.get("utno") or {}).get("text")
+        body.append("<section><h2>Description</h2>" + (
+            _paras(said) if said
+            else f'<p class="sub">From UT.no (ut.no/rutebeskrivelse/{card["utno"]["number"]}): none of our own is written yet.</p>{_paras(theirs)}'
+            if theirs else '<p class="none">None is written yet.</p>')
                     + (f'<p class="sub">On UT.no: ut.no/rutebeskrivelse/{e(str(route["utno_id"]))}</p>' if route.get("utno_id") else "") + "</section>")
     if "walk" in parts:
         rows = []

@@ -85,3 +85,17 @@ def test_the_parts_are_in_the_cards_own_order_and_one_may_only_have_what_one_has
     assert routecard.chosen("signs,map,nonsense") == ["map", "signs"]
     assert routecard.chosen(None) == [k for k, (_, default) in routecard.PARTS.items() if default]
     assert routecard.chosen("issues,owners,map", lambda feature: feature == "issues") == ["map", "issues"]
+
+
+def test_with_none_of_our_own_the_card_gives_utnos_description_as_utnos(card, monkeypatch):
+    from stiflyt2 import utno
+
+    client, owner, route = card
+    owner.execute("UPDATE core.route SET utno_id = 135600 WHERE id = %s", (route,))
+    monkeypatch.setattr(utno, "fetch", lambda number, http=None: {"number": number, "code": "bre18", "there": "Steep up to the pass.",
+                                                                   "back": "", "notes": ""})
+    monkeypatch.setattr(utno, "described", lambda found: found["there"])
+    page = client.get(f"{V1}/routecard/{route}", params={"with": "description"}).text
+    assert "From UT.no (ut.no/rutebeskrivelse/135600)" in page and "Steep up to the pass." in page
+    monkeypatch.setattr(utno, "fetch", lambda number, http=None: (_ for _ in ()).throw(utno.Unavailable("down")))
+    assert "None is written yet." in client.get(f"{V1}/routecard/{route}", params={"with": "description"}).text
