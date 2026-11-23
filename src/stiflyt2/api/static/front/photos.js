@@ -171,10 +171,10 @@ async function placedPhoto(e) {
   await loadPhotos();
 }
 
-// The photos on the map: a point where each was taken, among the routes and the issues.
+// The photos on the map: a point where each was taken, among the routes, the issues and the reports.
 function drawPhotos() {
   whenLoaded(() => {
-    const here = hasPhotos() && (view === "routes" || view === "issues" || view === "photos"), on = here && photosShown && photosAll && photosFor === area;
+    const here = hasPhotos() && ["routes", "issues", "photos", "reports"].includes(view), on = here && photosShown && photosAll && photosFor === area;
     photoControl.box.hidden = !here;
     photoSwitch.setAttribute("aria-pressed", String(photosShown));
     photoSwitch.title = photosShown ? "Hide the photos on the map" : "Show the photos on the map";

@@ -120,9 +120,14 @@ check("the route says what it climbs, or that it is not known yet", await until(
 await until(`Boolean(shownRoute && shownRoute.height)`, 25);        // heights not kept yet are asked for while one waits
 if (await js(`Boolean(shownRoute && shownRoute.height && shownRoute.height.known_m > 0)`)) {
   check("the height profile is drawn", await until(`Boolean(document.querySelector("#panel .profile svg"))`, 5));
-  const at = await centre(`document.querySelector("#panel .profile svg")`);
-  await mouse("mouseMoved", at.x, at.y); await sleep(300);
-  check("pointing at the height profile shows the spot on the map", await js(`Boolean(document.querySelector(".spot")) && document.querySelector("#panel .profile text.said").textContent.includes("km")`));
+  // The route's photos and reports come after it, and draw the side anew: the spot is pointed at again until it holds.
+  let spotted = false;
+  for (let i = 0; i < 10 && !spotted; i++) {
+    const at = await centre(`document.querySelector("#panel .profile svg")`);
+    await mouse("mouseMoved", at.x + i % 2, at.y); await sleep(300);
+    spotted = await js(`Boolean(document.querySelector(".spot")) && document.querySelector("#panel .profile text.said").textContent.includes("km")`);
+  }
+  check("pointing at the height profile shows the spot on the map", spotted);
   await mouse("mouseMoved", 900, 900);
 } else console.log("    (no heights for this route here: the profile is not checked)");
 check("the route links to the editor", (await js(`[...document.querySelectorAll("#panel a.btn")].map(a => a.getAttribute("href")).join(" ")`)).includes("/ruter?yours="));
@@ -320,6 +325,8 @@ if (await js(`hasReports()`)) {
   await clickOn(`document.getElementById("tab-reports")`);
   check("the reports part lists the routes, those longest since first, with what the colours mean, and others' routes apart", await until(`view === "reports" && Array.isArray(upkeep)
     && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.filter(r => r.ours !== false).length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
+  if (await js(`hasPhotos()`)) check("the photos are on the map among the reports too, with the button that hides them", await until(`photosFor === area && !photoControl.box.hidden
+    && map.getLayoutProperty("photos", "visibility") === (photosShown ? "visible" : "none")`, 10));
   // A route opens among the reports: the map keeps their colours, what they say of it comes first, and back is back to the list.
   const listed = JSON.parse(await js(`JSON.stringify(upkeepListed().rows.map(r => r.code))`));
   if (listed.length) {
@@ -339,10 +346,12 @@ if (await js(`hasReports()`)) {
     const ours = await js(`(() => { const mine = new Set(upkeepListed().rows.map(r => r.id)); const f = lines.features.filter(f => { const ids = f.properties.ids.split("|").filter(Boolean); return ids.length === 1 && mine.has(ids[0]); })
       .sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0]; if (!f) return null; const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 13 }); return JSON.stringify(c); })()`);
     if (ours) {
+      const shown = await js(`typeof photosShown !== "undefined" && photosShown`);
+      await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = false; drawPhotos(); } })()`);       // a photo there would take the click
       await sleep(1500);
       await click(await onMap(ours));
       check("a click on a route on the map opens it among the reports", await until(`view === "reports" && Boolean(route)`, 10), `${await js("view")} ${await js("route")}`);
-      await js(`visit({ route: null })`);
+      await js(`visit({ route: null }); if (typeof photosShown !== "undefined") { photosShown = ${shown}; drawPhotos(); }`);
     } else console.log("    (no stretch here is walked by one of our routes only: the click on the map among the reports is not checked)");
   }
   if (EDIT) {
