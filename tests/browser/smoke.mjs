@@ -402,6 +402,11 @@ if (await js(`hasLandowners()`)) {
   await click(JSON.parse(off));
   check("a click off the routes asks what property lies there, and says it in a box on the map", await until(`Boolean(ownedAt) && (Boolean(ownedAt.found) || Boolean(ownedAt.problem))
     && Boolean(document.querySelector(".owned-box")) && !/Looking it up/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));
+  // A second click while the box is open: the box moves there and says what is there, not "Looking it up…" for ever.
+  const first = await js(`ownedAt.lon`), again = JSON.parse(off);
+  await click({ x: again.x + 25, y: again.y + 25 });
+  check("a second click moves the box and says what lies there", await until(`Boolean(ownedAt) && ownedAt.lon !== ${first} && (Boolean(ownedAt.found) || Boolean(ownedAt.problem))
+    && Boolean(document.querySelector(".owned-box")) && !/Looking it up/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));
   if (!TOKEN && await js(`Boolean(ownedAt.found && ownedAt.found.units.some(u => u.id))`)) {
     await clickOn(`[...document.querySelectorAll(".owned-box button")].find(b => b.textContent === "Who owns it")`);
     check("with no account for the register, asking who owns it says so", await until(`/no account for Kartverket's property register/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));

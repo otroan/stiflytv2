@@ -20,8 +20,10 @@ const unitTitle = u => [el("strong", {}, u.label), u.name ? ` ${u.name}` : "", u
 
 // The property at a spot: asked for by a click on the map that is not on a route, among the landowners.
 async function lookAt(lngLat) {
+  // The box is moved if it is open: added again, MapLibre would close it first, and closing it forgets the spot.
+  ownedPopup.setLngLat(lngLat).setDOMContent(el("div", { class: "sub" }, "Looking it up…"));
+  if (!ownedPopup.isOpen()) ownedPopup.addTo(map);
   const mine = ownedAt = { lon: lngLat.lng, lat: lngLat.lat, found: null, problem: null, owners: null };
-  ownedPopup.setLngLat(lngLat).setDOMContent(el("div", { class: "sub" }, "Looking it up…")).addTo(map);
   try { mine.found = await get("landowners/at", { lon: mine.lon, lat: mine.lat }); }
   catch (err) { mine.problem = err.message; }
   if (ownedAt === mine) { showAt(); drawLandowners(); }
