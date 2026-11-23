@@ -27,21 +27,29 @@ def typed(name, **fields):
 
 
 class Register:
-    """Owners for any unit asked about: a person (with a share), an organisation, and one whose ownership ended."""
+    """Owners for any unit asked about: a person (with a share), an organisation, one whose ownership ended, and
+    a farm (unit 5301) that owns half, as the farms own a summer farm. The farm is owned by the same two."""
+
+    FARM = 5301
 
     def __init__(self):
         self.asked = []
 
+    @staticmethod
+    def relation(kind, code, teller=1, nevner=1, ended=None, **who):
+        return typed(kind, eierforholdKodeId=O(value=code), sluttdato=ended, andel=O(teller=teller, nevner=nevner),
+                     datoFra=O(date="2001-05-02"), **who)
+
     def units(self, ids):
         self.asked.append(("units", list(ids)))
-
-        def relation(kind, who, code, teller=1, nevner=1, ended=None):
-            return typed(kind, eierforholdKodeId=O(value=code), eierId=O(value=who), sluttdato=ended,
-                         andel=O(teller=teller, nevner=nevner), datoFra=O(date="2001-05-02"))
-        return [O(id=O(value=int(i)), eierforhold=O(item=[
-            relation("PersonTinglystEierforhold", 7, 1, 1, 2),
-            relation("JuridiskPersonIkkeTinglystEierforhold", 8, 2),
-            relation("PersonTinglystEierforhold", 9, 1, ended="2010-01-01")])) for i in ids]
+        people = [self.relation("PersonTinglystEierforhold", 1, 1, 2, eierId=O(value=7)),
+                  self.relation("JuridiskPersonIkkeTinglystEierforhold", 2, eierId=O(value=8)),
+                  self.relation("PersonTinglystEierforhold", 1, ended="2010-01-01", eierId=O(value=9))]
+        farm = [self.relation("MatrikkelenhetTinglystEierforhold", 1, 1, 2, eiendeMatrikkelenhetId=O(value=self.FARM)),
+                # The same farm again as the current owner, as the register says it: one row with both words.
+                self.relation("MatrikkelenhetIkkeTinglystEierforhold", 2, 1, 2, eiendeMatrikkelenhetId=O(value=self.FARM)),
+                self.relation("SomethingNewEierforhold", 1)]      # a kind of ownership not known here: left out
+        return [O(id=O(value=int(i)), eierforhold=O(item=people + ([] if int(i) == self.FARM else farm))) for i in ids]
 
     def objects(self, ids):
         self.asked.append(("objects", [x.value for x in ids]))
@@ -51,6 +59,8 @@ class Register:
                      bostedsadresse=O(adresselinje1="Hjemmevegen 1")),
             8: typed("JuridiskPerson", id=O(value=8), navn="Fjellstyret AS", nummer=987654321, postadresse=None),
             9: typed("FysiskPerson", id=O(value=9), navn="Gammel Eier", nummer="02027012345", postadresse=None),
+            self.FARM: typed("Grunneiendom", id=O(value=self.FARM), bruksnavn="Bergeset",
+                             matrikkelnummer=O(kommuneId=O(value=3427), gardsnummer=53, bruksnummer=1, festenummer=0, seksjonsnummer=0)),
             1: O(id=O(value=1), kodeverdi="H", navn=O(entry=[O(key=None, value="Hjemmelshaver")])),
             2: O(id=O(value=2), kodeverdi="AE", navn=O(entry=[O(key=None, value="Aktuell eier")])),
             50: O(id=O(value=50), kretsnummer="6868", kretsnavn="GAUPNE"),
@@ -136,9 +146,15 @@ def test_owners_as_the_register_says_never_a_persons_number_or_home(route, regis
     assert units
     landowners.with_owners(found, found["properties"])
     told = units[0]["owners"]
-    # The ownership that ended is left out; the registered owner first.
+    # The ownership that ended is left out, and the kind not known here; registered owners first.
     assert [(o["name"], o["kind"], o["role"], o["share"], o["registered"]) for o in told] == [
-        ("Nordmann Kari", "person", "owner", "1/2", True), ("Fjellstyret AS", "organisation", "Aktuell eier", "1/1", False)]
+        ("3427-53/1 Bergeset", "property", "owner", "1/2", True), ("Nordmann Kari", "person", "owner", "1/2", True),
+        ("Fjellstyret AS", "organisation", "Aktuell eier", "1/1", False)]
+    # The farm that owns half: who owns it, one step on, and no further.
+    farm = told[0]
+    assert farm["label"] == "3427-53/1" and [n["name"] for n in farm["owners"]] == ["Nordmann Kari", "Fjellstyret AS"]
+    assert farm["said"] == "Hjemmelshaver, Aktuell eier"
+    told = told[1:]
     assert told[0]["address"] == "Postboks 5, 6868 GAUPNE" and told[0]["org_number"] is None and told[0]["since"] == "2001-05-02"
     assert told[1]["org_number"] == "987654321" and told[1]["said"] == "Aktuell eier"
     said = json.dumps(found)
@@ -148,6 +164,7 @@ def test_owners_as_the_register_says_never_a_persons_number_or_home(route, regis
     landowners.owners([u["id"] for u in units])
     assert len(register.asked) == asked
     assert register.asked[0] == ("units", list(dict.fromkeys(u["id"] for u in units)))
+    assert ("units", [str(Register.FARM)]) in register.asked
 
 
 def test_without_an_account_it_says_so_and_the_properties_stand(route, monkeypatch):
@@ -179,7 +196,7 @@ def test_landowners_are_a_feature_of_their_own_and_every_lookup_is_kept(route, r
             assert owner.execute("SELECT count(*) FROM ops.owner_lookup WHERE id > %s", (before,)).fetchone()[0] == 0
             # Who owns it, asked for: said, and that it was asked is kept, not what was said.
             at = client.get(f"{V1}/landowners/at", params={"lon": lon, "lat": lat, "owners": True}, headers=PAGE).json()
-            assert at["units"][0]["owners"][0]["name"] == "Nordmann Kari"
+            assert "Nordmann Kari" in [o["name"] for o in at["units"][0]["owners"]]
             kept = owner.execute("SELECT who, through, what, units FROM ops.owner_lookup WHERE id > %s", (before,)).fetchall()
             assert kept == [(AUTHOR, "viewer", f"a spot at {lat:.5f}, {lon:.5f}", [u["id"] for u in at["units"] if u["id"]])]
             assert client.get(f"{V1}/landowners/at", params={"lon": 4.0, "lat": 58.0}, headers=PAGE).json() == {
@@ -195,6 +212,8 @@ def test_landowners_are_a_feature_of_their_own_and_every_lookup_is_kept(route, r
             rows = list(sheet.iter_rows(values_only=True))
             assert rows[3][:6] == ("Property", "Municipality", "Name of the property", "Along the route, km", "Metres", "Owner")
             assert "Nordmann Kari" in {r[5] for r in rows[4:]} and PERSON_NUMBER not in str(rows)
+            assert "3427-53/1 Bergeset (a property)" in {r[5] for r in rows[4:]}
+            assert ("Nordmann Kari, through 3427-53/1", "1/2 of 1/2") in {(r[5], r[6]) for r in rows[4:]}
             assert owner.execute("SELECT count(*) FROM ops.owner_lookup WHERE id > %s AND what = 'bre18'", (before,)).fetchone()[0] == 2
             assert client.get(f"{V1}/landowners/along", params={"route": "nowhere"}, headers=PAGE).status_code == 404
         finally:

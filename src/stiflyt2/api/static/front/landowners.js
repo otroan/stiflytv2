@@ -13,8 +13,10 @@ function ownerRows(owners) {
   return el("ul", { class: "owners" }, ...owners.map(o => el("li", {},
     el("strong", {}, o.name || "No name given"), o.share && o.share !== "1/1" ? el("span", { class: "sub" }, ` ${o.share}`) : "",
     o.role && o.role !== "owner" ? el("span", { class: "tag", title: o.registered === false ? "Not registered as the title holder" : "" }, ` ${o.role}`) : "",
+    o.kind === "property" ? el("span", { class: "tag", title: "A property owns this share: whoever owns that property" }, " a property") : "",
     o.address ? el("div", { class: "sub" }, o.address) : "",
-    o.org_number ? el("div", { class: "sub" }, `Org. no. ${o.org_number}`) : "")));
+    o.org_number ? el("div", { class: "sub" }, `Org. no. ${o.org_number}`) : "",
+    o.kind === "property" && o.owners ? el("div", { class: "through" }, el("div", { class: "sub" }, `${o.label} is owned by`), ownerRows(o.owners)) : "")));
 }
 const unitTitle = u => [el("strong", {}, u.label), u.name ? ` ${u.name}` : "", u.municipality ? el("span", { class: "sub" }, `, ${u.municipality}`) : ""];
 
@@ -78,7 +80,7 @@ function routeLandowners(r) {
         el("div", {}, ...unitTitle(p), el("span", { class: "far" }, `${p.metres.toLocaleString("en")} m`)),
         el("div", { class: "sub" }, p.spans.map(span).join(", ")),
         p.owners ? ownerRows(p.owners) : ""))),
-      f.unknown.length ? el("div", { class: "sub" }, `No parcel in the property map ${f.unknown.map(s => `from ${span(s).replace("–", " to ")}`).join(", ")}.`) : "",
+      f.unknown.length ? el("div", { class: "sub" }, `Kartverket's property map has no parcel ${f.unknown.map(s => `from ${span(s).replace("–", " to ")}`).join(", ")}: no owner is known there.`) : "",
       f.owners_unavailable ? el("div", { class: "error" }, f.owners_unavailable) : "",
       A.problem ? el("div", { class: "error" }, A.problem) : "",
       el("div", { class: "actions" },

@@ -249,29 +249,64 @@ def _value(x) -> object:
     return getattr(x, "value", x)
 
 
-def _owner(relation, who, postal: dict, kinds: dict) -> dict:
-    """One owner, as it is passed on: never a person's identity number or home address."""
+def _terms(relation, kinds: dict) -> dict:
+    """What an ownership says whoever holds it: the share, the role, whether it is registered, since when."""
     kind = kinds.get(_value(relation.eierforholdKodeId))
     code, said = (kind.kodeverdi, next((e.value for e in kind.navn.entry if e.key in (None, "no_NO")), None)) if kind else (None, None)
-    share = relation.andel
-    address = who.postadresse
-    lines = [line for line in (getattr(address, f"adresselinje{i}", None) for i in (1, 2, 3)) if line] if address else []
-    area = postal.get(_value(address.postnummeromradeId)) if address and address.postnummeromradeId else None
-    if area is not None:
-        lines.append(f"{area.kretsnummer} {area.kretsnavn}".strip())
-    since = relation.datoFra
-    organisation = (who._xsd_type.name if hasattr(who, "_xsd_type") else type(who).__name__).startswith("Juridisk")
-    return {"name": who.navn, "kind": "organisation" if organisation else "person",
-            "org_number": str(who.nummer) if organisation and getattr(who, "nummer", None) else None,
-            "address": ", ".join(lines) or None,
-            "share": f"{share.teller}/{share.nevner}" if share and share.teller and share.nevner else None,
+    share, since = relation.andel, relation.datoFra
+    return {"share": f"{share.teller}/{share.nevner}" if share and share.teller and share.nevner else None,
             "role": _ROLES.get(code, said), "said": said,
             "registered": "IkkeTinglyst" not in relation._xsd_type.name if hasattr(relation, "_xsd_type") else None,
             "since": str(getattr(since, "date", since)) if since else None}
 
 
-def owners(unit_ids: list[str]) -> dict[str, list[dict]]:
-    """Who owns each of these units now, as the register says: asked when not asked within the hour."""
+def _owner(relation, who, postal: dict, kinds: dict) -> dict:
+    """A person or an organisation that owns, as it is passed on: never a person's identity number or home address."""
+    address = who.postadresse
+    lines = [line for line in (getattr(address, f"adresselinje{i}", None) for i in (1, 2, 3)) if line] if address else []
+    area = postal.get(_value(address.postnummeromradeId)) if address and address.postnummeromradeId else None
+    if area is not None:
+        lines.append(f"{area.kretsnummer} {area.kretsnavn}".strip())
+    organisation = (who._xsd_type.name if hasattr(who, "_xsd_type") else type(who).__name__).startswith("Juridisk")
+    return {"name": who.navn, "kind": "organisation" if organisation else "person",
+            "org_number": str(who.nummer) if organisation and getattr(who, "nummer", None) else None,
+            "address": ", ".join(lines) or None, **_terms(relation, kinds)}
+
+
+def _holding(relation, unit, kinds: dict) -> dict:
+    """A property that owns a share of another: a summer farm or common land owned by the farms it belongs to."""
+    m = unit.matrikkelnummer
+    fnr, snr = m.festenummer or 0, m.seksjonsnummer or 0
+    label = f"{_value(m.kommuneId)}-{m.gardsnummer}/{m.bruksnummer}" + (f"/{fnr}" if fnr or snr else "") + (f"/{snr}" if snr else "")
+    name = (unit.bruksnavn or "").strip()
+    return {"name": f"{label} {name}".strip(), "label": label, "kind": "property", "property": str(_value(unit.id)),
+            "org_number": None, "address": None, "owners": None, **_terms(relation, kinds)}
+
+
+def _merged(found: list[dict]) -> list[dict]:
+    """One row for each who owns, registered owners first. The register may name one owner twice, as the
+    registered owner and as the current owner (Aktuell eier) with the same share: said once, with both its words."""
+    rows: dict[tuple, dict] = {}
+    for o in sorted(found, key=lambda o: (o["role"] != "owner", not o["registered"], o["name"] or "")):
+        key = (o["kind"], o.get("property") or o["name"], o["org_number"], o["share"])
+        if key in rows:
+            rows[key]["said"] = ", ".join(dict.fromkeys(w for w in (rows[key]["said"], o["said"]) if w))
+        else:
+            rows[key] = o
+    return list(rows.values())
+
+
+def owners(unit_ids: list[str], further: int = 1) -> dict[str, list[dict]]:
+    """Who owns each of these units now, as the register says: asked when not asked within the hour.
+
+    An owner is a person, an organisation, or another property (whose share is had by whoever owns that
+    property). For a property, who owns it is given too, `further` steps on: one by default, which is the
+    farms' owners of a summer farm the farms own. A kind of ownership the register has that is none of these
+    is left out, not a reason to fail.
+    """
+    import requests
+    from zeep.exceptions import Fault, TransportError
+
     now, out = time.time(), {}
     wanted = [i for i in dict.fromkeys(unit_ids) if i]
     asked = [i for i in wanted if not (i in _owners and now - _owners[i][0] < KEPT_S)]
@@ -282,30 +317,47 @@ def owners(unit_ids: list[str]) -> dict[str, list[dict]]:
                 units = r.units(asked)
                 relations = {str(_value(u.id)): [e for e in (getattr(u.eierforhold, "item", None) or []) if not e.sluttdato]
                              for u in units}
-                people = {_value(p.id): p for p in r.objects([e.eierId for rs in relations.values() for e in rs])}
+
+                def refs(field: str) -> list:
+                    return [x for rs in relations.values() for e in rs if (x := getattr(e, field, None)) is not None]
+                people = {_value(p.id): p for p in r.objects(refs("eierId"))}
+                holders = {_value(u.id): u for u in r.objects(refs("eiendeMatrikkelenhetId"))}
                 new = {}
                 for rs in relations.values():
                     for e in rs:
                         new[("kind", _value(e.eierforholdKodeId))] = e.eierforholdKodeId
-                        address = getattr(people.get(_value(e.eierId)), "postadresse", None)
+                        address = getattr(people.get(_value(getattr(e, "eierId", None))), "postadresse", None)
                         if address is not None and address.postnummeromradeId is not None:
                             new[("postal", _value(address.postnummeromradeId))] = address.postnummeromradeId
                 missing = [k for k in new if k not in _known]
                 for got in r.objects([new[k] for k in missing]):
-                    kind = "kind" if hasattr(got, "kodeverdi") else "postal"
-                    _known[(kind, _value(got.id))] = got
+                    _known[("kind" if hasattr(got, "kodeverdi") else "postal", _value(got.id))] = got
+                kinds = {k[1]: v for k, v in _known.items() if k[0] == "kind"}
+                postal = {k[1]: v for k, v in _known.items() if k[0] == "postal"}
+                for i in asked:
+                    found = []
+                    for e in relations.get(i, []):
+                        who, holder = getattr(e, "eierId", None), getattr(e, "eiendeMatrikkelenhetId", None)
+                        if who is not None and _value(who) in people:
+                            found.append(_owner(e, people[_value(who)], postal, kinds))
+                        elif holder is not None and _value(holder) in holders:
+                            found.append(_holding(e, holders[_value(holder)], kinds))
+                    _owners[i] = (now, _merged(found))
         except Unavailable:
             raise
-        except Exception as e:
+        except (Fault, TransportError, requests.RequestException) as e:
             raise Unavailable(f"the property register did not answer: {str(e)[:200]}") from e
-        kinds = {k[1]: v for k, v in _known.items() if k[0] == "kind"}
-        postal = {k[1]: v for k, v in _known.items() if k[0] == "postal"}
-        for i in asked:
-            found = [_owner(e, people[_value(e.eierId)], postal, kinds)
-                     for e in relations.get(i, []) if _value(e.eierId) in people]
-            _owners[i] = (now, sorted(found, key=lambda o: (o["role"] != "owner", o["name"] or "")))
+        except Exception as e:
+            raise Unavailable(f"the property register's answer could not be read ({type(e).__name__}: {str(e)[:160]})") from e
     for i in wanted:
         out[i] = _owners[i][1] if i in _owners else []
+    held = [o["property"] for found in out.values() for o in found if o["kind"] == "property"]
+    if further and held:
+        on = owners(held, further - 1)
+        for found in out.values():
+            for o in found:
+                if o["kind"] == "property":
+                    o["owners"] = on.get(o["property"], [])
     return out
 
 
@@ -353,8 +405,14 @@ def workbook(found: dict) -> bytes:
         spans = ", ".join(f"{s['from_m'] / 1000:.1f}–{s['to_m'] / 1000:.1f}".replace(".", ",") for s in p["spans"])
         start = [p["label"], p["municipality"], p["name"], spans, p["metres"]]
         for o in p.get("owners") or [None]:
-            sheet.append(start + ([o["name"], o["share"], o["said"] or o["role"], o["address"], o["org_number"]]
-                                  if o else ["", "", "", "", ""]))
+            if o is None:
+                sheet.append(start + ["", "", "", "", ""])
+                continue
+            sheet.append(start + [o["name"] + (" (a property)" if o["kind"] == "property" else ""), o["share"],
+                                  o["said"] or o["role"], o["address"], o["org_number"]])
+            for n in o.get("owners") or []:      # who owns the property that owns a share
+                sheet.append(start + [f"{n['name']}, through {o['label']}", f"{n['share'] or ''} of {o['share'] or ''}".strip(" of"),
+                                      n["said"] or n["role"], n["address"], n["org_number"]])
     if found.get("owners_unavailable"):
         sheet.append([])
         sheet.append([f"Owners not given: {found['owners_unavailable']}"])

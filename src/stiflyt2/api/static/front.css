@@ -207,3 +207,5 @@ ul.owners { margin: 4px 0 2px; }
 ul.owners li { padding: 2px 0 2px 10px; border-left: 2px solid #c9b3d6; margin: 3px 0; }
 .owned-box .maplibregl-popup-content { padding: 10px 12px; font: 14px/1.4 var(--body, system-ui); }
 .owned-unit + .owned-unit { margin-top: 8px; padding-top: 6px; border-top: 1px solid #e6eaed; }
+.owners .through { margin-top: 2px; }
+.owners .through ul.owners li { border-left-color: #e2d6ea; }
