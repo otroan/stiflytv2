@@ -183,8 +183,35 @@ def refresh(
     if pruned:
         typer.echo(f"removed the original files of {pruned} older snapshots")
     _build_index()
-    if any(c.outcome in ("rejected", "error") for c in checks):
+    if any(c.outcome in ("rejected", "unreached", "error") for c in checks):
         raise typer.Exit(1)
+
+
+@app.command("health")
+def health_now(
+    alert: Annotated[bool, typer.Option(help="Also send it, where a way to send is set up (STIFLYT2_ALERT_*); "
+                                              "the same at most once in 20 hours")] = False,
+) -> None:
+    """What the page warns of now: a nightly check or copy that did not run or went wrong.
+
+    Run after the nightly jobs with --alert, so that it is known without opening the page.
+    """
+    from stiflyt2 import feedback, health
+
+    with psycopg.connect(settings.api_dsn) as conn:
+        warnings = health.status(conn, Path("var/backup"))["warnings"]
+    for w in warnings:
+        typer.echo(w)
+    if not warnings:
+        typer.echo("nothing to warn of")
+    if alert:
+        try:
+            typer.echo(health.alert(warnings, Path("var/run/alerted.json")))
+        except Exception as e:  # said in the page instead
+            typer.echo(f"could not send: {type(e).__name__}: {e}", err=True)
+            with psycopg.connect(settings.api_dsn, autocommit=True) as conn:
+                feedback.record(conn, "failed", "job", "nightly alert", f"could not send: {type(e).__name__}: {e}")
+            raise typer.Exit(1) from e
 
 
 def _build_index(*, force: bool = False, source: str | None = None) -> None:
@@ -293,15 +320,16 @@ Backups = Annotated[Path, typer.Option("--to", help="Where copies of the overlay
 Named = Annotated[str, typer.Option("--database", help="The name of the database, to say that this one is meant")]
 
 
-def _overlay(what: str, named: str, sure: bool) -> None:
+def _overlay(what: str, named: str, sure: bool, beside: bool = False) -> None:
     """Say what is about to be replaced, and go on only when the database is named and it is confirmed."""
     from stiflyt2 import overlay
 
+    whole = "what is kept beside the overlay" if beside else "the overlay"
     if named != overlay.database():
-        raise typer.BadParameter(f"this would {what} the overlay of the database {overlay.database()}: "
+        raise typer.BadParameter(f"this would {what} {whole} of the database {overlay.database()}: "
                                  f"name it with --database to go on")
-    holds = overlay.holds()
-    typer.echo(f"The overlay of {named} holds " + ", ".join(f"{n} {name}" for name, n in holds.items()) + ".")
+    holds = overlay.holds(beside)
+    typer.echo(f"{whole.capitalize()} of {named} holds " + ", ".join(f"{n} {name}" for name, n in holds.items()) + ".")
     if not sure:
         typer.confirm(f"A copy is written first. {what.capitalize()} it?", abort=True)
 
@@ -352,17 +380,33 @@ def overlay_reset(database: Named, to: Backups = Path("var/backup"),
 @overlay_app.command("restore")
 def overlay_restore(file: Path, database: Named, to: Backups = Path("var/backup"),
                     yes: Annotated[bool, typer.Option("--yes", help="Do not ask")] = False) -> None:
-    """Put a copy of the overlay back, in place of what is there now."""
+    """Put a copy back, in place of what is there now: of the overlay, or of what is kept beside it.
+
+    Which it is, the file says: an `overlay-…` copy (overlay.dump off the server) is places, routes and their
+    history; a `tool-…` copy (tool.dump) is who may use the tool, the feedback, and operations (signs,
+    issues, reports, photos as records). Put back both copies of the same night: operations hang on the
+    routes by their ids.
+    """
     from stiflyt2 import overlay
 
-    _overlay("replace", database, yes)
     try:
-        kept = overlay.restore(file, to)
+        beside = overlay.kind_of(file) == "tool"
     except overlay.Failed as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from e
-    holds = overlay.holds()
+    _overlay("replace", database, yes, beside)
+    try:
+        if beside:
+            kept, empty = overlay.restore_beside(file, to)
+        else:
+            kept, empty = overlay.restore(file, to), []
+    except overlay.Failed as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    holds = overlay.holds(beside)
     typer.echo(f"put back from {file}: " + ", ".join(f"{n} {name}" for name, n in holds.items()))
+    if empty:
+        typer.echo(f"the copy has nothing of {', '.join(empty)}: left empty")
     typer.echo(f"what was there before is kept in {kept}")
     typer.echo("restart the viewer: deploy/viewer.sh restart")
 

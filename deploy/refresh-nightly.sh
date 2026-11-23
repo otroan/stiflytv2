@@ -5,10 +5,12 @@
 # and a run before that is a day behind.
 # Appends to var/log/refresh.log. Exits with the status of `stiflyt2 refresh`:
 # 1 when a delivery was refused or a source could not be checked.
+# Last, what the page would warn of is sent, where a way to send is set up (`stiflyt2 health --alert`).
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p var/log
 exec >> var/log/refresh.log 2>&1
 echo "== $(date -u +%FT%TZ)"
+trap '.venv/bin/stiflyt2 health --alert' EXIT
 # A run still going from the night before is left to finish.
 flock -n var/log/refresh.lock .venv/bin/stiflyt2 refresh
 status=$?

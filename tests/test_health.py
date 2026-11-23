@@ -101,3 +101,64 @@ def test_old_copies_are_cleared_and_a_failed_job_is_kept_with_the_feedback(loade
         warnings = client.get("/api/v1/health").json()["warnings"]
         assert any(w.endswith("pg_dump failed: disk full") for w in warnings)
     assert CliRunner().invoke(cli, ["feedback", "seen", told.output.strip().split("#")[1]]).exit_code == 0
+
+
+def test_a_source_not_reached_is_warned_of_only_when_it_has_not_caught_up(owner, tmp_path):
+    now = datetime.now(UTC)
+    owner.execute("DELETE FROM import_control.check_log")
+    owner.execute("UPDATE feedback.entry SET seen_at = now() WHERE seen_at IS NULL")
+    (tmp_path / f"overlay-{TEST_DB}-20261123T035000.000000Z.dump").write_bytes(b"x")
+    checked(owner, 1)
+    # OpenStreetMap is asked for weekly: busy last night, fetched three days ago: nothing to say yet.
+    checked(owner, 24 * 3, source="osm")
+    checked(owner, 2, "unreached", "Overpass answers 502, at capacity, after 6 tries over 15 minutes", source="osm")
+    # The mapped paths nightly: not reached last night, but the night before: nothing either.
+    checked(owner, 30, source="fkb_wfs")
+    checked(owner, 3, "unreached", "Kartverket's WFS did not answer", source="fkb_wfs")
+    assert health.status(owner, tmp_path, now)["warnings"] == []
+    # Nine days without OpenStreetMap, three without the paths: now both are said, and that nothing is lost.
+    owner.execute("UPDATE import_control.check_log SET finished_at = now() - interval '9 days' WHERE source_key = 'osm' AND outcome = 'unchanged'")
+    owner.execute("UPDATE import_control.check_log SET finished_at = now() - interval '3 days' WHERE source_key = 'fkb_wfs' AND outcome = 'unchanged'")
+    assert health.status(owner, tmp_path, now)["warnings"] == [
+        ("fkb_wfs NO has not been reached for 3 days (Kartverket's WFS did not answer). "
+         "What was fetched before is still in use, and it is asked again every night."),
+        ("osm NO has not been reached for 9 days (Overpass answers 502, at capacity, after 6 tries over 15 minutes). "
+         "What was fetched before is still in use, and it is asked again every night.")]
+    # Reached again: nothing to say.
+    checked(owner, 0, source="osm")
+    checked(owner, 0, source="fkb_wfs")
+    assert health.status(owner, tmp_path, now)["warnings"] == []
+
+
+def test_what_there_is_to_warn_of_is_sent_once_where_a_way_to_send_is_set_up(tmp_path, monkeypatch):
+    import httpx
+
+    from stiflyt2.config import settings
+
+    state, now = tmp_path / "alerted.json", datetime.now(UTC)
+    said = ["The sources were last checked for news 40 hours ago: the nightly check is not running."]
+    monkeypatch.setattr(settings, "alert_url", "")
+    monkeypatch.setattr(settings, "alert_to", "")
+    assert health.alert([], state, now) == "nothing to send"
+    assert health.alert(said, state, now).startswith("1 to warn of, not sent: no way to send is set up")
+    assert not state.exists()
+
+    posted = []
+    monkeypatch.setattr(settings, "alert_url", "https://push.example.org/stiflyt2-test")
+    monkeypatch.setattr(settings, "public_url", "https://stiflyt2.example.org")
+    monkeypatch.setattr(httpx, "post", lambda url, content, headers, timeout: posted.append((url, content.decode(), headers))
+                        or httpx.Response(200, request=httpx.Request("POST", url)))
+    assert health.alert(said, state, now) == "sent 1 to warn of to push.example.org"
+    assert posted == [("https://push.example.org/stiflyt2-test", said[0] + "\n\nhttps://stiflyt2.example.org",
+                       {"Title": "Stiflyt v2: something to look at"})]
+    # Three hours later the same is said with other numbers: not sent again. Something new is, alone.
+    later = ["The sources were last checked for news 43 hours ago: the nightly check is not running.",
+             "No copy of your places and routes has been written: the nightly copy is not running."]
+    assert health.alert(later, state, now + timedelta(hours=3)) == "sent 1 to warn of to push.example.org"
+    assert posted[-1][1].startswith("No copy of your places") and len(posted) == 2
+    # The next day it is sent again, if it is still so.
+    assert health.alert(later[:1], state, now + timedelta(hours=21)).startswith("sent 1")
+    # A way to send that fails is said, not swallowed.
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(500, request=httpx.Request("POST", a[0])))
+    with pytest.raises(httpx.HTTPStatusError):
+        health.alert(["Something else entirely."], state, now)

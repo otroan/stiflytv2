@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # Original files are kept for this many of the newest snapshots per source
     # and scope; the database keeps every version regardless. 0 keeps all files.
     keep_artifacts: int = 14
+    # Where what the page warns of (a night that went wrong) is sent, after the nightly jobs: by e-mail through
+    # an SMTP server (port 465: TLS from the start; otherwise STARTTLS), and/or as a POST of plain text to a web
+    # address (a push service such as an ntfy topic). Neither set: nothing is sent, the page still says it.
+    alert_to: str = ""
+    alert_from: str = ""
+    alert_url: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
 
 
 settings = Settings()

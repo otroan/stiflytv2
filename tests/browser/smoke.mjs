@@ -41,8 +41,9 @@ ws.addEventListener("message", m => {
   if (d.method === "Fetch.requestPaused") {
     const q = d.params.request;
     asked.push(q.url.slice(HOME.length - 1));
-    // Somebody else at work, for the page to show: the answer is made up here.
-    if (pretend && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend)).toString("base64") }); return; }
+    // Somebody else at work, for the page to show: the answer is made up here. With a token it is always made up
+    // here, nobody else: the service takes where a page is only from a page a person has open, and keeps the refusal.
+    if ((pretend || TOKEN) && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend || [])).toString("base64") }); return; }
     // (Planning a trip, and saying where the page is, are asked with POST and keep nothing: they are let through, as a look is.)
     if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });

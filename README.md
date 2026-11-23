@@ -294,7 +294,12 @@ per municipality. The area section says how much of the area each covers.
 from where Turrutebasen's routes with that prefix lie (2 km to spare) and the
 municipalities from the place names along them. What is fetched once is
 checked again every night; OpenStreetMap once a week, since its service is
-shared. With an area chosen the section says, per kind, whether it is loaded,
+shared. A service that does not answer, or is too busy to (Overpass at
+capacity), is asked again the next night, and is told apart from a delivery
+refused as faulty: it is only warned of when it has not caught up (OpenStreetMap
+after 8 days, the others after 2). Overpass is waited for as it asks, longer
+each time, about 16 minutes, and once it has not answered for one box it is
+not asked for the others that night. With an area chosen the section says, per kind, whether it is loaded,
 in part or not, and when it was last checked.
 
 A click on a mapped path, a road or an OpenStreetMap way says where the line
@@ -803,9 +808,10 @@ the schemas `core` and `history`: the overlay. The imported sources are not
 part of it.
 
 ```sh
-.venv/bin/stiflyt2 overlay backup                         # a copy in var/backup/
+.venv/bin/stiflyt2 overlay backup                         # a copy in var/backup/, and one of the tool beside it
 .venv/bin/stiflyt2 overlay reset --database stiflyt2      # remove all of it; a copy is written first
 .venv/bin/stiflyt2 overlay restore var/backup/overlay-….dump --database stiflyt2
+.venv/bin/stiflyt2 overlay restore var/backup/tool-….dump --database stiflyt2
 ```
 
 `reset` leaves the overlay as on a new installation: afterwards
@@ -813,6 +819,16 @@ part of it.
 area's places and routes again. `restore` puts a copy back exactly, ids and
 history included, and writes a copy of what it replaces. Both ask before
 they go on, and only when the database is named. Restart the viewer after.
+
+Beside the overlay is kept what is about the tool and the work done with it:
+who may use it (`access`), the feedback, and operations (`ops`: signs,
+issues, reports, photos as records, and their undo). `backup` writes a copy
+of it too (`tool-….dump`), and `restore` knows it by what it holds. It is put
+back row for row into the tables as they are, in one transaction: where the
+copy does not fit them (from before a migration that changed a table),
+nothing is changed; a table the copy has nothing of is left empty and named.
+Put back both copies of the same night: operations hang on the routes by
+their ids. The photo files themselves are in neither copy.
 
 ### Looking things up
 
@@ -900,9 +916,22 @@ e-mail addresses and who changed what. The key it pushes with is named in
 `var/backup-repo/.key`; make it a deploy key that can write to that one
 repository and nothing else. A push that fails is reported like a copy that
 fails. Putting a copy back is `stiflyt2 overlay restore <file> --database
-<name>`; tried from a fresh clone of the pushed copy into the test database
-on 2026-11-17. When the nightly check of the sources or the copy did not run
-or failed, the page says so to an editor (`GET /api/v1/health`).
+<name>`, for `overlay.dump` and `tool.dump` alike; tried from a fresh clone
+of the pushed copy into the test database on 2026-11-17, and the tool copy
+of 2026-11-23 into the test database the same day. When the nightly check of the sources or the copy did not run
+or failed, the page says so to an editor (`GET /api/v1/health`, and `stiflyt2
+health` on the server).
+
+**Told without opening the page.** After each nightly job `stiflyt2 health
+--alert` sends what the page would warn of, the same warning at most once in
+20 hours: by e-mail (`STIFLYT2_ALERT_TO`, `STIFLYT2_ALERT_FROM`,
+`STIFLYT2_SMTP_HOST`, `_PORT` (587 with STARTTLS, or 465), `_USER`,
+`_PASSWORD`), and/or as plain text posted to a web address
+(`STIFLYT2_ALERT_URL`, such as a push service's topic). With neither set,
+nothing is sent. The copy at 03:50 and the check at 07:00 each send, so either
+tells when the other has stopped; a server that is down altogether tells
+nothing. A way to send that fails is kept with the feedback, and the page says
+so.
 
 A new person starts with "How to use this" at the foot of the left side
 (`/guide`).

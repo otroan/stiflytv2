@@ -108,10 +108,9 @@ per correction for Rett i kartet and a mark that it is reported. For the
 descriptions: whether UT-admin can export routes as a file, which beats one
 page per route.
 
-Before more is kept in operations: a command to put the second nightly copy
-back (`tool.dump`: access, feedback and all of `ops`). The copy itself is
-pushed off the server every night and was read back from a fresh clone on
-2026-11-19.
+The second nightly copy (`tool.dump`: access, feedback and all of `ops`) is
+put back with `stiflyt2 overlay restore` since 2026-11-23, as the overlay's
+copy is. Not in any copy: the photo files (object storage, step 3).
 
 ## What one may change, limited to one's areas (asked 2026-11-23, not built)
 
@@ -578,8 +577,8 @@ Left, of what v1 has and of what was said:
 - Copies off the server (2026-11-17): the nightly copy is pushed to a private
   git repository. Not covered: the imported sources' older versions
   (`source_raw`, 5 GB, too big for git, and upstream serves only the latest),
-  and there is no command to put `tool.dump` back (who may sign in, feedback,
-  what is decided about signs): it goes in with `pg_restore` by hand.
+  and the photo files. `tool.dump` is put back with `stiflyt2 overlay
+  restore` since 2026-11-23.
 - How long the editor's look-ups take (measured 2026-11-17 on the real data, before and after):
   the to-do list of jot 8.7 s, now 4.2 s the first time and 1.7 s after;
   of bre 4.8 s, now 2.1 s and 1.1 s; the report of bre 5.2 s, now 1.4 s;

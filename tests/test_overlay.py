@@ -67,3 +67,76 @@ def test_the_overlay_is_taken_away_and_put_back_exactly(loaded, tmp_path, monkey
 
     with pytest.raises(overlay.Failed, match="not a copy of an overlay|no such file"):
         overlay.restore(tmp_path / "nothing.dump", tmp_path)
+
+
+def beside():
+    """Every row of what is kept beside the overlay, table by table."""
+    with psycopg.connect(dbname=TEST_DB) as conn:
+        conn.execute("SET ROLE stiflyt2_owner")
+        tables = [t for (t,) in conn.execute("""SELECT format('%I.%I', schemaname, tablename) FROM pg_tables
+                                                WHERE schemaname IN ('access', 'feedback', 'ops') ORDER BY 1""")]
+        return {t: conn.execute(f"SELECT to_jsonb(x)::text FROM {t} x ORDER BY 1").fetchall() for t in tables}
+
+
+def test_what_is_kept_beside_the_overlay_is_put_back_exactly(loaded, tmp_path, monkeypatch):
+    from stiflyt2 import access, feedback
+    from stiflyt2.ops import issues
+
+    monkeypatch.setenv("STIFLYT2_MIGRATE_URL", f"postgresql+psycopg:///{TEST_DB}")
+    kari, ola = "kari@example.org", "ola@example.org"
+    with psycopg.connect(role_dsn("stiflyt2_api"), autocommit=True) as conn, \
+            psycopg.connect(dbname=TEST_DB, autocommit=True) as owner:
+        owner.execute("SET ROLE stiflyt2_owner")
+        start = conn.execute("SELECT coalesce(max(txid), 0) FROM core.undo_log").fetchone()[0]
+        mark = conn.execute("SELECT coalesce(max(id), 0) FROM ops.undo_log").fetchone()[0]
+        with conn.transaction():
+            route = str(routes.make(conn, conn.execute("SELECT id FROM source_index.route WHERE label = 'bre18'").fetchone()[0], AUTHOR))
+        # People with a role, a feature and a token (the keys between them); an issue (its undo); feedback.
+        access.add(owner, kari, "Kari Nordmann", "editor", "test")
+        access.grant(owner, kari, "trips", True, "test")
+        access.new_token(owner, kari, "mcp", "laptop")
+        with conn.transaction():
+            tree = issues.report(conn, AUTHOR, route=route, kind="clearing", text="A birch", about="route")
+        feedback.record(owner, "reported", "api", "note", "Kept before the copy")
+        before = beside()
+        assert before["access.person"] and before["ops.entry"] and before["access.token"]
+
+        copy = overlay.backup_beside(tmp_path)
+        assert overlay.kind_of(copy) == "tool"
+
+        # After the copy: somebody new, somebody gone, the issue said done, more feedback.
+        access.add(owner, ola, "Ola Nordmann", "reader", "test")
+        access.remove(owner, kari)
+        with conn.transaction():
+            issues.change(conn, AUTHOR, tree["id"], {"state": "done"})
+        feedback.record(owner, "reported", "api", "note", "Said after the copy")
+        assert beside() != before
+
+        # Not without naming the database; the overlay's own copy is not this one.
+        run = CliRunner().invoke(app, ["overlay", "restore", str(copy), "--database", "stiflyt2", "--to", str(tmp_path), "--yes"])
+        assert run.exit_code != 0
+        run = CliRunner().invoke(app, ["overlay", "restore", str(copy), "--database", TEST_DB, "--to", str(tmp_path), "--yes"])
+        assert run.exit_code == 0, run.output
+        assert "what is kept beside the overlay" in run.output.lower() and "people" in run.output
+        assert beside() == before                                   # row for row, the undo of operations included
+        assert len(list(tmp_path.glob("tool-*.dump"))) == 2         # what was there is kept first
+
+        # Usable as before: the next feedback gets a number of its own, and the token still lets Kari in.
+        latest = max(r[0] for r in owner.execute("SELECT id FROM feedback.entry"))
+        assert feedback.record(owner, "reported", "api", "note", "After putting back") > latest
+        assert access.person(owner, kari) is not None
+
+        # A file that is no copy is refused before anything is changed.
+        junk = tmp_path / "junk.dump"
+        junk.write_text("no copy")
+        with pytest.raises(overlay.Failed):
+            overlay.kind_of(junk)
+
+        # Cleared: what this test added, and the route made.
+        access.remove(owner, kari)
+        owner.execute("DELETE FROM ops.entry WHERE id = %s", (tree["id"],))
+        owner.execute("DELETE FROM ops.undo_log WHERE id > %s", (mark,))
+        owner.execute("DELETE FROM feedback.entry WHERE message IN ('Kept before the copy', 'After putting back')")
+        while (latest := undo.last(conn)) and latest["txid"] > start:
+            with conn.transaction():
+                undo.undo(conn, AUTHOR)

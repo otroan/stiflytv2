@@ -36,7 +36,9 @@ URL = "https://overpass-api.de/api/interpreter"
 TRANSFORM = "osm-1"
 TILE_M = 25_000
 PAUSE_S = 2.0          # between requests: the service is shared and free
-RETRIES = (20, 45, 90)  # seconds to wait before asking again when it is busy
+# Seconds to wait before asking again when it is busy, each wait twice the one before, as Overpass asks: about
+# 16 minutes in all, then it is left for the night (`core.NotReached`) and asked again the next.
+RETRIES = (30, 60, 120, 240, 480)
 QUERY = '[out:json][timeout:300];way["highway"]({s},{w},{n},{e});out tags geom qt;'
 
 SPECS = [core.LayerSpec("way", "osm_way", "s.osm_id::text", "s.tags::jsonb", distinct=True)]
@@ -61,13 +63,23 @@ def _latlon(conn, tile: Bbox) -> dict:
 
 def _fetch(client: httpx.Client, query: str) -> bytes:
     for wait in (*RETRIES, None):
-        r = client.post(URL, data={"data": query})
+        try:
+            r = client.post(URL, data={"data": query})
+        except httpx.TransportError as e:
+            if wait is not None:
+                time.sleep(wait)
+                continue
+            raise core.NotReached(f"Overpass did not answer ({type(e).__name__}) after {len(RETRIES) + 1} tries") from e
         if r.status_code in (429, 502, 503, 504) and wait is not None:
             time.sleep(wait)        # busy, down for a moment or out of time: ask again later
             continue
-        if r.status_code != 200:
+        if r.status_code in (429, 502, 503, 504):
             # Not a fault of ours or of the data: say so and leave what is loaded as it is.
-            raise core.ImportRejected(f"Overpass answers {r.status_code} after {len(RETRIES) + 1} tries")
+            busy = ", at capacity" if b"at capacity" in r.content else ""
+            raise core.NotReached(f"Overpass answers {r.status_code}{busy} after {len(RETRIES) + 1} tries over "
+                                  f"{sum(RETRIES) // 60} minutes")
+        if r.status_code != 200:
+            raise core.ImportRejected(f"Overpass answers {r.status_code}")
         return r.content
     raise AssertionError("unreachable")
 

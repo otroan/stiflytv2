@@ -97,10 +97,10 @@ def test_an_answer_that_is_not_one_is_refused(overpass):
         osm.ways(json.dumps({"error": "nope"}).encode())
 
 
-def test_a_service_that_stays_busy_is_a_refusal_and_what_is_loaded_stays(overpass):
+def test_a_service_that_stays_busy_is_not_reached_and_what_is_loaded_stays(overpass):
     first = osm.run("busy", BOX)
     overpass.busy = 10
-    with pytest.raises(core.ImportRejected, match="Overpass answers 429 after 3 tries"):
+    with pytest.raises(core.NotReached, match="Overpass answers 429 after 3 tries"):
         osm.run("busy", BOX)
     assert q("SELECT snapshot_id::text FROM import_control.active_snapshot WHERE scope = 'bbox:busy'") == [
         (first.snapshot_id,)]
@@ -119,3 +119,22 @@ def test_openstreetmap_is_asked_for_once_a_week_not_every_night(overpass, monkey
     assert refresh.run() == [] and overpass.calls == asked
     assert [c.outcome for c in refresh.run("osm") if c.scope == "bbox:test"] == ["unchanged"]
     assert overpass.calls > asked
+
+
+def test_a_busy_night_asks_no_more_and_the_next_night_asks_again(overpass, monkeypatch):
+    from stiflyt2.importer import refresh
+
+    monkeypatch.setattr(refresh, "SOURCES", ("osm",))
+    for name in ("night1", "night2"):
+        osm.run(name, BOX)
+    overpass.busy = 100
+    night = refresh.run()
+    asked = 100 - overpass.busy
+    assert asked == 3       # one box, three tries: then nothing more is asked of it that night
+    mine = {c.scope: c for c in night if c.scope in ("bbox:night1", "bbox:night2")}
+    assert {c.outcome for c in night} == {"unreached"} and set(mine) == {"bbox:night1", "bbox:night2"}
+    first, *rest = night
+    assert first.detail.startswith("Overpass answers 429") and all(c.detail.startswith("not asked tonight") for c in rest)
+    # Nothing was refused as faulty, and the next night (the service free again) each is asked again.
+    overpass.busy = 0
+    assert {c.scope: c.outcome for c in refresh.run() if c.scope in mine} == {"bbox:night1": "unchanged", "bbox:night2": "unchanged"}

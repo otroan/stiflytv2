@@ -9,10 +9,15 @@
 # the newest copy of each kind is committed there under one name and pushed, so
 # that the repository's history is the copies night by night. The key to push
 # with is named in var/backup-repo/.key (a path), and can do nothing else.
+#
+# Last, what the page would warn of is sent, where a way to send is set up: so a
+# nightly check that has stopped is told by the copy, and a copy that has stopped
+# by the check three hours later.
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p var/log var/backup
 exec >> var/log/backup.log 2>&1
 echo "== $(date -u +%FT%TZ)"
+trap '.venv/bin/stiflyt2 health --alert' EXIT
 out=$(.venv/bin/stiflyt2 overlay backup --to var/backup --keep 14 2>&1)
 status=$?
 echo "$out"

@@ -29,6 +29,11 @@ class ImportRejected(Exception):
     """The delivery failed validation. Nothing was activated."""
 
 
+class NotReached(ImportRejected):
+    """The source did not answer, or was too busy to: nothing is known to be wrong with what it holds, and it is
+    asked again the next night. Nothing was activated."""
+
+
 @dataclass(frozen=True)
 class LayerSpec:
     layer: str            # layer key stored on feature_version

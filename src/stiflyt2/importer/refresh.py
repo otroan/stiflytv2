@@ -25,7 +25,7 @@ SOURCES = ("turrutebasen", "stedsnavn", "kulturminner", "teig", "fkb_wfs", "vegn
 class Check:
     source_key: str
     scope: str
-    outcome: str   # unchanged, imported, rejected or error
+    outcome: str   # unchanged, imported, rejected, unreached or error
     snapshot_id: str | None
     detail: str
 
@@ -125,15 +125,21 @@ def run(only: str | None = None) -> list[Check]:
                ORDER BY 1, 2""",
             (list(SOURCES), only, only),
         ).fetchall()
-    checks = []
+    checks, busy = [], {}
     for source_key, scope, manifest in active:
         if (source_key, scope) in recent:
             continue        # checked within the week
         started = datetime.now(UTC)
         try:
+            if source_key in busy:
+                # It did not answer for another scope tonight: not asked again until the next night.
+                raise core.NotReached(f"not asked tonight: {busy[source_key]}")
             r = again(source_key, scope, manifest)
             check = Check(source_key, scope, "unchanged" if r.reused else "imported",
                           r.snapshot_id, "" if r.reused else json.dumps(r.diff))
+        except core.NotReached as e:
+            check = Check(source_key, scope, "unreached", None, str(e))
+            busy.setdefault(source_key, f"it did not answer for {scope} ({e})")
         except core.ImportRejected as e:
             check = Check(source_key, scope, "rejected", None, str(e))
         except Exception as e:  # noqa: BLE001  one source failing must not stop the others
