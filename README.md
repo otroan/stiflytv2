@@ -1436,6 +1436,28 @@ Over the API: `GET /api/v1/reports?area=|route=`, `GET /api/v1/reports/status?ar
 `GET|POST /api/v1/reports/undo`. An assistant has `route_upkeep` and
 `report_work`.
 
+## The route card
+
+A route on one page, to print or save as PDF: "Route card…" on a route's page
+asks which parts go on it (remembered in the browser) and opens it in a tab of
+its own. Always on it: the facts (length, climb and descent, walking time each
+way by Naismith's rule, height, grading, marking, who looks after it) and any
+notice in force. To choose: a map (Kartverket's topographic tiles under the
+route, its places, issues, heritage sites and sign sites), the height profile
+(glacier in blue, places and issues marked), the description, the route section
+by section (from where to where, ground, marking, other routes on it, length,
+climb, time; the steep parts), heritage sites within 150 m (Kulturminnesøk: name,
+protection, whether visible, the county's own text), open issues and notices,
+inspections and work parties, photos near it, the signs along it, and who owns
+the ground. Looking is not a feature: whoever is let in may make a card, but a
+part that is a feature of its own (issues, reports, photos, landowners) is on it
+only for one who has that feature, and owners on a card are looked up and kept
+as any lookup is.
+
+The card is HTML with print styles, made on the server
+(`GET /api/v1/routecard/{route}?with=map,profile,…`): nothing on it waits for a
+script when it is printed.
+
 ## Who owns the ground: a feature of its own
 
 With the feature `landowners`, which is in no role and is given to a person by

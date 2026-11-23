@@ -132,6 +132,14 @@ if (await js(`Boolean(shownRoute && shownRoute.height && shownRoute.height.known
   await mouse("mouseMoved", 900, 900);
 } else console.log("    (no heights for this route here: the profile is not checked)");
 check("the route links to the editor", (await js(`[...document.querySelectorAll("#panel a.btn")].map(a => a.getAttribute("href")).join(" ")`)).includes("/ruter?yours="));
+// The route card: the parts to choose, and the card itself, a page of its own.
+await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Route card…")`);
+check("Route card… asks which parts go on the card", await until(`Boolean(document.querySelector("#panel .card-ask")) && document.querySelectorAll("#panel .card-ask input[type=checkbox]").length >= 6`, 5),
+  await text("#panel .card-ask"));
+check("the card is a page of the route, with its facts, map and profile", await js(`(async () => { const r = over.routes.find(x => x.code === route);
+  const got = await fetch(new URL("routecard/" + r.id + "?with=map,profile,walk", API), { headers: THROUGH }); const page = await got.text();
+  return got.ok && page.includes("<h1>") && page.includes(r.code) && page.includes("cache.kartverket.no") && page.includes("Section by section"); })()`));
+await clickOn(`[...document.querySelectorAll("#panel .card-ask button")].find(b => b.textContent === "Cancel")`);
 await js("history.back()");
 check("the browser's back goes back to the area", await until(`route === null && document.querySelectorAll("#panel dl.facts dt").length >= 4`), await js("location.search"));
 

@@ -31,6 +31,7 @@ from stiflyt2.api import places as places_api
 from stiflyt2.api import presence as presence_api
 from stiflyt2.api import profile as profile_api
 from stiflyt2.api import reports as reports_api
+from stiflyt2.api import routecard as routecard_api
 from stiflyt2.api import signs as signs_api
 from stiflyt2.api import trips as trips_api
 from stiflyt2.config import settings
@@ -196,6 +197,7 @@ def create_app() -> FastAPI:
     photos_api.register(app, pool, writes)
     reports_api.register(app, pool, writes)
     landowners_api.register(app, pool, writes)
+    routecard_api.register(app, pool, writes)
     profile_api.register(app, pool, writes)
     return app
 

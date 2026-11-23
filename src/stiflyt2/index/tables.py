@@ -302,14 +302,15 @@ _HERITAGE = " UNION ALL ".join(
                coalesce(s.p->>'lokalitetsart', s.p->>'enkeltminneart') AS art,
                s.p->>'vernetype' AS protection, s.p->>'vernelov' AS law,
                s.p->>'lokalitetid' AS site_id, s.p->>'linkkulturminnesok' AS url,
-               s.p->>'kommune' AS municipality_no
+               s.p->>'kommune' AS municipality_no,
+               nullif(s.p->>'informasjon', '') AS info, (s.p->>'synlig')::int = 1 AS visible
         FROM {active("kulturminner", layer)} s"""
     for layer in ("lokalitet", "enkeltminne", "sikringssone")
 )
 
 KULTURMINNER = Group(
     source="kulturminner",
-    version=1,
+    version=2,
     tables=("heritage",),
     statements=(
         f"CREATE TABLE {BUILD}.heritage AS {_HERITAGE}",

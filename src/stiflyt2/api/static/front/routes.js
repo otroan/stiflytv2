@@ -163,11 +163,41 @@ function renderRoute() {
       : shownRoute.problem ? el("div", { class: "error" }, `Could not get the route: ${shownRoute.problem}`) : el("div", { class: "sub" }, "Loading…"),
     el("div", { class: "actions", style: "margin-top:12px" },
       D && D.utno_id ? el("a", { class: "btn", href: `https://ut.no/rutebeskrivelse/${D.utno_id}`, target: "_blank", rel: "noopener" }, "Its page on UT.no") : "",
-      el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor")),
+      el("a", { class: "btn", href: `/ruter?yours=${encodeURIComponent(r.id)}`, title: "Where its line, its places and what is said about it are changed" }, "Open in the route editor"),
+      el("button", { class: "btn", "aria-expanded": String(cardAsk === r.id), title: "The route on one page, to print: its facts, a map, the profile and what you choose",
+        onclick: () => { cardAsk = cardAsk === r.id ? null : r.id; renderRoute(); } }, "Route card…")),
+    cardAsk === r.id ? cardForm(r) : "",
     ...(view === "issues" ? [] : own.issues),
     ...(view === "reports" ? [] : own.reports),
     ...(hasPhotos() ? routePhotos(r) : []));
   if (D && H) drawProfile(profile, D, H);
+}
+// The route card: which parts are on it, chosen here and remembered in the browser, then made in a tab of its own to
+// print. A part that is a feature of its own is offered only to one who has that feature, as the card has it.
+const CARD_PARTS = [["map", "Map", true, null], ["profile", "Height profile", true, null], ["description", "Description", true, null],
+  ["walk", "The route section by section", true, null], ["heritage", "Heritage sites near it", true, null],
+  ["issues", "Open issues and notices", true, "issues"], ["upkeep", "Inspections and work parties", true, "reports"],
+  ["photos", "Photos near it", false, "photos"], ["signs", "Signs along it", false, null],
+  ["owners", "Who owns the ground (asked of the register now)", false, "landowners"]];
+let cardAsk = null;              // the route whose card is being chosen
+function cardChosen() {
+  try { const kept = JSON.parse(localStorage.getItem("stiflyt2.card")); if (Array.isArray(kept)) return new Set(kept); } catch { /* not kept */ }
+  return new Set(CARD_PARTS.filter(p => p[2]).map(p => p[0]));
+}
+function cardForm(r) {
+  const chosen = cardChosen(), parts = CARD_PARTS.filter(p => !p[3] || (me.features || []).includes(p[3]));
+  const make = () => {
+    const want = parts.map(p => p[0]).filter(k => chosen.has(k));
+    localStorage.setItem("stiflyt2.card", JSON.stringify(want));
+    window.open(new URL(`routecard/${encodeURIComponent(r.id)}?with=${want.join(",")}`, API).href, "_blank", "noopener");
+    cardAsk = null; renderRoute();
+  };
+  return el("div", { class: "card-ask" },
+    el("div", { class: "sub" }, "On the card besides its facts, in a tab of its own to print or save as PDF:"),
+    ...parts.map(([k, label]) => el("label", {}, el("input", { type: "checkbox", checked: chosen.has(k) ? "" : false,
+      onchange: e => { if (e.target.checked) chosen.add(k); else chosen.delete(k); } }), ` ${label}`)),
+    el("div", { class: "actions" }, el("button", { class: "btn main", onclick: make }, "Make the card"),
+      el("button", { class: "btn", onclick: () => { cardAsk = null; renderRoute(); } }, "Cancel")));
 }
 // The photos taken near a route (the feature `photos`), fetched when the route is opened, and a way to add more.
 function routePhotos(r) {

@@ -72,6 +72,10 @@ step is still started on their word; the details of each are further down.
 4. **The route card**: a page to print with what a work party needs, from
    all of the above: map cut-outs, profile, open work, signs, heritage
    sites.
+   *Built 2026-11-23* (README, "The route card"): one page per route, the
+   parts chosen when it is made. Left: several routes in one card (a work
+   party's day), map cut-outs closer in for long routes, the parts of an
+   issue drawn on the map.
 5. **Who owns the ground.** v1 has the access and a module for it: to be
    read, rewritten and taken in. Seeing it is a role of its own (decided
    2026-11-19): owners' names are personal data. v2 needs its own access to
