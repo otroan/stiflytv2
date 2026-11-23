@@ -113,3 +113,16 @@ function utnoSearch(name, code) {
   const words = (name || "").split(/\s+[–-]\s+/).map(w => w.trim()).filter(Boolean).map(w => `"${w}"`).join(" ") || code;
   return `https://www.google.com/search?q=${encodeURIComponent(`site:ut.no rutebeskrivelse ${words}`)}`;
 }
+// A route is described both ways: as it is walked (from its first end to its last) and back. Their headings, by
+// the places at its ends, and the two texts under them, the way it is walked first.
+function waysOf(walked) {
+  const a = walked && walked.from, b = walked && walked.to;
+  if (a && b && a !== b) return [`${a} → ${b}`, `${b} → ${a}`];
+  return a ? [`From ${a}, as the route runs`, `From ${a}, the other way round`] : ["As the route is walked", "The other way"];
+}
+function describedBoth(route, none) {
+  const [there, back] = waysOf(route.walked), said = [[there, route.description], [back, route.description_back]].filter(([, t]) => t);
+  if (!said.length) return none || "";
+  return el("div", { class: "described" }, ...said.map(([way, text]) => el("div", { class: "way" },
+    said.length > 1 || route.description_back ? el("div", { class: "way-name" }, way) : "", el("div", { class: "said", style: "white-space:pre-wrap" }, text))));
+}

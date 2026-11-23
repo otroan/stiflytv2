@@ -88,9 +88,10 @@ def gather(conn, route: str, parts: list[str], notices: bool = True) -> dict:
     card["notices"] = [x for x in entries if x["notice"] and x["active"]] if notices else []
     card["issues"] = _numbered([x for x in entries if x["open"] and not x["active"]])
     said = facts["route"]
-    if "description" in parts and not said.get("description") and said.get("utno_id"):
-        try:        # none of our own: UT.no's, read from its page, said as UT.no's
-            card["utno"] = {"number": said["utno_id"], "text": utno.described(utno.fetch(int(said["utno_id"])))}
+    if "description" in parts and not (said.get("description") or said.get("description_back")) and said.get("utno_id"):
+        try:        # none of our own: UT.no's, read from its page, each way under ours, said as UT.no's
+            found = utno.fetch(int(said["utno_id"]))
+            card["utno"] = {"number": said["utno_id"], **utno.ways(found, said.get("from"), said.get("to"))}
         except (utno.Unavailable, Invalid, NotFound):
             card["utno"] = None
     if "map" in parts or "profile" in parts:
@@ -455,11 +456,13 @@ def render(card: dict, owners: dict | None = None, by: str | None = None) -> str
     if "profile" in parts:
         body.append(f"<section><h2>Height profile</h2>{_profile(card)}</section>")
     if "description" in parts:
-        said, theirs = route.get("description"), (card.get("utno") or {}).get("text")
+        theirs = card.get("utno") or {}
+        ours = (route.get("description"), route.get("description_back"))
+        texts = ours if any(ours) else (theirs.get("there"), theirs.get("back"))
         body.append("<section><h2>Description</h2>" + (
-            _paras(said) if said
-            else f'<p class="sub">From UT.no (ut.no/rutebeskrivelse/{card["utno"]["number"]}): none of our own is written yet.</p>{_paras(theirs)}'
-            if theirs else '<p class="none">None is written yet.</p>')
+            (f'<p class="sub">From UT.no (ut.no/rutebeskrivelse/{theirs["number"]}): none of our own is written yet.</p>'
+             if not any(ours) else "") + _both_ways(route, *texts)
+            if any(texts) else '<p class="none">None is written yet.</p>')
                     + (f'<p class="sub">On UT.no: ut.no/rutebeskrivelse/{e(str(route["utno_id"]))}</p>' if route.get("utno_id") else "") + "</section>")
     if "walk" in parts:
         rows = []
@@ -533,6 +536,17 @@ def render(card: dict, owners: dict | None = None, by: str | None = None) -> str
                 + (" Names and addresses of owners are personal data: for the work on the route, not to be passed on." if owners else "")
                 + "</footer>")
     return PAGE.format(title=e(title), body="".join(body))
+
+
+def _both_ways(route: dict, there: str | None, back: str | None) -> str:
+    """A route's description each way, under the places it goes between: the way it is walked first."""
+    a, b = route.get("from"), route.get("to")
+    heads = ((f"{a} → {b}", f"{b} → {a}") if a and b and a != b
+             else (f"From {a}, as the route runs", f"From {a}, the other way round") if a else ("As the route is walked", "The other way"))
+    said = [(h, t) for h, t in zip(heads, (there, back), strict=True) if t]
+    if len(said) == 1 and not back:
+        return _paras(said[0][1])
+    return "".join(f'<h3 class="way">{e(h)}</h3>{_paras(t)}' for h, t in said)
 
 
 def _cut(text: str | None, most: int) -> str:
@@ -634,6 +648,7 @@ table.issues span.issue.notice {{ background: #c62828; }}
 .photos figure {{ margin: 0; break-inside: avoid; }} .photos img {{ width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 3px; }}
 .photos figcaption {{ font-size: 11.5px; color: var(--muted); }}
 p {{ margin: 0 0 7px; }}
+h3.way {{ font: 600 14px "Barlow Semi Condensed", sans-serif; color: var(--route); margin: 10px 0 3px; break-after: avoid; }}
 footer {{ margin-top: 16px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }}
 @media print {{
   body {{ background: none; }} .tools {{ display: none; }}

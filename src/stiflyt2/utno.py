@@ -156,6 +156,47 @@ def fetch(route_number: int, http: httpx.Client | None = None) -> dict:
             "changed": (said("updatedAt") or "")[:10] or None}
 
 
+_PLAIN = re.compile(r"\b(turisthytte|turisthytta|fjellstue|fjellstuer|fjellstova|fjellstugu|fjellhotell|hotell|hotel|"
+                    r"høyfjellsstuer|vandrerhjem|turistgard|turistsenter|gård|gard|seter|sæter|setra|sætra|"
+                    r"øvre|nedre|sørre|søre|nordre)\b|[^\w ]")
+
+
+def _plain(name: str | None) -> str:
+    """A place name as it is compared: what kind of place it is, which of two it is (øvre, nedre), case and marks, left out."""
+    return " ".join(_PLAIN.sub(" ", (name or "").lower()).split())
+
+
+def _near(x: str, y: str) -> bool:
+    """Two words spelt nearly alike (Juvasshytta, Juvvasshytta): at most one letter in six apart."""
+    if abs(len(x) - len(y)) > 2 or min(len(x), len(y)) < 5:
+        return x == y
+    row = list(range(len(y) + 1))
+    for i, a in enumerate(x, 1):
+        last, row[0] = row[0], i
+        for j, b in enumerate(y, 1):
+            last, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, last + (a != b))
+    return row[-1] <= max(1, min(len(x), len(y)) // 6)
+
+
+def _same(a: str | None, b: str | None) -> bool:
+    x, y = _plain(a), _plain(b)
+    return bool(x and y) and (x == y or x.startswith(y + " ") or y.startswith(x + " ") or _near(x.split()[0], y.split()[0]))
+
+
+def ways(found: dict, walked_from: str | None, walked_to: str | None) -> dict:
+    """UT.no's two descriptions as a route of ours has them: `there` the way the route is walked (from its first end
+    to its last), `back` the other way. Which of UT.no's is which is said by the names of the ends, when they fit one
+    way and not the other; `sure` is False where they do not say it, and UT.no's own order is kept."""
+    a, b = found.get("there") or "", found.get("back") or ""
+    along = _same(found.get("from"), walked_from) or _same(found.get("to"), walked_to)
+    against = _same(found.get("from"), walked_to) or _same(found.get("to"), walked_from)
+    if along and not against:
+        return {"there": a, "back": b, "sure": True, "turned": False}
+    if against and not along:
+        return {"there": b, "back": a, "sure": True, "turned": True}
+    return {"there": a, "back": b, "sure": False, "turned": False}
+
+
 def described(found: dict) -> str:
     """UT.no's two descriptions, one for each direction, as one text: each under the way it is walked."""
     there, back = found["there"], found["back"]

@@ -211,3 +211,5 @@ ul.owners li { padding: 2px 0 2px 10px; border-left: 2px solid #c9b3d6; margin: 
 .owners .through ul.owners li { border-left-color: #e2d6ea; }
 .card-ask { margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--wash); }
 .card-ask label { display: block; padding: 2px 0; }
+.described .way + .way { margin-top: 10px; }
+.described .way-name { font: 600 14px var(--tight); color: var(--sign); margin-bottom: 2px; }

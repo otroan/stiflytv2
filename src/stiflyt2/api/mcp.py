@@ -386,8 +386,10 @@ def on_utno(c: Call, a: OnUtno) -> dict:
     """What UT.no's page for a route says: its code and name there, the places at its ends, the description for
     each direction, grading and length. Nothing is changed. `text` is the description as it would be taken, and
     `same_code` whether UT.no has the route under a code of ours: if not, make sure with the person that it is
-    the same route. To take the description: `describe_route` with `description` set to the text (or what the
-    person makes of it) and `utno_id` to `number`. One page is read per call; do not go through routes with it."""
+    the same route. `this_way` and `other_way` are UT.no's two descriptions as this route is walked and back
+    (`ways_sure`: the names of the ends said which is which). To take them: `describe_route` with `description`
+    and `description_back` set to them (or what the person makes of them) and `utno_id` to `number`. One page is
+    read per call; do not go through routes with it."""
     from stiflyt2.api.owned_routes import utno_says
 
     return utno_says(routes.detail(c.conn, _route_id(c.conn, a.route)), a.address)
@@ -534,15 +536,18 @@ class Describe(Args):
     maintainers: list[Annotated[str, Field(max_length=120)]] | None = Field(None, max_length=10)
     everywhere: bool = Field(False, description="With maintainers: also on the stretches that say otherwise")
     grading: Literal["", "G", "B", "R", "S", "I"] | None = None
-    description: str | None = Field(None, max_length=12000)
+    description: str | None = Field(None, max_length=12000, description="The route described the way it is walked, "
+                                    "from its first end to its last (`route_facts` says which end that is)")
+    description_back: str | None = Field(None, max_length=12000, description="The route described the other way, "
+                                         "from its last end to its first")
     utno_id: int | None = Field(None, ge=0, le=10**12, description="The number of the route's page on UT.no; "
                                 "0: it has none. Given with a description: the description was taken from there")
 
 
 @tool("Change what is said about a route", changes=True)
 def describe_route(c: Call, a: Describe) -> dict:
-    """Change a route's code, name, who maintains it, its grading, its description in words, or which page on
-    UT.no is this route's."""
+    """Change a route's code, name, who maintains it, its grading, its description in words (each way), or which
+    page on UT.no is this route's."""
     rid = _route_id(c.conn, a.route)
     said = a.model_dump(exclude={"route", "everywhere"}, exclude_none=True)
     if not said:

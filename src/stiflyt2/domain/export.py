@@ -87,6 +87,9 @@ def routes_geojson(conn, area: str | None = None, changed_only: bool = False, sr
             "id": route_id, "code": route["code"], "code_is_temporary": route["code_provisional"],
             "state": "discontinued" if gone else "in use",
             "name": route["name"] or route["generated_name"], "description": route["description"],
+            "description_back": route.get("description_back"),
+            # The description is of the route walked from here to there; `description_back` the other way.
+            "walked_from": (route.get("walked") or {}).get("from"), "walked_to": (route.get("walked") or {}).get("to"),
             "from": ends[0] if ends else None, "to": ends[-1] if len(ends) > 1 else None,
             "round_trip": bool(route["round_trip"]),
             "maintained_by": "; ".join(route["maintained_by"]),

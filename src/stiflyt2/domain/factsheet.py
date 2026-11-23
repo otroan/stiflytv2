@@ -291,6 +291,7 @@ def of_route(conn, route_id: str) -> dict:
                   "maintained_by": route["maintained_by"],
                   "done": route["reviewed"], "discontinued": route["discontinued"],
                   "unpublished": route["unpublished"], "description": route["description"],
+                  "description_back": route.get("description_back"),
                   "utno_id": route["utno_id"]},
         "order": ("walked from its first end to its last" if route["shape"] in ("line", "loop") else
                   f"the route is {route['shape']}, not one line: the order below is the order its stretches are "

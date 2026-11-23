@@ -63,7 +63,7 @@ def _event(conn, author: str, type_: str, subject_id: str, payload: dict,
 def _route(conn, route_id: str, version: int | None = None) -> dict:
     found = _rows(conn, """SELECT id, code, code_provisional, name, status, version, reviewed,
                                   maintainers, grading, special_type, discontinued_since, discontinued_why,
-                                  description, unpublished_why, utno_id
+                                  description, description_back, unpublished_why, utno_id
                            FROM core.route WHERE id = %(id)s FOR UPDATE""", {"id": route_id})
     if not found or found[0]["status"] != "active":
         raise NotFound("no such route")
@@ -2590,8 +2590,12 @@ def grading_of(route: dict) -> tuple[str | None, str | None]:
 def update(conn, route_id: str, version: int, author: str, *, code: str | None = None,
            name: str | None = None, code_provisional: bool | None = None,
            maintainers: list[str] | None = None, everywhere: bool = False,
-           grading: str | None = None, description: str | None = None, utno_id: int | None = None) -> None:
+           grading: str | None = None, description: str | None = None, description_back: str | None = None,
+           utno_id: int | None = None) -> None:
     """Change what is said about the route as a whole: code, name, who maintains it, grading, description.
+
+    `description` describes the route the way it is walked (from its first end to its last), `description_back`
+    the other way.
 
     An empty name goes back to naming the route after the places at its ends.
     Who maintains it holds for every stretch that does not say otherwise; with
@@ -2624,6 +2628,11 @@ def update(conn, route_id: str, version: int, author: str, *, code: str | None =
         conn.execute("UPDATE core.route SET description = %s WHERE id = %s", (description.strip() or None, route_id))
         _event(conn, author, "route.described", route_id,
                {"from": route["description"], "to": description.strip() or None,
+                **({"taken_from": "ut.no"} if utno_id else {})})
+    if description_back is not None and (description_back.strip() or None) != route["description_back"]:
+        conn.execute("UPDATE core.route SET description_back = %s WHERE id = %s", (description_back.strip() or None, route_id))
+        _event(conn, author, "route.described", route_id,
+               {"way": "back", "from": route["description_back"], "to": description_back.strip() or None,
                 **({"taken_from": "ut.no"} if utno_id else {})})
     if code is not None and code.strip() != route["code"]:
         code = code.strip()
@@ -2738,7 +2747,7 @@ def _twigs(conn, route_id: str) -> list[dict]:
 def detail(conn, route_id: str) -> dict:
     found = _rows(conn, """SELECT id, code, code_provisional, name, version, reviewed,
                                   maintainers AS maintained_by, grading, special_type,
-                                  discontinued_since, discontinued_why, description, unpublished_why, utno_id
+                                  discontinued_since, discontinued_why, description, description_back, unpublished_why, utno_id
                            FROM core.route WHERE id = %(id)s AND status = 'active'""",
                   {"id": route_id})
     if not found:
@@ -2802,6 +2811,15 @@ def detail(conn, route_id: str) -> dict:
         FROM core.node n WHERE n.id = ANY(%(ids)s::uuid[])""", {"ids": list(graph["at"])})
     # Named after the places at its two ends, unless named by hand.
     route["generated_name"] = named_after(graph["shape"], [e["place"] for e in route["ends"]])
+    # Which end it is walked from: the first stretch's start and the last one's end, as its description goes.
+    way = conn.execute("""
+        SELECT (SELECT CASE WHEN l.reversed THEN v.b_node ELSE v.a_node END FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+                JOIN core.edge_revision v ON v.id = e.current_revision_id WHERE l.route_id = %(r)s ORDER BY l.seq LIMIT 1)::text,
+               (SELECT CASE WHEN l.reversed THEN v.a_node ELSE v.b_node END FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+                JOIN core.edge_revision v ON v.id = e.current_revision_id WHERE l.route_id = %(r)s ORDER BY l.seq DESC LIMIT 1)::text""",
+        {"r": route_id}).fetchone()
+    names = {str(e["id"]): e["place"] for e in route["ends"]}
+    route["walked"] = {"from": names.get(way[0]) if way else None, "to": names.get(way[1]) if way else None}
     # For a route in pieces: the closest pair of loose ends between neighbouring pieces.
     at, gaps = graph["at"], []
     for i in range(len(graph["pieces"]) - 1):

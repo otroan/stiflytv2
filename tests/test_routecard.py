@@ -99,3 +99,27 @@ def test_with_none_of_our_own_the_card_gives_utnos_description_as_utnos(card, mo
     assert "From UT.no (ut.no/rutebeskrivelse/135600)" in page and "Steep up to the pass." in page
     monkeypatch.setattr(utno, "fetch", lambda number, http=None: (_ for _ in ()).throw(utno.Unavailable("down")))
     assert "None is written yet." in client.get(f"{V1}/routecard/{route}", params={"with": "description"}).text
+
+
+def test_a_route_is_described_each_way_and_the_card_gives_both_its_own_way_first(card):
+    from stiflyt2.domain import routes as domain_routes
+
+    client, _, route = card
+    with psycopg.connect(role_dsn("stiflyt2_api"), autocommit=True) as conn:
+        r = domain_routes.detail(conn, route)
+        assert set(r["walked"]) == {"from", "to"}
+        with conn.transaction():
+            domain_routes.update(conn, route, r["version"], AUTHOR, description="Up the valley.", description_back="Down the valley.")
+        r = domain_routes.detail(conn, route)
+        assert (r["description"], r["description_back"]) == ("Up the valley.", "Down the valley.")
+        said = conn.execute("""SELECT payload FROM history.event WHERE subject_id = %s AND type = 'route.described'
+                               ORDER BY seq DESC LIMIT 2""", (route,)).fetchall()
+        assert {p.get("way") for (p,) in said} == {"back", None}
+    page = client.get(f"{V1}/routecard/{route}", params={"with": "description"}).text
+    assert page.index("Up the valley.") < page.index("Down the valley.") and page.count('<h3 class="way">') == 2
+    # Taken back with the change it was made in, both ways at once.
+    with psycopg.connect(role_dsn("stiflyt2_api"), autocommit=True) as conn:
+        with conn.transaction():
+            routes_undo.undo(conn, AUTHOR)
+        r = domain_routes.detail(conn, route)
+        assert (r["description"], r["description_back"]) == (None, None)

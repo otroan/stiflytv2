@@ -52,6 +52,8 @@
   details.how > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   details.how[open] > summary { margin-bottom: 4px; }
   .said { background: #eef5ee; border-left: 3px solid #3d7a45; padding: 6px 10px; margin: 6px 0; }
+  .described { margin: 8px 0; } .described .said { background: none; border: 0; padding: 0; margin: 0; }
+  .described .way + .way { margin-top: 10px; } .described .way-name { font: 600 14px var(--tight); color: var(--sign); margin-bottom: 2px; }
   dialog#leave { border: 1.5px solid var(--sign); border-radius: 6px; padding: 16px 18px; max-width: 420px; font: inherit; color: var(--ink); }
   dialog#leave::backdrop { background: #0005; }
   footer details > summary { cursor: pointer; }
@@ -2318,8 +2320,10 @@ function renderOwnedRoute(route, problem, note) {
 
   const codeInput = el("input", { type: "text", value: route.code, "aria-label": "Code of the route", maxlength: 40, style: "width:9em" });
   const nameInput = el("input", { type: "text", value: route.name || "", placeholder: route.generated_name || "Named after its end places", "aria-label": "Name of the route", maxlength: 160 });
-  const aboutInput = el("textarea", { rows: 6, maxlength: 12000, "aria-label": "Description of the route", placeholder: "What the route is like: where it goes, what it asks of the one who walks it",
-    style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, route.description || "");
+  const [wayThere, wayBack] = waysOf(route.walked);
+  const box = (text, label) => el("textarea", { rows: 6, maxlength: 12000, "aria-label": `Description, ${label}`, placeholder: "What the route is like this way: where it goes, what it asks of the one who walks it",
+    style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, text || "");
+  const aboutInput = box(route.description, wayThere), aboutBack = box(route.description_back, wayBack);
   const said = route.maintained_by || [], apart = route.exceptions || [];
   const whoInput = el("input", { type: "text", value: said.join("; "), placeholder: "Who maintains it", "aria-label": "Who maintains the route", maxlength: 400 });
   const everywhere = el("input", { type: "checkbox" });
@@ -2327,13 +2331,14 @@ function renderOwnedRoute(route, problem, note) {
   const gradeInput = el("select", { "aria-label": "Grading", style: "width:auto" }, ...GRADES.map(([v, t]) => el("option", { value: v, selected: (route.grading || "") === v }, t)));
   const edit = el("form", { hidden: true, onsubmit: e => { e.preventDefault(); patch({ code: codeInput.value, name: nameInput.value,
       maintainers: whoInput.value.split(";").map(m => m.trim()).filter(Boolean), everywhere: everywhere.checked, grading: gradeInput.value,
-      description: aboutInput.value }); } },
+      description: aboutInput.value, description_back: aboutBack.value }); } },
     el("div", { class: "actions" }, codeInput, nameInput),
     el("div", { class: "sub" }, "The code must be unique among your routes. Leave the name empty to name the route after the places at its ends."),
     el("label", { class: "sub", style: "display:block;margin-top:8px" }, "Maintained by, for the whole route. Several are separated by a semicolon.", whoInput),
     apart.length ? el("label", { class: "sub", style: "display:block;margin:4px 0" }, everywhere, ` Also on the ${apart.length === 1 ? "stretch" : `${apart.length} stretches`} that say otherwise now`) : "",
     el("div", { class: "actions" }, gradeInput),
-    el("label", { class: "sub", style: "display:block;margin-top:8px" }, "Description", aboutInput),
+    el("label", { class: "sub", style: "display:block;margin-top:8px" }, `Description, ${wayThere}`, aboutInput),
+    el("label", { class: "sub", style: "display:block;margin-top:8px" }, `Description, ${wayBack}`, aboutBack),
     el("div", { class: "actions" }, el("button", { class: "btn main" }, "Save"),
       el("button", { class: "btn", type: "button", onclick: () => { edit.hidden = true; } }, "Cancel")));
 
@@ -2355,8 +2360,10 @@ function renderOwnedRoute(route, problem, note) {
     try { u = await get(`owned/routes/${route.id}/utno`, { address }); }
     catch (err) { if (utnoBox.isConnected) askUtno(err.message); return; }
     if (!utnoBox.isConnected) return;
-    const take = el("textarea", { rows: 10, maxlength: 12000, "aria-label": "The description to take",
-      style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, u.text);
+    const [thereWay, backWay] = waysOf(route.walked);
+    const takeBox = (text, way) => el("textarea", { rows: 8, maxlength: 12000, "aria-label": `The description to take, ${way}`,
+      style: "width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;resize:vertical" }, text || "");
+    const take = takeBox(u.this_way, thereWay), takeBack = takeBox(u.other_way, backWay), any = Boolean(u.this_way || u.other_way);
     const grading = [u.grading_there, u.grading_back].filter((g, i, all) => g && all.indexOf(g) === i).map(g => g.toLowerCase().replace(/_/g, " ")).join(" one way, ");
     utnoBox.replaceChildren(
       el("h2", { class: "next" }, "On UT.no"),
@@ -2369,11 +2376,13 @@ function renderOwnedRoute(route, problem, note) {
         grading ? el("dt", {}, "Grading") : "", grading ? el("dd", {}, `${grading}, in UT.no's words`) : "",
         u.changed ? el("dt", {}, "Changed") : "", u.changed ? el("dd", {}, new Date(u.changed).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) + (u.public ? "" : ". Not shown to the public there.")) : ""),
       u.notes ? el("p", { class: "sub", style: "white-space:pre-wrap" }, u.notes) : "",
-      u.text ? el("label", { class: "sub", style: "display:block;margin-top:6px" }, "The description, as it would be taken. Change it here first if you like.", take)
-        : el("div", { class: "sub" }, "UT.no has no description for it."),
-      u.text && route.description ? el("div", { class: "sub" }, "It takes the place of the description the route has now. Undo brings that one back.") : "",
+      any ? el("div", { class: "sub", style: "margin-top:6px" }, "UT.no describes it each way. As they would be taken; change them here first if you like.") : el("div", { class: "sub" }, "UT.no has no description for it."),
+      any && !u.ways_sure ? el("div", { class: "error", role: "alert" }, `UT.no's ends (${[u.from, u.to].filter(Boolean).join(", ") || "none named"}) do not say which of its two descriptions goes which way here: check before you take them.`) : "",
+      any ? el("label", { class: "sub", style: "display:block;margin-top:6px" }, thereWay, take) : "",
+      any ? el("label", { class: "sub", style: "display:block;margin-top:6px" }, backWay, takeBack) : "",
+      any && (route.description || route.description_back) ? el("div", { class: "sub" }, "They take the place of the descriptions the route has now. Undo brings those back.") : "",
       el("div", { class: "actions" },
-        u.text ? el("button", { class: "btn main", onclick: () => patch({ description: take.value, utno_id: u.number }) }, "Take it as the description") : "",
+        any ? el("button", { class: "btn main", onclick: () => patch({ description: take.value, description_back: takeBack.value, utno_id: u.number }) }, "Take them as the descriptions") : "",
         route.utno_id !== u.number ? el("button", { class: "btn", title: "Keeps which page on UT.no is this route's, and takes nothing from it", onclick: () => patch({ utno_id: u.number }) }, "Only remember the page") : "",
         el("button", { class: "btn", onclick: () => askUtno() }, "Another page"),
         el("button", { class: "btn", onclick: () => utnoBox.replaceChildren() }, "Close")));
@@ -2467,7 +2476,7 @@ function renderOwnedRoute(route, problem, note) {
       !route.reviewed ? el("button", { class: "btn main", title: "Says the route is right as it is now, saves what you have changed, and closes it", onclick: done }, "Done with this route") : "",
       el("button", { class: "btn", title: "Its name, code, who maintains it, its grading and its description", onclick: () => { edit.hidden = false; codeInput.focus(); codeInput.select(); } }, "Change name, code, grading…")) : "",
     edit, hands,
-    route.description ? el("p", { style: "margin:8px 0;white-space:pre-wrap" }, route.description) : "",
+    describedBoth(route),
     facts, profile, mapped,
     el("h2", { class: "next" }, "Shape"), el("div", {}, shape),
     gaps.length ? el("ul", {}, ...gaps) : "", ends, unnamed, more,

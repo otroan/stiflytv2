@@ -59,6 +59,20 @@ def site(monkeypatch):
     return site
 
 
+def test_utnos_two_descriptions_go_under_the_way_a_route_of_ours_is_walked():
+    page = {"from": "Turtagrø", "to": "Stølsdalen", "there": "Up from the hotel.", "back": "Down to the hotel."}
+    assert utno.ways(page, "Turtagrø hotell", "Stølsdalen") == {"there": "Up from the hotel.", "back": "Down to the hotel.", "sure": True, "turned": False}
+    # Ours is walked the other way: UT.no's back is our way, and its way our back.
+    assert utno.ways(page, "Stølsdalen", "Turtagrø hotell") == {"there": "Down to the hotel.", "back": "Up from the hotel.", "sure": True, "turned": True}
+    assert utno.ways({**page, "from": "Sota Sæter"}, "Sota sæter", None)["turned"] is False
+    # Spelt a little otherwise, or which of two it is: still the same place.
+    assert utno.ways({**page, "from": "Juvasshytta", "to": "Spiterstulen"}, "Spiterstulen", "Juvvasshytta")["turned"] is True
+    assert utno.ways({**page, "from": "Dørålseter", "to": "Grimsdalshytta"}, "Øvre Dørålseter", None)["turned"] is False
+    # Names that say nothing of it, or fit both ways (a round trip): UT.no's own order, and said to be unsure.
+    assert utno.ways(page, "Fondsbu", "Olavsbu")["sure"] is False
+    assert utno.ways({**page, "to": "Turtagrø"}, "Turtagrø hotell", "Turtagrø")["sure"] is False
+
+
 def test_a_route_is_searched_for_by_the_names_of_its_ends_in_a_web_search():
     from urllib.parse import unquote
 
@@ -130,7 +144,10 @@ def test_a_person_fetches_the_description_and_takes_it(loaded, site, monkeypatch
             says = client.get(f"{at}/utno", params={"address": "https://ut.no/rutebeskrivelse/13394424"}).json()
             assert says["number"] == 13394424 and says["text"].startswith("Barstadvik – Molladalen\n")
             assert says["same_code"] is False and says["ours"] == {
-                "code": "T-19", "length_m": route["length"]["on_foot_m"], "has_description": False, "utno_id": None}
+                "code": "T-19", "length_m": route["length"]["on_foot_m"], "has_description": False, "utno_id": None,
+                "walked": route["walked"]}
+            # Its two descriptions, each under one of our two ways; whether the names of the ends said which is which.
+            assert {says["this_way"], says["other_way"]} == {says["there"], says["back"]} and isinstance(says["ways_sure"], bool)
             assert client.get(at).json()["utno_id"] is None                     # looking changes nothing
 
             # Taken on the person's word: the text, and which page it was.

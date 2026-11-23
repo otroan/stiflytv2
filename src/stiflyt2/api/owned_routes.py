@@ -44,7 +44,8 @@ class Change(BaseModel):
     maintainers: list[Annotated[str, Field(max_length=120)]] | None = Field(None, max_length=10)
     everywhere: bool = False
     grading: Literal["", "G", "B", "R", "S", "I"] | None = None
-    description: str | None = Field(None, max_length=12000)
+    description: str | None = Field(None, max_length=12000)          # the way it is walked: from its first end to its last
+    description_back: str | None = Field(None, max_length=12000)     # the other way
     utno_id: int | None = Field(None, ge=0, le=10**12)      # the number of its page on UT.no; 0: it has none
 
 
@@ -186,9 +187,13 @@ def utno_says(route: dict, address: str | None) -> dict:
     found = utno.fetch(utno.number(address or route["utno_id"]))
     ours = {route["code"].lower(), *(s["code"].lower() for s in route["sources"] if s["code"]),
             *(e["value"].lower() for e in route["earlier"] if e["kind"] == "code")}
-    return {**found, "text": utno.described(found), "same_code": bool(found["code"]) and found["code"].lower() in ours,
-            "ours": {"code": route["code"], "length_m": route["length"]["on_foot_m"],
-                     "has_description": bool(route["description"]), "utno_id": route["utno_id"]}}
+    walked = route.get("walked") or {}
+    # UT.no's two descriptions under this route's two directions: `this_way` as it is walked, `other_way` back.
+    way = utno.ways(found, walked.get("from"), walked.get("to"))
+    return {**found, "text": utno.described(found), "this_way": way["there"], "other_way": way["back"],
+            "ways_sure": way["sure"], "same_code": bool(found["code"]) and found["code"].lower() in ours,
+            "ours": {"code": route["code"], "length_m": route["length"]["on_foot_m"], "walked": walked,
+                     "has_description": bool(route["description"] or route.get("description_back")), "utno_id": route["utno_id"]}}
 
 
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
@@ -728,7 +733,7 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             routes.update(conn, route_id, body.version, author, code=body.code, name=body.name,
                           code_provisional=body.code_provisional, maintainers=body.maintainers,
                           everywhere=body.everywhere, grading=body.grading, description=body.description,
-                          utno_id=body.utno_id)
+                          description_back=body.description_back, utno_id=body.utno_id)
             return routes.detail(conn, route_id)
 
     @app.patch(f"{V1}/{{route_id}}/legs/{{edge_id}}")
