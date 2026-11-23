@@ -62,9 +62,17 @@ const open = async address => { await send("Page.navigate", { url: new URL(addre
 await send("Runtime.enable"); await send("Page.enable"); await send("Network.enable");
 await send("Fetch.enable", { patterns: [{ urlPattern: `${HOME}*` }] });
 
-// The front page: the areas come first.
+// The front page: the areas come first; for one whose profile names areas, the first of them, and the areas a step back.
 await open("");
+await until(`typeof me !== "undefined" && me.name !== undefined && (document.querySelectorAll("#panel li.hit.area").length > 0 || Boolean(area))`, 30);
+const profiled = await js(`Boolean(me.profile && me.profile.areas.length)`);
+if (profiled) {
+  check("the front page opens with the first of one's areas", await until(`area === me.profile.areas[0]`, 20), await js("location.search"));
+  await js(`visit({ area: null, route: null, site: null })`);
+}
 check("the front page lists the areas", await until(`document.querySelectorAll("#panel li.hit.area").length > 0`), await text("#panel"));
+// The photos on the map are out of the way of the clicks on routes and sign sites, until the photos are tried.
+await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = false; drawPhotos(); } })()`);
 check("routes is the part that is open, and the basket is out of the way", await js(`document.getElementById("tab-routes").getAttribute("aria-current") === "page" && getComputedStyle(document.getElementById("basket")).display === "none"`));
 check("the routes are on the map", await until(`Boolean(lines) && lines.features.length > 0 && styled`));
 
@@ -122,10 +130,12 @@ await js("history.back()");
 check("the browser's back goes back to the area", await until(`route === null && document.querySelectorAll("#panel dl.facts dt").length >= 4`), await js("location.search"));
 
 // A click on a route on the map.
-const alone = await onMap(`(() => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1); if (!f) return null; map.jumpTo({ center: f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)], zoom: 13 }); return f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; })()`);
+const alone = await onMap(`(() => { const f = lines.features.filter(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1)
+  .sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0]; if (!f) return null; map.jumpTo({ center: f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)], zoom: 13 }); return f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; })()`);
 if (alone) {
   await sleep(1500);
   const again = await onMap(`map.getCenter().toArray()`);
+  await sleep(300);
   await mouse("mouseMoved", again.x + 2, again.y); await mouse("mouseMoved", again.x, again.y);
   check("pointing at a route on the map says which, how long it is, and what the stretch is", await until(`Boolean(document.querySelector(".map-tip"))
     && /\\d km/.test(document.querySelector(".map-tip").textContent) && /This stretch: /.test(document.querySelector(".map-tip").textContent)`, 5), await text(".map-tip"));
@@ -250,6 +260,7 @@ if (await js(`hasIssues()`)) {
 } else check("the issues tab is not there for one who does not have the feature", await js(`document.getElementById("tab-issues").hidden`));
 
 // Photos (the feature `photos`): one made in the page, with nothing from a camera, waits to be placed; a click places it.
+await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = true; drawPhotos(); } })()`);
 if (await js(`hasPhotos()`)) {
   if (EDIT) {
     editing = true;
