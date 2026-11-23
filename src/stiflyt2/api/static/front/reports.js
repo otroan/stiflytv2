@@ -144,6 +144,46 @@ function renderReport(told) {
         covers: r.covers.filter(c => c.route).map(c => ({ route: c.route.id, code: c.route.code, name: (over && over.routes.find(x => x.id === c.route.id) || {}).name, whole: c.whole, parts: c.parts, lines: [] })), changedCovers: false }; render(); } }, "Change it…") : "",
       mayReport() ? el("button", { class: "btn quiet", title: "Undo brings it back", onclick: () => { if (confirm("Take this report away? Undo brings it back.")) reportChange(() => send("DELETE", `reports/${r.id}`)).then(ok => { if (ok) visit({ report: null }); }); } }, "Take it away") : ""));
 }
+// The days photos were taken, near the routes chosen or in the whole area, the latest first: the photos say which day it
+// was, and where one went. "It was this day" says the day and that its photos are of the report; with no route chosen
+// yet, it also chooses the routes they were taken near.
+let photoDaysFor = null, photoDays = null;
+function reportPhotoDays(d) {
+  if (!hasPhotos()) return "";
+  const routes = d.covers.map(c => c.route).join(","), key = `${area}|${routes}`;
+  if (photoDaysFor !== key) {
+    photoDaysFor = key; photoDays = null;
+    get("photos/days", { area, routes: routes || null }).then(l => { if (photoDaysFor === key) { photoDays = l; render(); } }).catch(() => { if (photoDaysFor === key) { photoDays = []; render(); } });
+  }
+  if (!photoDays) return el("div", { class: "field sub" }, "Looking for photos from there…");
+  if (!photoDays.length) return el("div", { class: "field sub" }, d.covers.length ? "No photos were taken near these routes." : "No photos with a day and a place from this area.");
+  const shown = photoDays.slice(0, d.allDays ? 80 : 6);
+  return el("div", { class: "field photo-days" }, d.covers.length ? "Days with photos near these routes" : "Days with photos here: which day was it?",
+    ...shown.map(day => {
+      const chosen = d.photoDay === String(day.day);
+      return el("div", { class: `photo-day${chosen ? " chosen" : ""}` },
+        el("div", {}, el("strong", {}, dayIs(String(day.day))), ` ${day.photos.length} ${day.photos.length === 1 ? "photo" : "photos"}`,
+          day.routes.length ? el("span", { class: "sub" }, `, near ${day.routes.slice(0, 5).map(r => r.code).join(", ")}${day.routes.length > 5 ? "…" : ""}`) : "", " ",
+          chosen ? el("span", { class: "tag" }, "this day") : el("button", { class: "btn", type: "button", onclick: () => chooseDay(d, day) }, "It was this day")),
+        photoRow(day.photos.slice(0, 8)),
+        day.photos.length > 8 ? el("button", { class: "link", type: "button", onclick: () => showPhoto(day.photos, 8) }, `and ${day.photos.length - 8} more`) : "");
+    }),
+    photoDays.length > shown.length ? el("button", { class: "link", type: "button", onclick: () => { d.allDays = true; render(); } }, `Earlier days (${photoDays.length - shown.length})`) : "",
+    d.photos && d.photos.length ? el("label", { style: "display:block;margin-top:6px" }, el("input", { type: "checkbox", checked: d.attach ? "" : false, onchange: e => { d.attach = e.target.checked; } }),
+      ` The ${d.photos.length} ${d.photos.length === 1 ? "photo" : "photos"} of that day are of this report`) : "");
+}
+function chooseDay(d, day) {
+  d.done_on = String(day.day); d.year_only = false; d.photoDay = String(day.day);
+  d.photos = day.photos.map(p => p.id); d.attach = true;
+  if (!d.covers.length) {
+    for (const r of day.routes) {
+      const ours = over && over.routes.find(x => x.id === r.id);
+      d.covers.push({ route: r.id, code: r.code, name: ours ? ours.name : "", whole: true, parts: [], lines: [] });
+    }
+    d.changedCovers = true;
+  }
+  render();
+}
 // Saying what was done: the day, where (whole routes, or parts by two clicks or in km), and what was found or done.
 function reportForm() {
   const d = reportAsk, today = localDay();
@@ -178,6 +218,7 @@ function reportForm() {
                    hours: d.kind === "work" && d.hours !== "" ? Number(d.hours) : null, done: d.kind === "work" ? d.done : [] };
     if (!d.id || d.changedCovers) body.covers = d.covers.map(c => c.whole ? { route: c.route } : { route: c.route, parts: c.parts.map(p => ({ from_m: p.from_m, to_m: p.to_m })) });
     if (!d.id) body.closes = d.closes;
+    if (d.attach && d.photos && d.photos.length) body.photos = d.photos;
     let made = null;
     const ok = await reportChange(async () => { made = d.id ? await send("PATCH", `reports/${d.id}`, body) : await send("POST", "reports", body); });
     if (!ok) { render(); return; }
@@ -189,6 +230,7 @@ function reportForm() {
     field("What it is", kind),
     el("label", { class: "field" }, d.year_only ? "The year it was done" : "The day it was done", el("div", {}, day, yearOnly)),
     el("div", { class: "field" }, "Where", covers, onRoutes.length ? add : ""),
+    reportPhotoDays(d),
     d.kind === "inspection" ? el("div", { class: "field" }, "The state found ", ...Object.entries(CONDITION_WORDS).map(([k, says]) => el("label", { style: "margin-right:10px" },
       el("input", { type: "radio", name: "condition", checked: d.condition === k ? "" : false, onchange: () => { d.condition = k; } }), ` ${says}`))) : "",
     d.kind === "work" ? el("div", { class: "field" }, "People ", el("input", { type: "number", min: 0, step: 1, style: "width:4.5em", value: d.persons, oninput: e => { d.persons = e.target.value; } }),

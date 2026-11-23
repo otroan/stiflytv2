@@ -106,11 +106,18 @@ def test_a_report_says_issues_are_done_follows_the_routes_and_can_be_taken_back(
     birch = act(conn, lambda: issues.report(conn, AUTHOR, route=route, kind="clearing", text="Birch", spot={"m": 200}))
     made = act(conn, lambda: reports.report(conn, AUTHOR, kind="work", done_on=TODAY, covers=[{"route": route}], closes=[birch["id"]]))
     assert issues.one(conn, birch["id"])["state"] == "done" and [c["id"] for c in reports.one(conn, made["id"])["closed"]] == [birch["id"]]
-    # Photos of it.
+    # Photos of it: added with it, or said to be of it, as from the day they were taken.
     buf = io.BytesIO()
     Image.new("RGB", (200, 150), (9, 99, 9)).save(buf, "JPEG")
     shot = act(conn, lambda: photos.add(conn, AUTHOR, buf.getvalue(), report=made["id"]))
     assert [p["id"] for p in photos.listing(conn, report=made["id"])] == [shot["id"]] and shot["area"] == "bre"
+    later = io.BytesIO()
+    Image.new("RGB", (200, 150), (99, 9, 9)).save(later, "JPEG")
+    loose = act(conn, lambda: photos.add(conn, AUTHOR, later.getvalue(), area="bre"))
+    second = act(conn, lambda: reports.report(conn, AUTHOR, kind="note", done_on=TODAY, covers=[{"route": route}], photos=[loose["id"], shot["id"]]))
+    # Only a photo of no report yet is said to be of this one.
+    assert [p["id"] for p in photos.listing(conn, report=second["id"])] == [loose["id"]]
+    act(conn, lambda: reports.take_away(conn, AUTHOR, second["id"]))
 
     # A stretch it covered is divided: both parts are still covered, and the route is still all done.
     edge = conn.execute("SELECT edge_id::text FROM core.route_leg WHERE route_id = %s ORDER BY seq LIMIT 1", (route,)).fetchone()[0]

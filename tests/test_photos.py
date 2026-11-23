@@ -132,6 +132,20 @@ def test_a_photo_with_no_position_waits_to_be_placed_and_can_show_an_issue(conn)
     assert [x["id"] for x in photos.listing(conn, entry=issue["id"])] == [q["id"]]
 
 
+def test_the_days_photos_were_taken_say_where_one_went(conn):
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    other = act(conn, lambda: routes.make(conn, candidate(conn, "bre19"), AUTHOR))
+    near = on_route(conn, route)
+    for i, taken in enumerate(("2025:07:14 10:00:00", "2025:07:14 15:30:00", "2024:08:02 12:00:00")):
+        act(conn, lambda i=i, taken=taken: photos.add(conn, AUTHOR, jpeg(near, colour=(i, 50, 50), taken=taken)))
+    told = photos.days(conn, "bre")
+    assert [(str(d["day"]), len(d["photos"])) for d in told] == [("2025-07-14", 2), ("2024-08-02", 1)]
+    assert route in [r["id"] for r in told[0]["routes"]] and told[0]["routes"][0]["photos"] == 2
+    # Near some routes only: those near one of them.
+    assert len(photos.days(conn, "bre", [route])) == 2
+    assert all(other in [r["id"] for r in d["routes"]] for d in photos.days(conn, "bre", [other]))
+
+
 def test_a_photo_taken_away_comes_back_with_undo(conn):
     p = act(conn, lambda: photos.add(conn, AUTHOR, jpeg(colour=(200, 10, 10))))
     act(conn, lambda: photos.take_away(conn, AUTHOR, p["id"]))

@@ -177,6 +177,10 @@ dialog#photo::backdrop { background: rgba(18, 26, 32, .72); }
 .age-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; flex: none; align-self: center; }
 .since-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
 .since-legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: 3px; margin-right: 4px; }
+.photo-days .photo-day { margin-top: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); }
+.photo-days .photo-day.chosen { border-color: #3949ab; background: #eef0fb; }
+.photo-days .photo-row { margin: 4px 0 0; }
+.photo-days .photo-thumb img { width: 56px; height: 56px; }
 ol.covers { margin: 4px 0; padding-left: 20px; color: var(--ink); }
 ol.covers li { margin-bottom: 6px; }
 .photo-drop { margin: 6px 0 10px; padding: 14px 12px; border: 2px dashed #b4bec6; border-radius: 6px; text-align: center; background: #fafbfc; }

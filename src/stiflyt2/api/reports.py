@@ -49,6 +49,7 @@ class Report(BaseModel):
     done: list[Done] = []
     link: str | None = Field(None, max_length=1000)
     closes: Annotated[list[Annotated[str, Field(max_length=40)]], Field(max_length=200)] = []
+    photos: Annotated[list[Annotated[str, Field(max_length=40)]], Field(max_length=1000)] = []    # photos of it
 
 
 class Chosen(BaseModel):
@@ -71,6 +72,7 @@ class Change(BaseModel):
     hours: float | None = Field(None, ge=0, lt=100000)
     done: list[Done] | None = None
     link: str | None = Field(None, max_length=1000)
+    photos: Annotated[list[Annotated[str, Field(max_length=40)]], Field(max_length=1000)] | None = None
 
 
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:

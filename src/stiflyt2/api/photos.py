@@ -63,6 +63,13 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                 conn, author, data, lon=lon, lat=lat, entry=entry, caption=caption, area=area, origin=origin or "upload",
                 report=report))
 
+    @app.get(f"{V1}/days")
+    def taken_on(_: May, area: Annotated[str, Query(pattern="^[A-Za-z]{3}$")],
+                 routes: Annotated[str | None, Query(max_length=2500)] = None) -> list[dict]:
+        """The days photos were taken in an area, or near some of its routes (ids, with commas): the latest first."""
+        with read.connection() as conn:
+            return photos.days(conn, area, [r for r in (routes or "").split(",") if r] or None)
+
     @app.get(f"{V1}/{{photo}}")
     def single(photo: Id, _: May) -> dict:
         with read.connection() as conn:

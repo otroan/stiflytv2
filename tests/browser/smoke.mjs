@@ -282,6 +282,7 @@ if (await js(`hasReports()`)) {
     await until(`Boolean(reportAsk) && Boolean(document.querySelector("form.entry-form select"))`, 10);
     await js(`(() => { const s = [...document.querySelectorAll("form.entry-form select")].find(x => x.getAttribute("aria-label") === "Add a route"); s.value = upkeep[0].id; s.dispatchEvent(new Event("change")); })()`);
     await until(`reportAsk.covers.length === 1`, 5);
+    check("the form shows the days photos were taken near the route, or says there are none", await until(`Boolean(photoDays) && /photos/i.test(document.querySelector("form.entry-form").textContent)`, 10), await text("form.entry-form .photo-days"));
     await js(`document.querySelector("form.entry-form input[name=condition]").click()`);
     await js(`(() => { const t = document.querySelector("form.entry-form textarea"); t.value = "Trial inspection"; t.dispatchEvent(new Event("input")); document.querySelector("form.entry-form").requestSubmit(); })()`);
     check("a report is made in the form, and opens", await until(`Boolean(reportOpen) && /Inspection/.test(document.querySelector("#panel h2").textContent) && /Trial inspection/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));

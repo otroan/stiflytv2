@@ -122,7 +122,7 @@ def _close(conn, author, report: str, entries: list[str]) -> list[str]:
 def report(conn, author, *, kind: str, done_on, covers: list[dict], text: str | None = None,
            condition: str | None = None, persons: int | None = None, hours: float | None = None,
            done: list[str] | None = None, link: str | None = None, closes: list[str] | None = None,
-           year_only: bool = False) -> dict:
+           year_only: bool = False, photos: list[str] | None = None) -> dict:
     """Report what was done on which day, on which routes: each `{"route": id}` for the whole of it, or with
     `"parts"` as issues have them. Issues it says are done (`closes`) are done, by this report."""
     said = _said(kind, done_on, condition, persons, hours, done, link, text, year_only)
@@ -134,9 +134,18 @@ def report(conn, author, *, kind: str, done_on, covers: list[dict], text: str | 
         {**said, "code": kept[0]["code"], "who": str(author)}).fetchone()[0]
     _keep_covers(conn, made, kept)
     closed = _close(conn, author, made, closes or [])
+    of_it = _of_it(conn, author, made, photos or [])
     _event(conn, author, "report", made, "report.added", {"kind": kind, "done_on": str(said["done_on"]),
-                                                          "routes": [k["code"] for k in kept], "closed": closed})
+                                                          "routes": [k["code"] for k in kept], "closed": closed, "photos": len(of_it)})
     return one(conn, made)
+
+
+def _of_it(conn, author, report: str, photos: list[str]) -> list[str]:
+    """Say these photos are of this report: those that are of none yet."""
+    ids = [p for p in dict.fromkeys(photos) if _uuid(p)]
+    return [i for (i,) in conn.execute("""UPDATE ops.photo SET report_id = %s::uuid, updated_at = now(), updated_by = %s
+                                          WHERE id = ANY(%s::uuid[]) AND report_id IS NULL RETURNING id::text""",
+                                       (report, str(author), ids))] if ids else []
 
 
 def _keep_covers(conn, report: str, kept: list[dict]) -> None:
@@ -160,6 +169,8 @@ def change(conn, author, report: str, said: dict) -> dict:
                 said.get("link", was["link"]), said.get("text", was["text"]), said.get("year_only", was["year_only"]))
     changed = [k for k, v in now.items() if v != was[k] and not (k == "hours" and v is not None and was[k] is not None
                                                                   and float(v) == float(was[k]))]
+    if said.get("photos") and _of_it(conn, author, report, said["photos"]):
+        changed.append("photos")
     if "covers" in said:
         kept = _covers(conn, said["covers"])
         conn.execute("DELETE FROM ops.report_part WHERE report_id = %s::uuid", (report,))

@@ -250,6 +250,33 @@ def listing(conn, area: str | None = None, route: str | None = None, entry: str 
     return _rows(conn, sql, params)
 
 
+def days(conn, area: str, routes: list[str] | None = None) -> list[dict]:
+    """The days photos were taken in an area, or near some of its routes, the latest first: for one who reports what
+    was done, the photos say which day it was and where they went. Each day with its photos and the routes they were
+    taken near (within 75 m), those with most photos first."""
+    for r in routes or []:
+        if not _uuid(r):
+            raise NotFound("no such route")
+    found = _rows(conn, _SHOWN.replace("FROM ops.photo p", """,
+               ARRAY(SELECT DISTINCT r.id::text || ' ' || r.code FROM core.route_leg l
+                     JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                     JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
+                     WHERE ST_DWithin(v.geom, p.geom, %(near)s) AND lower(left(r.code, 3)) = %(area)s) AS near
+        FROM ops.photo p""") + " WHERE p.area = %(area)s AND p.taken_at IS NOT NULL AND p.geom IS NOT NULL ORDER BY p.taken_at",
+                  {"area": area.lower(), "near": NEAR_ROUTE_M})
+    told: dict = {}
+    for p in found:
+        near = [tuple(x.split(" ", 1)) for x in p.pop("near")]
+        if routes and not any(rid in routes for rid, _ in near):
+            continue
+        day = told.setdefault(p["taken_at"].date(), {"day": p["taken_at"].date(), "photos": [], "routes": {}})
+        day["photos"].append(p)
+        for rid, code in near:
+            day["routes"].setdefault(rid, {"id": rid, "code": code, "photos": 0})["photos"] += 1
+    return [{**d, "routes": sorted(d["routes"].values(), key=lambda r: (-r["photos"], len(r["code"]), r["code"]))}
+            for d in sorted(told.values(), key=lambda d: d["day"], reverse=True)]
+
+
 def one(conn, photo: str) -> dict:
     found = _rows(conn, _SHOWN + " WHERE p.id = %(p)s::uuid", {"p": photo}) if _uuid(photo) else []
     if not found:
