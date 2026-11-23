@@ -3,6 +3,7 @@ const empty = { type: "FeatureCollection", features: [] };
 const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
 const NOTICE_RED = "#c62828", ISSUE_AMBER = "#ef8f00", ISSUE_DONE = "#9aa5ad";     // an issue: a notice to walkers, work, done
 const PHOTO_BLUE = "#3949ab";   // where a photo was taken
+const OWNED_PURPLE = "#7b3fa0"; // a property: its parcel, and where a route crosses it
 const OPEN_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6];      // the open route
 const SINCE_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 6];     // how long since a stretch was done
 
@@ -13,7 +14,7 @@ const map = new maplibregl.Map({
     sources: {
       ...baseSources(),
       routes: { type: "geojson", data: empty }, sites: { type: "geojson", data: empty }, rays: { type: "geojson", data: empty },
-      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, since: { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
+      places: { type: "geojson", data: empty }, entries: { type: "geojson", data: empty }, "entry-lines": { type: "geojson", data: empty }, "entry-pick": { type: "geojson", data: empty }, since: { type: "geojson", data: empty }, owned: { type: "geojson", data: empty }, photos: { type: "geojson", data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 17 },
     },
     layers: [
       ...baseLayers(),
@@ -25,6 +26,9 @@ const map = new maplibregl.Map({
       // The parts of an issue while they are chosen: the same band, stronger.
       { id: "entry-pick", type: "line", source: "entry-pick", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ISSUE_AMBER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 6, 15, 16], "line-opacity": 0.7 } },
+      // A property (the feature `landowners`): the parcel clicked, under the routes.
+      { id: "owned-fill", type: "fill", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "fill-color": OWNED_PURPLE, "fill-opacity": 0.12 } },
+      { id: "owned-edge", type: "line", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "line-color": OWNED_PURPLE, "line-width": 2 } },
       // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
       { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
       { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
@@ -36,6 +40,9 @@ const map = new maplibregl.Map({
         paint: { "line-color": css("--sign"), "line-width": OPEN_WIDTH } },
       { id: "route-open-ice", type: "line", source: "routes", filter: ["in", "|none|", ["get", "ids"]], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 15, 8], "line-dasharray": [0, 1.8] } },
+      // Where the route open crosses the property pointed at in its list.
+      { id: "owned-along", type: "line", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]], layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": OWNED_PURPLE, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 4, 15, 9], "line-opacity": 0.85 } },
       { id: "places", type: "circle", source: "places", minzoom: 10, paint: { "circle-radius": 3, "circle-color": "#fff", "circle-stroke-color": css("--ink"), "circle-stroke-width": 1.5 } },
       { id: "place-names", type: "symbol", source: "places", minzoom: 12,
         layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top" },
@@ -159,6 +166,7 @@ map.on("click", e => {
   // Among the routes, the reports and the issues a click on one opens it there; where several run together, it asks which.
   const at = routesAt(e.point);
   if (several) { several.remove(); several = null; }
+  if (view === "landowners" && area && !at.length) { lookAt(e.lngLat); return; }      // off the routes: who owns it there
   if (!area && at.length) visit({ area: at[0].code.slice(0, 3).toLowerCase() });
   else if (at.length === 1) showRoute(at[0].code);
   else if (at.length > 1) several = new maplibregl.Popup({ closeButton: false, maxWidth: "300px" }).setLngLat(e.lngLat).setDOMContent(el("div", {},

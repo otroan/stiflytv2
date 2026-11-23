@@ -715,6 +715,9 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
         el("dd", { class: "sub", title: towns.map(m => `${m.name}: ${m.loaded ? "loaded" : "not loaded"}`).join("\n") },
           `NVDB, Kartverket: ${towns.length - lacking.length} of ${towns.length} municipalities` + (lacking.length && lacking.length < towns.length ? `, not ${lacking.map(m => m.name).join(", ")}` : "")
           + (M.roads.checked ? `, checked ${day(M.roads.checked)}` : "")),
+        ...(M.properties ? (P => [el("dt", {}, "Properties"), state(P.length && P.every(m => m.loaded), !P.some(m => m.loaded)),
+          el("dd", { class: "sub", title: P.map(m => `${m.name}: ${m.loaded ? "loaded" : "not loaded"}`).join("\n") },
+            `Property map, Kartverket: ${P.filter(m => m.loaded).length} of ${P.length} municipalities` + (M.properties.checked ? `, checked ${day(M.properties.checked)}` : "") + ". For who owns the ground")])(M.properties.municipalities) : []),
         el("dt", {}, "OpenStreetMap"), state(M.osm.share >= 0.999, M.osm.share <= 0.001),
         el("dd", { class: "sub" }, `${cover(M.osm)}` + (M.osm.checked ? `, checked ${day(M.osm.checked)}` : "") + ". To compare with only")),
       whole ? "" : el("div", { class: "sub", style: "margin-top:4px" }, "Routes can only be laid on paths and roads that are loaded. On the server, ",

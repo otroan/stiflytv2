@@ -380,6 +380,37 @@ if (await js(`hasReports()`)) {
   await until(`view === "routes"`, 10);
 } else check("the reports part is not there for one who does not have the feature", await js(`document.getElementById("tab-reports").hidden`));
 
+// Who owns the ground (the feature `landowners`): a route's properties in order, and the property at a click on the map.
+// Who owns them is asked of the register only on the test viewer, which has no account for it: never of the real one.
+if (await js(`hasLandowners()`)) {
+  await clickOn(`document.getElementById("tab-landowners")`);
+  check("the owners tab lists the area's routes to open", await until(`view === "landowners" && document.querySelectorAll("#panel li.hit").length === over.routes.length
+    && /Landowners in/.test(document.querySelector("#panel h2").textContent)`, 15), await text("#panel h2"));
+  await clickOn(`document.querySelector("#panel li.hit")`);
+  check("a route opens among the owners, with the properties it crosses first", await until(`view === "landowners" && Boolean(route)
+    && document.querySelector("#panel h2.next").textContent === "Landowners" && ownedAlong && Boolean(ownedAlong.found)
+    && /along its .* km, in the order it crosses them/.test(document.getElementById("panel").textContent)`, 20), await text("#panel"));
+  if (await js(`ownedAlong.found.properties.length > 0`)) {
+    await mouse("mouseMoved", ...Object.values(await centre(`document.querySelector("#panel .owned-along li.hit")`)));
+    check("pointing at a property lights up where the route crosses it", await until(`map.getSource("owned").serialize().data.features.some(f => f.geometry.type === "LineString")`, 5));
+  } else console.log("    (the route crosses no parcel here: pointing at one is not tried)");
+  await clickOn(`document.querySelector("#panel .backbar .btn")`);
+  await until(`view === "landowners" && route === null`, 10);
+  // A click off the routes: the property there, or that none is known there.
+  const off = await js(`(() => { const c = map.getCenter(); for (let dx = 0; dx < 400; dx += 40) for (const sx of [1, -1]) {
+      const p = map.project(c); p.x += sx * dx; p.y += 60; if (!routesAt(p).length) { const r = document.getElementById("map").getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + p.x), y: Math.round(r.top + p.y) }); } } return "null"; })()`);
+  await click(JSON.parse(off));
+  check("a click off the routes asks what property lies there, and says it in a box on the map", await until(`Boolean(ownedAt) && (Boolean(ownedAt.found) || Boolean(ownedAt.problem))
+    && Boolean(document.querySelector(".owned-box")) && !/Looking it up/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));
+  if (!TOKEN && await js(`Boolean(ownedAt.found && ownedAt.found.units.some(u => u.id))`)) {
+    await clickOn(`[...document.querySelectorAll(".owned-box button")].find(b => b.textContent === "Who owns it")`);
+    check("with no account for the register, asking who owns it says so", await until(`/no account for Kartverket's property register/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));
+  }
+  await js(`ownedPopup.remove()`);
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("the owners tab is not there for one who does not have the feature", await js(`document.getElementById("tab-landowners").hidden`));
+
 // The role switch: one who may change things looks at the pages as a reader, and is one to the server too.
 if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   const holds = await js("me.role"), where = await js("area");

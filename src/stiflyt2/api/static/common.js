@@ -47,7 +47,11 @@ async function get(path, params = {}) {
   for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined) url.searchParams.set(k, v);
   const r = await fetch(url, { headers: THROUGH });
   if (r.status === 401) signIn();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  if (!r.ok) {         // what the service says, where it says something in words
+    let message = `${r.status} ${r.statusText}`;
+    try { const d = (await r.json()).detail; if (typeof d === "string") message = d; } catch {}
+    throw new Error(message);
+  }
   return r.json();
 }
 // A change. `more` is further request headers. A page that keeps track of what others do says so in

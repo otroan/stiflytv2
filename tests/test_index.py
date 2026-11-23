@@ -196,11 +196,14 @@ def test_an_area_says_what_map_data_it_rests_on(loaded):
         assert 0 < found["paths"]["share"] <= 1 and found["paths"]["fetched"] is not None
         assert {"no": "4644", "name": "Luster", "loaded": True} in found["roads"]["municipalities"]
         assert found["roads"]["fetched"] is not None and 0 <= found["osm"]["share"] <= 1
+        # The property map too, per municipality: the fixture's is Luster's.
+        assert {"no": "4644", "name": "Luster", "loaded": True} in found["properties"]["municipalities"]
+        assert found["properties"]["fetched"] is not None
         x0, y0, x1, y1 = mapdata.box(conn, "bre")
         assert x0 % 1000 == y0 % 1000 == 0 and x1 - x0 > 4000 and y1 - y0 > 4000
         assert mapdata.box(conn, "xyz") is None
         # An area nothing has been fetched for says so.
         nothing = {"share": 0.0, "fetched": None, "checked": None}
         assert mapdata.status(conn, "xyz") == {"paths": nothing, "osm": nothing, "roads": {
-            "municipalities": [], "fetched": None, "checked": None}}
+            "municipalities": [], "fetched": None, "checked": None}, "properties": {"municipalities": [], "fetched": None, "checked": None}}
         assert found["paths"]["checked"] is not None

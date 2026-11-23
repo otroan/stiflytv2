@@ -120,11 +120,12 @@ function leaveRoute() { visit({ route: null, entry: routeFrom && routeFrom.entry
 function backFromRoute() {
   const AREA = area.toUpperCase();
   return routeFrom && routeFrom.report ? "‹ The report" : routeFrom && routeFrom.entry ? "‹ The issue"
-    : view === "reports" ? `‹ Reports in ${AREA}` : view === "issues" ? `‹ Issues in ${AREA}` : `‹ ${AREA}`;
+    : view === "reports" ? `‹ Reports in ${AREA}` : view === "issues" ? `‹ Issues in ${AREA}` : view === "landowners" ? `‹ Landowners in ${AREA}` : `‹ ${AREA}`;
 }
 // The routes ‹ and › go through: the list of the part one is in, in its order. Issues have no list of routes.
 function routeSteps() {
   if (view === "reports") { const { rows, others } = upkeepListed(); return others.some(x => x.code === route) ? others : rows; }
+  if (view === "landowners") return over ? over.routes.slice().sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true })) : [];
   return view === "routes" ? routesListed() : [];
 }
 function renderRoute() {
@@ -142,7 +143,8 @@ function renderRoute() {
   }
   const D = shownRoute.detail, H = shownRoute.height, profile = el("div", { class: "profile" });
   // What the part one is in says of the route comes first: its reports among the reports, its issues among the issues.
-  const own = { issues: hasIssues() ? routeIssues(r) : [], reports: hasReports() ? routeUpkeep(r) : [] };
+  const own = { issues: hasIssues() ? routeIssues(r) : [], reports: hasReports() ? routeUpkeep(r) : [],
+                landowners: view === "landowners" && hasLandowners() ? routeLandowners(r) : [] };
   leaveProfile();
   panel.replaceChildren(back,
     el("h2", {}, el("span", { class: "code" }, r.code), r.name || ""),

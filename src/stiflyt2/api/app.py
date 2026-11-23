@@ -22,6 +22,7 @@ from psycopg_pool import ConnectionPool
 from stiflyt2.api import auth as auth_api
 from stiflyt2.api import feedback as feedback_api
 from stiflyt2.api import issues as issues_api
+from stiflyt2.api import landowners as landowners_api
 from stiflyt2.api import lookup as lookup_api
 from stiflyt2.api import mcp as mcp_api
 from stiflyt2.api import owned_routes as routes_api
@@ -194,6 +195,7 @@ def create_app() -> FastAPI:
     issues_api.register(app, pool, writes)
     photos_api.register(app, pool, writes)
     reports_api.register(app, pool, writes)
+    landowners_api.register(app, pool, writes)
     profile_api.register(app, pool, writes)
     return app
 

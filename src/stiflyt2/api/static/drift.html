@@ -18,8 +18,8 @@
 <body>
 <div id="side">
   <header>
-    <h1>Stiflyt v2</h1>
-    <nav aria-label="Parts of Stiflyt"><a id="tab-routes" href="/">Routes</a><a id="tab-signs" href="/?view=signs">Signs</a><a id="tab-issues" href="/?view=issues" hidden>Issues</a><a id="tab-photos" href="/?view=photos" hidden>Photos</a><a id="tab-reports" href="/?view=reports" hidden>Reports</a><a id="tab-trips" href="/?view=trips" hidden>Trips</a><a class="away" href="/ruter" title="The route editor: where the routes are changed, their lines, places and what is said about them">Editor</a></nav>
+    <div class="top"><h1>Stiflyt v2</h1><a class="away" href="/ruter" title="The route editor: where the routes are changed, their lines, places and what is said about them">Route editor ›</a></div>
+    <nav aria-label="Parts of Stiflyt"><a id="tab-routes" href="/">Routes</a><a id="tab-signs" href="/?view=signs">Signs</a><a id="tab-issues" href="/?view=issues" hidden>Issues</a><a id="tab-photos" href="/?view=photos" hidden>Photos</a><a id="tab-reports" href="/?view=reports" hidden>Reports</a><a id="tab-landowners" href="/?view=landowners" hidden title="Who owns the ground">Owners</a><a id="tab-trips" href="/?view=trips" hidden>Trips</a></nav>
   </header>
   <div id="scroll"><section id="panel"><div class="sub">Loading…</div></section></div>
   <div id="undo" hidden></div>
@@ -43,6 +43,7 @@
 <script src="/static/front/issues.js"></script>
 <script src="/static/front/photos.js"></script>
 <script src="/static/front/reports.js"></script>
+<script src="/static/front/landowners.js"></script>
 <script src="/static/front/start.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 """Settings, read from environment variables prefixed STIFLYT2_ or a .env file."""
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +46,11 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
+    # Kartverket's Matrikkel API, for who owns a property (the feature `landowners`): an account granted DNT on
+    # application. The names v1 uses are read too.
+    matrikkel_username: str = Field("", validation_alias=AliasChoices("STIFLYT2_MATRIKKEL_USERNAME", "MATRIKKEL_USERNAME"))
+    matrikkel_password: str = Field("", validation_alias=AliasChoices("STIFLYT2_MATRIKKEL_PASSWORD", "MATRIKKEL_PASSWORD"))
+    matrikkel_url: str = "https://www.matrikkel.no/matrikkelapi/wsapi/v1"
 
 
 settings = Settings()

@@ -4,7 +4,7 @@ let view = "routes";             // what the side shows of the area: its routes,
 let route = null;                // the code of the route that is open: among the routes, or in a part that says something of it
 // A route opens in the part one is in, where that part has something of its own to say of it (its reports, its issues),
 // so that its list, its colours on the map and its back button stay that part's.
-const ROUTE_VIEWS = ["routes", "reports", "issues"];
+const ROUTE_VIEWS = ["routes", "reports", "issues", "landowners"];
 let routeFrom = null;            // the issue or the report the open route was opened from: where its back button goes
 let over = null;                 // the area as a whole: its routes, and what they add up to
 let overProblem = null, foundProblem = null;
@@ -26,11 +26,11 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: ["signs", "trips", "issues", "photos", "reports"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
+  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
 }
 function addressOf(at) {
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports"].includes(at.view) ? at.view : null,
+  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners"].includes(at.view) ? at.view : null,
       route: ROUTE_VIEWS.includes(at.view) && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
       issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
@@ -135,7 +135,7 @@ async function change(request) {
 }
 function render() {
   document.body.dataset.view = view;
-  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-trips", "trips"]]) {
+  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"]]) {
     const tab = document.getElementById(id);
     if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
     tab.href = addressOf({ view: is, area }).href;
@@ -147,6 +147,7 @@ function render() {
   else if (view === "issues") renderIssues();
   else if (view === "photos") renderPhotos();
   else if (view === "reports") renderReports();
+  else if (view === "landowners") renderLandowners();
   else if (!found) panel.replaceChildren(foundProblem ? el("div", { class: "error" }, `Could not get the signs: ${foundProblem}`) : el("div", { class: "sub" }, "Working out the signs…"));
   else if (lookingAtAdrift && !open) renderAdrift();
   else { const site = open && found.sites.find(s => s.key === open); if (site) renderSite(site); else renderList(); }
@@ -158,6 +159,7 @@ function render() {
   drawIssues();
   drawPhotos();
   drawReports();
+  drawLandowners();
   const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

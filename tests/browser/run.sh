@@ -26,13 +26,15 @@ cd "$DIR" || exit 1
 pgrep -u "$USER" -f pytest >/dev/null && { echo "pytest is running: wait for it"; exit 1; }
 for pid in $(pgrep -u "$USER" -f "uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101"); do kill "$pid"; done
 conn=$(grep '^STIFLYT2_TEST_ROLE_CONN=' .env | cut -d= -f2- | tr -d "\"'")
-export STIFLYT2_API_DSN="dbname=stiflyt2_test user=stiflyt2_api $conn" STIFLYT2_EDITOR="Test Editor" STIFLYT2_GOOGLE_CLIENT_ID=""
+# No account for the property register: the walk-through asks it about nobody.
+export STIFLYT2_API_DSN="dbname=stiflyt2_test user=stiflyt2_api $conn" STIFLYT2_EDITOR="Test Editor" STIFLYT2_GOOGLE_CLIENT_ID="" \
+       STIFLYT2_MATRIKKEL_USERNAME="" STIFLYT2_MATRIKKEL_PASSWORD=""
 # The features that are given to nobody of themselves are switched on for all, in the test database, to be tried.
 .venv/bin/python -c "
 import psycopg
 with psycopg.connect(dbname='stiflyt2_test', autocommit=True) as c:
     c.execute('SET ROLE stiflyt2_owner')
-    for key in ('trips', 'presence', 'issues', 'photos', 'reports'):
+    for key in ('trips', 'presence', 'issues', 'photos', 'reports', 'landowners'):
         c.execute(\"INSERT INTO access.feature (key, state, by) VALUES (%s, 'all', 'the walk-through') ON CONFLICT (key) DO UPDATE SET state = 'all'\", (key,))
 "
 nohup .venv/bin/uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101 --app-dir src > /tmp/stiflyt2-test-viewer.log 2>&1 &

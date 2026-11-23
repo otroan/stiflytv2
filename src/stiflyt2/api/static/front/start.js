@@ -1,12 +1,12 @@
 // The front page starts: the browser's back, the tabs, Escape, and what the address asks for.
 window.addEventListener("popstate", () => arrive(here()));
-for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-trips", "trips"]])
+for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"]])
   document.getElementById(id).addEventListener("click", e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); visit({ view: is, route: null, site: null, entry: null, report: null }); });
 
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else undoLast(); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (route) leaveRoute(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (ownedAt) ownedPopup.remove(); else if (route) leaveRoute(); } });
 
 (async () => {
   try {
@@ -23,6 +23,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     document.getElementById("tab-issues").hidden = !hasIssues();
     document.getElementById("tab-photos").hidden = !hasPhotos();
     document.getElementById("tab-reports").hidden = !hasReports();
+    document.getElementById("tab-landowners").hidden = !hasLandowners();
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     document.getElementById("who").replaceChildren(me.name ? (me.operates ? `Signed in as ${me.name}. What you decide about signs is kept under that name. ` : `Signed in as ${me.name}, to look. Changing signs needs the operations role. `) : "Read-only. ", out);
     areas = await get("owned/areas");

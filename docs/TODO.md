@@ -77,6 +77,14 @@ step is still started on their word; the details of each are further down.
    2026-11-19): owners' names are personal data. v2 needs its own access to
    the cadastre set up by whoever has the agreement; v1's settings are not
    read.
+   *Built 2026-11-23* as the feature `landowners` (README, "Who owns the
+   ground"), with DNT's Matrikkel account put in v2's `.env` by the route
+   responsible: properties at a spot and along a route from the property map,
+   owners asked of the register when asked for and not kept, each lookup
+   kept in `ops.owner_lookup`, an Excel list per route. The property map
+   fetched for every municipality near our routes. Left: owners along a line
+   drawn by hand (v1 has it); several routes at once in one list (v1 has it);
+   letters to landowners.
 6. **A route planner**, in two forms (wanted 2026-11-19):
    - *For a walker*: a way from A to B anywhere in the country, preferring
      DNT's routes, by huts that are open and where the summer bridges are

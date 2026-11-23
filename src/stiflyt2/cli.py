@@ -125,13 +125,13 @@ def area(
     prefix: Annotated[str, typer.Argument(help="Area prefix, e.g. ron")],
     everything: Annotated[bool, typer.Option("--all", help="Fetch again what is already there too")] = False,
 ) -> None:
-    """The map data an area needs: mapped paths, roads for its municipalities, and OpenStreetMap.
+    """The map data an area needs: mapped paths, roads and properties for its municipalities, and OpenStreetMap.
 
     The area is where Turrutebasen's routes with that prefix lie, with 2 km to
     spare. What is already fetched for it is left alone unless --all is given.
     """
     from stiflyt2.domain import mapdata
-    from stiflyt2.importer.adapters import fkb_wfs, vegnett
+    from stiflyt2.importer.adapters import fkb_wfs, teig, vegnett
     from stiflyt2.importer.adapters import osm as osm_adapter
     from stiflyt2.index import build as index
 
@@ -156,6 +156,9 @@ def area(
     for m in have["roads"]["municipalities"]:
         if everything or not m["loaded"]:
             fetch(f"roads for {m['name']} ({m['no']}):", vegnett.run, m["no"])
+    for m in have["properties"]["municipalities"]:
+        if everything or not m["loaded"]:
+            fetch(f"property map for {m['name']} ({m['no']}):", teig.run, m["no"])
     if everything or have["osm"]["share"] < 0.999:
         fetch("OpenStreetMap:", osm_adapter.run, prefix.lower(), bbox)
     for b in index.build():

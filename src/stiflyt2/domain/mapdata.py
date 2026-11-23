@@ -1,6 +1,7 @@
-"""What map data an area has to lay its routes on: mapped paths, roads, and OpenStreetMap to compare with.
+"""What map data an area has to lay its routes on: mapped paths, roads, and OpenStreetMap to compare with;
+and the property map, for who owns the ground.
 
-Paths and OpenStreetMap are fetched per bounding box, roads per municipality.
+Paths and OpenStreetMap are fetched per bounding box, roads and properties per municipality.
 An area is a route code prefix; its extent is where Turrutebasen's routes with
 that prefix lie.
 """
@@ -70,9 +71,17 @@ def status(conn, area: str) -> dict:
                      "checked": _checked(conn, source, scopes) or fetched}
     loaded = dict(conn.execute("SELECT municipality_no, fetched_at FROM source_index.road_area")
                   ) if _has(conn, "road_area") else {}
-    needed = [{**m, "loaded": m["no"] in loaded} for m in municipalities(conn, area)]
+    towns = municipalities(conn, area)
+    needed = [{**m, "loaded": m["no"] in loaded} for m in towns]
     dates = [loaded[m["no"]] for m in needed if m["loaded"]]
     out["roads"] = {"municipalities": needed, "fetched": min(dates) if dates else None,
                     "checked": _checked(conn, "vegnett", [f"kommune:{m['no']}" for m in needed if m["loaded"]])
                     or (min(dates) if dates else None)}
+    parcels = {s.removeprefix("kommune:"): at for s, at in conn.execute(
+        "SELECT scope, activated_at FROM import_control.active_snapshot WHERE source_key = 'teig'")}
+    held = [{**m, "loaded": m["no"] in parcels} for m in towns]
+    when = [parcels[m["no"]] for m in held if m["loaded"]]
+    out["properties"] = {"municipalities": held, "fetched": min(when) if when else None,
+                         "checked": _checked(conn, "teig", [f"kommune:{m['no']}" for m in held if m["loaded"]])
+                         or (min(when) if when else None)}
     return out

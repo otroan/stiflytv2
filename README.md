@@ -1436,6 +1436,37 @@ Over the API: `GET /api/v1/reports?area=|route=`, `GET /api/v1/reports/status?ar
 `GET|POST /api/v1/reports/undo`. An assistant has `route_upkeep` and
 `report_work`.
 
+## Who owns the ground: a feature of its own
+
+With the feature `landowners`, which is in no role and is given to a person by
+name (`stiflyt2 access give <email> landowners`): owners' names and addresses
+are personal data. The part **Owners** lists an area's routes. A route opened
+there shows the properties it crosses, in the order it crosses them, with
+where along it (km) and how far; pointing at one lights up where the route
+crosses it. A click on the map off the routes says the property there, with
+its outline. Land and water the property map has no number for are said as
+such, and stretches that cross no parcel at all are said too.
+
+The properties come from Kartverket's property map (Matrikkelen Eiendomskart
+Teig, CC BY 4.0, imported per municipality: `stiflyt2 import area` fetches it
+for an area's municipalities, `stiflyt2 import teig <no>` for one). Who owns
+them is asked of Kartverket's Matrikkel API when asked for ("Who owns it",
+"Look up who owns them", the Excel list), with DNT's account
+(`STIFLYT2_MATRIKKEL_USERNAME` and `_PASSWORD`, or v1's names
+`MATRIKKEL_USERNAME` and `MATRIKKEL_PASSWORD`, in `.env`). What the register
+says is not kept; it is asked again after an hour. A private owner's national
+identity number, which the register sends, is never passed on, nor their home
+address: a person is their name and postal address, an organisation its name,
+organisation number and postal address, each with its share and role
+(registered owner, or the register's word for it). That the register was
+asked is kept, by whom, when, and of which units (`ops.owner_lookup`, import
+migration `0024`).
+
+Over the API: `GET /api/v1/landowners/at?lon=&lat=[&owners=true]`,
+`GET /api/v1/landowners/along?route=<id>[&owners=true]`,
+`GET /api/v1/landowners/along.xlsx?route=<id>`. No assistant tool: owners are
+looked up by a person in the page.
+
 ## Photos: a feature of its own
 
 Photos from the routes, for those who are signed in and have the feature
