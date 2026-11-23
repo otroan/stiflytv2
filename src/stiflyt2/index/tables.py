@@ -20,15 +20,17 @@ LENGTH = "ST_Length(ST_Transform({g}, 4326)::geography)::real"
 SIMPLE = "CASE WHEN ST_NumGeometries({g}) = 1 THEN ST_GeometryN({g}, 1) ELSE {g} END"
 
 
-def active(source: str, layer: str, *, scopes: bool = False) -> str:
+def active(source: str, layer: str, *, scopes: bool = False, prefer: str = "") -> str:
     """The features of a source layer in its active snapshot.
 
     scopes: the source is loaded as several scopes (municipalities, boxes) that
-    may hold the same feature; each feature is taken once, newest version first.
+    may hold the same feature; each feature is taken once, newest version first,
+    or first by `prefer` (SQL to order by, over a and fv) where the scopes do not
+    hold the same of it.
     """
     once, order = "", ""
     if scopes:
-        once, order = "DISTINCT ON (fv.external_id)", "ORDER BY fv.external_id, fv.id DESC"
+        once, order = "DISTINCT ON (fv.external_id)", f"ORDER BY fv.external_id, {prefer + ', ' if prefer else ''}fv.id DESC"
     return f"""(SELECT {once} fv.id AS version_id, fv.external_id, fv.properties AS p, fv.geom
                 FROM import_control.active_snapshot a
                 JOIN source_raw.snapshot_member m ON m.snapshot_id = a.snapshot_id
@@ -316,9 +318,14 @@ KULTURMINNER = Group(
     ),
 )
 
+# A municipality's delivery of the property map also has slivers of its neighbours' parcels along the border,
+# under the same ids (found 2026-11-23: Luster's state commons, 337 km², came as a sliver from Lom). A parcel is
+# taken as its own municipality delivers it; where that is not loaded, the largest piece there is.
+TEIG_OWN = "(a.scope = 'kommune:' || (fv.properties->>'kommunenummer')) DESC, ST_Area(fv.geom) DESC"
+
 TEIG = Group(
     source="teig",
-    version=1,
+    version=2,
     tables=("parcel",),
     statements=(
         f"""CREATE TABLE {BUILD}.parcel AS
@@ -333,7 +340,7 @@ TEIG = Group(
                                'type', u->'matrikkelenhetstype', 'name', u->'bruksnavn',
                                'id', u->'matrikkelenhetid')))
                     FROM jsonb_array_elements(s.p->'matrikkelenheter') u) AS units
-            FROM {active("teig", "teig", scopes=True)} s""",
+            FROM {active("teig", "teig", scopes=True, prefer=TEIG_OWN)} s""",
         f"ALTER TABLE {BUILD}.parcel ADD PRIMARY KEY (id)",
         f"CREATE INDEX ON {BUILD}.parcel USING gist (geom)",
     ),

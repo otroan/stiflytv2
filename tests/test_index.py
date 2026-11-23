@@ -207,3 +207,31 @@ def test_an_area_says_what_map_data_it_rests_on(loaded):
         assert mapdata.status(conn, "xyz") == {"paths": nothing, "osm": nothing, "roads": {
             "municipalities": [], "fetched": None, "checked": None}, "properties": {"municipalities": [], "fetched": None, "checked": None}}
         assert found["paths"]["checked"] is not None
+
+
+def test_a_parcel_is_taken_as_its_own_municipality_delivers_it(loaded, tmp_path):
+    """A neighbour's delivery has slivers of a municipality's parcels along the border, under the same ids, and may
+    come later: the parcel in the index is still the one its own municipality delivered."""
+    from stiflyt2.importer import core
+    from stiflyt2.importer.adapters import teig
+
+    with psycopg.connect(settings.import_dsn) as conn:
+        pid, area = conn.execute("""
+            SELECT fv.external_id, ST_Area(fv.geom) FROM import_control.active_snapshot a
+            JOIN source_raw.snapshot_member m ON m.snapshot_id = a.snapshot_id JOIN source_raw.feature_version fv ON fv.id = m.feature_version_id
+            WHERE a.source_key = 'teig' AND a.scope = 'kommune:4644' AND fv.layer = 'teig' ORDER BY ST_Area(fv.geom) DESC LIMIT 1""").fetchone()
+        # The neighbour (4651) delivers a sliver of it, as Luster's, with its other properties as they are.
+        conn.execute(f"""CREATE TABLE {core.STAGING}.teig_flate AS
+            SELECT fv.external_id AS teigid, ST_Multi(ST_Buffer(ST_PointOnSurface(fv.geom), 5)) AS geom, fv.properties AS props
+            FROM import_control.active_snapshot a JOIN source_raw.snapshot_member m ON m.snapshot_id = a.snapshot_id
+            JOIN source_raw.feature_version fv ON fv.id = m.feature_version_id
+            WHERE a.source_key = 'teig' AND a.scope = 'kommune:4644' AND fv.external_id = %s""", (pid,))
+        conn.commit()
+    try:
+        core.ingest(core.Delivery(source_key="teig", scope="kommune:4651", checksum=f"sliver-{pid}", artifact_path=tmp_path,
+                                  transform_version=teig.TRANSFORM, layers=teig.SPECS))
+    finally:
+        core.drop_staging(["teig_flate"])
+    build.build(only="teig")
+    with psycopg.connect(role_dsn("stiflyt2_api")) as conn:
+        assert conn.execute("SELECT ST_Area(geom) FROM source_index.parcel WHERE id = %s", (pid,)).fetchone()[0] == pytest.approx(area)
