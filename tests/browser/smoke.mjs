@@ -273,8 +273,8 @@ if (await js(`hasPhotos()`)) {
 // Reports (the feature `reports`): how long since each route was inspected, as a list and on the map; a report made in the form.
 if (await js(`hasReports()`)) {
   await clickOn(`document.getElementById("tab-reports")`);
-  check("the reports part lists the routes, those longest since first, with what the colours mean", await until(`view === "reports" && Array.isArray(upkeep)
-    && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
+  check("the reports part lists the routes, those longest since first, with what the colours mean, and others' routes apart", await until(`view === "reports" && Array.isArray(upkeep)
+    && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.filter(r => r.ours !== false).length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
   if (EDIT) {
     editing = true;
     const target = await js(`upkeep[0].code`);
