@@ -1326,6 +1326,19 @@ across country, it stays exactly where it was let go of, and the way goes to it
 and on across country, over the ground (straight, where the line was straight).
 The leg is then "as you have laid it" until it is given a way again.
 
+**Rivers.** Where the way crosses a river it says so, and how: by a bridge, by
+a ford on a path (OpenStreetMap's ford on the way or on a node of it), or
+wading across country, with the river's name, how far along, and a mark on the
+map where the line meets the river (import migration `0028`: 67,500 rivers,
+9,300 fords, 16,400 bridges over rivers). A ford counts as 200 m more; ticked to
+go round fords, it counts as 10 km, so that a bridge is taken where there is one
+and the ford is said to have no bridge near where there is none. Across country
+a stream is crossed anywhere; a river drawn as a line only when wading is
+ticked (each counting as a kilometre); a river drawn as an area, too wide,
+never. Whether a ford can be waded today, or a summer bridge is out, is not
+known. Where the lattice's steps go out to a point and straight back (from a
+junction to the point it is tied to), the spike is cut off.
+
 **Each leg** between two points of yours goes one of three ways, chosen under
 it: **along paths** and roads (and across country where there are none, when
 that is ticked), **across country** alone, over the lattice even where there

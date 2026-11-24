@@ -553,6 +553,7 @@ def test_fords_and_bridges_are_told_and_a_ford_can_be_gone_round(field_network, 
     over = planner.plan(conn, [FORD_W, FORD_E])
     assert [(c["how"], c["river"]) for c in over["crossings"]] == [("ford", "Vadelva")]
     assert over["coords"][over["crossings"][0]["at"]] == pytest.approx([7.15, 61.70], abs=0.006)
+    assert over["crossings"][0]["point"] == pytest.approx([7.15, 61.70], abs=1e-5)       # where the path meets the river
     # Fords gone round: by the bridge, though it is further.
     dry = planner.plan(conn, [FORD_W, FORD_E], planner.Options(fords=False))
     assert [(c["how"], c["river"]) for c in dry["crossings"]] == [("bridge", "Vadelva")]

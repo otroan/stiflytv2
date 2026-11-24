@@ -273,6 +273,11 @@ def _leg(conn, a: dict, b: dict, o: Options, ground: bool = False) -> list[dict]
             walked = cur.execute("""
                 SELECT r.path_seq, r.node, r.edge, e.kind, e.name, e.trail, e.dnt, e.ice, e.origin, e.sac, e.length_m,
                        e.crossing, e.river,
+                       -- Where it crosses the river: where the line meets the river's, where that is known.
+                       CASE WHEN e.crossing IS NOT NULL THEN
+                           (SELECT ST_AsGeoJSON(ST_Transform(ST_PointOnSurface(ST_Intersection(rv.geom, e.geom)), 4326), 6)::json
+                                       -> 'coordinates'
+                            FROM walk.river rv WHERE ST_Intersects(rv.geom, e.geom) LIMIT 1) END AS cross_point,
                        ST_AsGeoJSON(ST_Transform(CASE WHEN r.node = e.source THEN e.geom ELSE ST_Reverse(e.geom) END,
                                                  4326), 6)::json -> 'coordinates' AS coords
                 FROM pgr_aStar(%s, %s::bigint, %s::bigint, directed => false, heuristic => 4, factor => %s) r
@@ -474,7 +479,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                 start = len(coords) - 1 if coords else 0
                 add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
                 if w.get("crossing"):            # a ford, a bridge over a river, or a river waded across country
-                    crossings.append({"at": (start + len(coords) - 1) // 2, "how": w["crossing"], "river": w.get("river")})
+                    crossings.append(_crossing(w, start, len(coords) - 1))
             if snap[n + 1]:
                 moved[n + 1] = b["at"]
             elif b["off_m"] > OFF_M:
@@ -555,13 +560,24 @@ def _despike(line: list) -> list:
     return pts
 
 
+def _crossing(w: dict, start: int, end: int) -> dict:
+    """Where on the way a stretch crosses its river: at the point of the line nearest to where it meets the
+    river's line, where that is known; else half way along it."""
+    at, point = (start + end) // 2, w.get("cross_point")
+    if point and isinstance(point[0], (int, float)) and w["coords"]:
+        f = math.cos(math.radians(point[1]))
+        k = min(range(len(w["coords"])), key=lambda i: math.hypot((w["coords"][i][0] - point[0]) * f, w["coords"][i][1] - point[1]))
+        at = min(end, start + k)
+    return {"at": at, "how": w["crossing"], "river": w.get("river"), "point": point if point and isinstance(point[0], (int, float)) else None}
+
+
 def _crossings(found: list[dict]) -> list[dict]:
     """Where the way crosses a river, in order: one crossing once, though it is two stretches of a bridge."""
     out: list[dict] = []
     for c in sorted(found, key=lambda c: c["at"]):
         if out and out[-1]["how"] == c["how"] and out[-1]["river"] == c["river"] and c["at"] - out[-1]["at"] <= 10:
             continue
-        out.append({"at": c["at"], "how": c["how"], "river": c["river"]})
+        out.append({"at": c["at"], "how": c["how"], "river": c["river"], "point": c.get("point")})
     return out
 
 

@@ -331,6 +331,7 @@ function planCrossings() {
   return el("div", { class: "plan-crossings" }, el("strong", {}, "Over rivers: "),
     ...C.map((c, k) => el("span", { class: `crossing ${c.how}` }, `${k ? "; " : ""}${CROSSING[c.how]} ${c.river || (c.how === "bridge" ? "a river" : "a stream")}`,
       el("span", { class: "sub" }, ` at ${km(along[c.at] / 1000)}`))),
+    !planAsk.fords && C.some(c => c.how === "ford") ? el("div", { class: "sub" }, "A ford here could not be gone round: there is no bridge within some 10 km.") : "",
     C.some(c => c.how !== "bridge") ? el("div", { class: "sub" }, "Whether a ford or a river can be waded today, and whether a summer bridge is out, is not known here.") : "");
 }
 // The way between each two points of yours: its legs together (a dragged line cuts one into several).
@@ -488,7 +489,7 @@ function drawPlan() {
       properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.class === "field" || s.ice, leg: legOf(s) },
       geometry: { type: "LineString", coordinates: plan.coords.slice(s.at[0], s.at[1] + 1) } })) });
     map.getSource("plan-crossings").setData({ type: "FeatureCollection", features: (on && plan && !planStale ? plan.crossings || [] : []).map(c => ({ type: "Feature",
-      properties: { how: c.how }, geometry: { type: "Point", coordinates: plan.coords[c.at] } })) });
+      properties: { how: c.how }, geometry: { type: "Point", coordinates: c.point || plan.coords[c.at] } })) });
     const days = on && plan && planHeights ? planHeights.days.filter(d => !d.last) : [];
     map.getSource("plan-days").setData({ type: "FeatureCollection", features: days.map(d => ({ type: "Feature", properties: { day: String(d.day) },
       geometry: { type: "Point", coordinates: d.hut ? [d.hut.lon, d.hut.lat] : pointAlong(d.at_m) } })).filter(f => f.geometry.coordinates) });

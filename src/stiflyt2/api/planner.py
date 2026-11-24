@@ -52,6 +52,7 @@ class Crossing(BaseModel):
     at: int = Field(ge=0)
     how: Literal["ford", "bridge", "wade"]
     river: str | None = Field(None, max_length=300)
+    point: list[float] | None = Field(None, min_length=2, max_length=2)
 
 
 class Kept(BaseModel):
