@@ -160,6 +160,9 @@ map.on("click", e => {
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
   if (view === "planner") { if (!planIgnoreClick) planAt(e.lngLat); return; }      // anywhere: a point of the walk
   const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+  // Among the signs a site comes before the photos taken by it: they are there to be looked at beside it.
+  const site = view === "signs" && map.queryRenderedFeatures(box, { layers: ["sites"] })[0];
+  if (site) { openSite(site.properties.key); return; }
   const shown = map.getLayoutProperty("photos", "visibility") === "visible";
   const group = shown && map.queryRenderedFeatures(box, { layers: ["photo-groups"] })[0];
   if (group) { openGroup(group); return; }

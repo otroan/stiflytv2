@@ -234,6 +234,15 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("the line dragged aside makes a point it passes, on the nearest path, with no step out to it", await until(`planAsk.points.length === 3 && planAsk.snap[1] === true
     && Boolean(plan) && !planBusy && plan.legs.length === 2 && !plan.off.some(o => o.point === 1) && Boolean(plan.snapped["1"])`, 30),
     `${await js("planAsk.points.length")} ${JSON.stringify(grip)} ${await js(`JSON.stringify(map.queryRenderedFeatures([${grip.x}, ${grip.y}].map((v, k) => v - document.getElementById("map").getBoundingClientRect()[k ? "top" : "left"]), { layers: ["plan", "plan-dashed"] }).map(f => f.properties))`)} ${await text("#panel .error")}`);
+  // Across country, and up in the mountains: asked for in the form, and the way found anew with them.
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Across country/.test(l.textContent)).querySelector("input")`);
+  check("across country can be asked for", await until(`planAsk.across === true && Boolean(plan) && !planBusy && plan.options.across === true`, 60), await text("#panel .error"));
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Across country/.test(l.textContent)).querySelector("input")`);
+  await until(`planAsk.across === false && Boolean(plan) && !planBusy`, 60);
+  await js(`(() => { const r = [...document.querySelectorAll(".plan-prefer input")].find(i => /valleys/.test(i.getAttribute("aria-label"))); r.value = 60; r.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  check("and the mountains preferred to the valleys", await until(`planAsk.mountains === 0.6 && Boolean(plan) && !planBusy && plan.options.mountains === 0.6`, 60), await text("#panel .error"));
+  await js(`(() => { const r = [...document.querySelectorAll(".plan-prefer input")].find(i => /valleys/.test(i.getAttribute("aria-label"))); r.value = 0; r.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await until(`planAsk.mountains === 0 && Boolean(plan) && !planBusy`, 60);
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));
@@ -371,6 +380,21 @@ if (await js(`hasPhotos()`)) {
   check("the photo button hides the photos on the map, and says so", await until(`map.getLayoutProperty("photos", "visibility") === "none" && photoSwitch.getAttribute("aria-pressed") === "false" && localStorage.getItem("stiflyt2.photos") === "off"`, 5));
   await clickOn(`document.querySelector("button.photo-switch")`);
   check("and shows them again", await until(`map.getLayoutProperty("photos", "visibility") === "visible" && photoSwitch.getAttribute("aria-pressed") === "true"`, 5), pressed);
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+  // Among the signs too, to see which side of the path a post stands on; a click on a site still opens the site.
+  await clickOn(`document.getElementById("tab-signs")`);
+  check("the photos are on the map among the signs too, with the button that hides them", await until(`view === "signs" && photosFor === area && !photoControl.box.hidden
+    && map.getLayoutProperty("photos", "visibility") === (photosShown ? "visible" : "none")`, 15));
+  const siteAt = await onMap(`(() => { const s = found && found.sites.find(s => s.lon !== null && s.lon !== undefined); return s ? [s.lon, s.lat] : null; })()`);
+  if (siteAt) {
+    await js(`(() => { const s = found.sites.find(s => s.lon !== null && s.lon !== undefined); map.jumpTo({ center: [s.lon, s.lat], zoom: 16 }); })()`);
+    await until(`!map.isMoving() && map.loaded()`, 10);
+    const at = await onMap(`(() => { const s = found.sites.find(s => s.lon !== null && s.lon !== undefined); return [s.lon, s.lat]; })()`);
+    await click(at);
+    check("a click on a sign site among the photos opens the site", await until(`view === "signs" && Boolean(open) && !photoBox.open`, 10), await text("#panel h2"));
+    await js(`visit({ site: null })`);
+  }
   await clickOn(`document.getElementById("tab-routes")`);
   await until(`view === "routes"`, 10);
 } else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));
