@@ -1305,7 +1305,7 @@ and `start`, `hours`, `tent`, `over_ice`, `back_to_start`, `mapped`. An assistan
 
 A walk from anywhere in Norway to anywhere, on foot, along DNT's routes as
 much as you like. With the feature `planner` (`stiflyt2 access give
-you@example.org planner`), the front page has the part **Plan a walk**:
+you@example.org planner`), the front page has the part **Planner**:
 click the map where the walk begins, then where it ends; each click after
 that goes on further, so that the end before becomes a place passed on the
 way. Drag a letter to move it. A slider says how much DNT's marked routes are

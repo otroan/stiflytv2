@@ -37,7 +37,7 @@ header .tstone { flex: none; filter: drop-shadow(0 1px 1px #0004); }
 header h1 { color: #fff; font: 700 22px/1 var(--tight); letter-spacing: .02em; }
 header h1 small { font: 500 14px var(--tight); letter-spacing: 0; opacity: .78; margin-left: 2px; }
 h1 { font: 600 20px/1.1 var(--tight); margin: 0; }
-nav { display: flex; gap: 12px; margin-top: 8px; padding: 0 16px; font: 500 15px var(--tight); }
+nav { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; padding: 0 16px; font: 500 15px var(--tight); }
 nav a { color: var(--muted); text-decoration: none; padding-bottom: 2px; }
 nav a[aria-current] { color: var(--ink); border-bottom: 2px solid var(--band); }
 header a.away { margin-left: auto; font: 500 14px var(--tight); color: #fff; opacity: .88; text-decoration: none; }

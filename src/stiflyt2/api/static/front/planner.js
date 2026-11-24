@@ -96,6 +96,8 @@ function profileOf(H) {
 }
 function renderPlanner() {
   const P = planAsk.points;
+  // Opened with a walk from before (kept in the browser): its way is asked for again.
+  if (P.length >= 2 && !plan && !planBusy && !planProblem && hasPlanner()) { askPlan(); return; }
   const pointList = el("ol", { class: "plan-points" }, ...P.map((p, i) => el("li", {},
     el("span", { class: "plan-letter" }, letter(i)),
     el("span", { class: "grow" }, i === 0 ? "Begins" : i === P.length - 1 ? "Ends" : "Passes", el("span", { class: "sub" }, ` ${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`)),
@@ -118,7 +120,8 @@ function renderPlanner() {
           + `from ${H.lowest_m} to ${H.highest_m} m above the sea.` + (H.ferries.length ? ` Ferries besides: about ${hoursAndMinutes(H.ferries.reduce((t, f) => t + f.minutes, 0))} on board.` : "")
         : heightsBusy ? "Asking Kartverket how high it goes…" : heightsProblem ? `The heights could not be had: ${heightsProblem}` : ""),
       H ? profileOf(H) : "",
-      el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k]).map(([k, [says, colour]]) =>
+      // A few metres from a click to the nearest way are said below, not as a kind of their own.
+      el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
       ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from the nearest path or road: that bit is drawn straight.`)));
     if (H && H.days.length > 1) told.push(el("ol", { class: "trip-days" }, ...H.days.map(d => el("li", { class: planDay === d.day ? "hit current" : "hit" },
@@ -126,7 +129,7 @@ function renderPlanner() {
       el("div", { class: "grow" },
         el("div", {}, d.last ? "To the end" : d.hut ? `To ${d.hut.name || "a hut"}` : "To where the hours run out"),
         el("div", { class: "sub" }, `${km(d.metres / 1000)}, ${hoursAndMinutes(d.minutes)}`
-          + (d.hut ? `${d.hut.kind === "wilderness_hut" ? ", an open shelter" : ""}${d.hut.operator ? `, ${d.hut.operator}` : ""}` : d.last ? "" : ": no hut near the way, a night in a tent"))),
+          + (d.hut ? (d.hut.operator ? `, ${d.hut.operator}` : "") : d.last ? "" : ": no hut near the way, a night in a tent"))),
       ))));
     told.push(el("details", { class: "how" }, el("summary", {}, `The way, in ${plan.steps.length} ${plan.steps.length === 1 ? "step" : "steps"}`),
         el("ol", { class: "trip-steps" }, ...plan.steps.map(s => el("li", {}, el("span", { class: "plan-swatch", style: `background:${(PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1]}` }),
