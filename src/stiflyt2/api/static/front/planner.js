@@ -5,8 +5,11 @@
 const PLAN_CLASSES = { dnt: ["DNT's routes", "#c8161d"], marked: ["Other marked routes", "#e8741c"], path: ["Paths", "#8a5a2b"],
                        road: ["Roads", "#5f6b73"], ferry: ["Ferries", "#1f6fc5"], off: ["No path or road", "#1f2a30"] };
 const PLAN_KEY = "stiflyt2.plan";
-const planAsk = Object.assign({ points: [], prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
+// The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
+// point is where the walk ends (it was given as "To" before anything was given as "From").
+const planAsk = Object.assign({ points: [], names: [], lone: null, prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
+if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
 let plan = null, planProblem = null, planBusy = false, planHeights = null, heightsProblem = null, heightsBusy = false;
 let planAsked = 0, planMarkers = [], planDay = null;
 const hasPlanner = () => (me.features || []).includes("planner");
@@ -18,8 +21,67 @@ function keepAsk() { localStorage.setItem(PLAN_KEY, JSON.stringify(planAsk)); }
 // further from there, so that the end before becomes a place passed on the way.
 function planAt(at) {
   if (planAsk.points.length >= 12) { planProblem = "A walk goes through 12 points at the most."; render(); return; }
-  planAsk.points.push([Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]);
+  const p = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))];
+  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.lone = null; }      // where it begins
+  else { planAsk.points.push(p); planAsk.names.push(null); }
   replan();
+}
+// A place found by its name, as where the walk begins or where it ends.
+function planFrom(p, name) {
+  const P = planAsk.points, N = planAsk.names;
+  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.lone = null; }
+  else { P[0] = p; N[0] = name; }
+  replan();
+}
+function planTo(p, name) {
+  const P = planAsk.points, N = planAsk.names;
+  if (!P.length) { P.push(p); N.push(name); planAsk.lone = "end"; }
+  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); }
+  else { P[P.length - 1] = p; N[N.length - 1] = name; }
+  replan();
+}
+function planRemove(i) {
+  const P = planAsk.points;
+  if (P.length === 1) { planStartAgain(); return; }
+  P.splice(i, 1); planAsk.names.splice(i, 1);
+  if (P.length === 1 && i === 0) planAsk.lone = "end";        // what is left is where it ends
+  replan();
+}
+function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.lone = null; replan(); }
+// What is typed in the From and To fields, and what was found for it.
+const planSeek = { from: { text: null, found: [] }, to: { text: null, found: [] } };
+const typeOf = t => (t || "").replace(/([A-ZÆØÅ])/g, " $1").toLowerCase();
+function placeField(which, label, point, name, coords) {
+  const seek = planSeek[which];
+  const found = el("ul", { class: "plan-found", role: "listbox", "data-plan-found": which });
+  const choose = r => { seek.text = null; seek.found = []; (which === "from" ? planFrom : planTo)([r.lon, r.lat], r.name); };
+  // Into the list that is shown: the side may have been drawn anew while the answer was on its way.
+  const list = () => (document.querySelector(`[data-plan-found="${which}"]`) || found).replaceChildren(...seek.found.map(r => el("li", {}, el("button", { type: "button", class: "link", onclick: () => choose(r) },
+    r.name, el("span", { class: "sub" }, ` ${[typeOf(r.type), r.municipality].filter(Boolean).join(", ")}`)))));
+  let timer = null;
+  const input = el("input", { type: "search", "data-plan-field": which, value: seek.text ?? name ?? "", "aria-label": label,
+    placeholder: point ? `Clicked at ${coords}` : which === "from" ? "Search for a place, or click the map" : "Search for a place",
+    oninput: e => {
+      seek.text = e.target.value; clearTimeout(timer);
+      const q = e.target.value.trim();
+      if (q.length < 2) { seek.found = []; list(); return; }
+      timer = setTimeout(async () => {
+        const c = map.getCenter();
+        try { const got = await get("placenames", { q, lon: c.lng.toFixed(5), lat: c.lat.toFixed(5), limit: 8 }); if ((seek.text || "").trim() === q) { seek.found = got; list(); } } catch {}
+      }, 250);
+    },
+    onkeydown: e => {
+      if (e.key === "Enter" && seek.found.length) { e.preventDefault(); choose(seek.found[0]); }
+      else if (e.key === "Escape") { e.stopPropagation(); seek.text = null; seek.found = []; e.target.value = name || ""; list(); }
+    } });
+  found.replaceChildren();
+  const field = el("div", { class: "plan-field" },
+    el("label", {}, el("span", { class: "plan-letter" + (point ? "" : " none") }, point ? point : ""), el("span", { class: "plan-label" }, label), input,
+      point ? el("button", { class: "link", type: "button", title: `Take ${label.toLowerCase()} away`, "aria-label": `Take ${label.toLowerCase()} away`,
+        onclick: () => planRemove(which === "from" ? 0 : planAsk.points.length - 1) }, "✕") : ""),
+    found);
+  setTimeout(list);         // once the field is in the page
+  return field;
 }
 function replan() {
   keepAsk();
@@ -71,6 +133,8 @@ function planGpx() {
   setTimeout(() => URL.revokeObjectURL(link.href), 5000);
 }
 function planName() {
+  const N = planAsk.names;
+  if (N.length > 1 && N[0] && N[N.length - 1]) return `${N[0]} – ${N[N.length - 1]}`;
   const days = planHeights ? planHeights.days : [];
   const ends = days.filter(d => d.hut).map(d => d.hut.name).filter(Boolean);
   return ends.length ? `Walk by ${ends.join(", ")}` : "A walk";
@@ -98,10 +162,17 @@ function renderPlanner() {
   const P = planAsk.points;
   // Opened with a walk from before (kept in the browser): its way is asked for again.
   if (P.length >= 2 && !plan && !planBusy && !planProblem && hasPlanner()) { askPlan(); return; }
-  const pointList = el("ol", { class: "plan-points" }, ...P.map((p, i) => el("li", {},
-    el("span", { class: "plan-letter" }, letter(i)),
-    el("span", { class: "grow" }, i === 0 ? "Begins" : i === P.length - 1 ? "Ends" : "Passes", el("span", { class: "sub" }, ` ${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`)),
-    el("button", { class: "link", type: "button", title: `Take point ${letter(i)} away`, "aria-label": `Take point ${letter(i)} away`, onclick: () => { P.splice(i, 1); replan(); } }, "✕"))));
+  const at = p => `${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`, N = planAsk.names;
+  const lone = planAsk.lone === "end", last = P.length - 1;
+  const start = P.length && !lone ? 0 : null, end = P.length > 1 ? last : lone ? 0 : null;
+  // Where it begins and where it ends, each found by its name or clicked on the map; the places passed between.
+  const ends = el("div", { class: "plan-ends" },
+    placeField("from", "From", start === null ? null : letter(0), start === null ? null : N[0], start === null ? "" : at(P[0])),
+    ...P.slice(1, -1).map((p, k) => el("div", { class: "plan-field" }, el("label", {},
+      el("span", { class: "plan-letter" }, letter(k + 1)), el("span", { class: "plan-label" }, "Via"),
+      el("span", { class: "grow" }, N[k + 1] || el("span", { class: "sub" }, at(p))),
+      el("button", { class: "link", type: "button", title: `Take point ${letter(k + 1)} away`, "aria-label": `Take point ${letter(k + 1)} away`, onclick: () => planRemove(k + 1) }, "✕")))),
+    placeField("to", "To", end === null ? null : lone ? "B" : letter(last), end === null ? null : N[end], end === null ? "" : at(P[end])));
   const slider = el("input", { type: "range", min: 0, max: 100, step: 5, value: Math.round(planAsk.prefer * 100), "aria-label": "How much DNT's routes are preferred",
     oninput: e => { planAsk.prefer = Number(e.target.value) / 100; replanSoon(); } });
   const form = el("div", { class: "trip-ask" },
@@ -137,15 +208,19 @@ function renderPlanner() {
       el("div", { class: "actions" }, el("button", { class: "btn", onclick: planGpx }, "As a GPX file"), el("button", { class: "btn", onclick: showPlan }, "Show all of it")),
       el("div", { class: "sub" }, `Whether a hut is open, a bridge is up or a ferry runs is not known here. ${[...plan.credits, ...(H ? H.credits : [])].join(". ")}.`));
   }
+  // A field being typed in stays so when the side is drawn anew (the way, or its heights, came meanwhile).
+  const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.planField;
+  const caret = typing ? document.activeElement.selectionStart : 0;
   panel.replaceChildren(
     el("h2", { class: "area" }, "Plan a walk"),
-    el("div", { class: "sub", style: "margin-bottom:8px" }, P.length ? "Click the map to go on further from the last point. Drag a point to move it."
-      : "Click the map where the walk begins, anywhere in Norway, then where it ends. Click again to go on further; drag a point to move it."),
-    P.length ? pointList : "",
+    el("div", { class: "sub", style: "margin-bottom:8px" }, P.length > 1 ? "Click the map to go on further from the last point. Drag a point to move it."
+      : "Search for where the walk begins and ends, anywhere in Norway, or click the map. Click again to go on further; drag a point to move it."),
+    ends,
     P.length ? el("div", { class: "actions" },
-      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); replan(); } }, "The other way") : "",
-      el("button", { class: "btn", onclick: () => { P.length = 0; replan(); } }, "Start again")) : "",
+      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); replan(); } }, "The other way") : "",
+      el("button", { class: "btn", onclick: planStartAgain }, "Start again")) : "",
     form, ...told);
+  if (typing) { const field = panel.querySelector(`[data-plan-field="${typing}"]`); if (field) { field.focus(); field.setSelectionRange(caret, caret); } }
 }
 // The way on the map, in the colours of what it is; the points as letters that can be dragged; where each day ends.
 let planLayers = false;
@@ -174,9 +249,10 @@ function drawPlan() {
     // The points: markers that can be dragged, made anew when they are not the ones shown.
     for (const m of planMarkers) m.remove();
     planMarkers = on ? planAsk.points.map((p, i) => {
-      const dot = el("div", { class: "plan-marker", title: `${letter(i)}: drag to move` }, letter(i));
+      const mark = planAsk.lone === "end" ? "B" : letter(i);
+      const dot = el("div", { class: "plan-marker", title: `${planAsk.names[i] ? `${planAsk.names[i]}. ` : ""}${mark}: drag to move` }, mark);
       const m = new maplibregl.Marker({ element: dot, draggable: true }).setLngLat(p).addTo(map);
-      m.on("dragend", () => { const at = m.getLngLat(); planAsk.points[i] = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]; replan(); });
+      m.on("dragend", () => { const at = m.getLngLat(); planAsk.points[i] = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]; planAsk.names[i] = null; replan(); });
       dot.addEventListener("click", e => e.stopPropagation());
       return m;
     }) : [];

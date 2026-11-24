@@ -199,15 +199,21 @@ if (await js(`(me.features || []).includes("trips")`)) {
 // between them is found, drawn in the colours of what it goes along, and timed with the heights.
 if (await js(`(me.features || []).includes("planner")`)) {
   await clickOn(`document.getElementById("tab-planner")`);
-  check("the planner asks where the walk begins", await until(`view === "planner" && /Plan a walk/.test(document.querySelector("#panel h2").textContent) && /Click the map/.test(document.getElementById("panel").textContent)`, 20), await text("#panel h2"));
+  check("the planner asks where the walk begins", await until(`view === "planner" && /Plan a walk/.test(document.querySelector("#panel h2").textContent) && /Search for where the walk begins .* or click the map/.test(document.getElementById("panel").textContent)`, 20), await text("#panel h2"));
   await js(`planAsk.points.length = 0; replan(); map.jumpTo({ center: [7.402, 61.6687], zoom: 13 })`);
   await until(`!map.isMoving() && map.loaded()`, 10);
   const spot = async (lon, lat) => JSON.parse(await js(`(() => { const p = map.project([${lon}, ${lat}]); const r = document.getElementById("map").getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + p.x), y: Math.round(r.top + p.y) }); })()`));
   await click(await spot(7.38495, 61.67050));
-  check("a click on the map is where it begins, a letter on the map and in the list", await until(`planAsk.points.length === 1 && document.querySelectorAll(".plan-points li").length === 1 && planMarkers.length === 1`, 10));
+  check("a click on the map is where it begins, a letter on the map and in the From field", await until(`planAsk.points.length === 1 && planMarkers.length === 1 && document.querySelector('[data-plan-field="from"]').placeholder.startsWith("Clicked at")`, 10));
   await click(await spot(7.41907, 61.66686));
   check("a second click is where it ends, and the way between is found and drawn", await until(`Boolean(plan) && plan.steps.length > 0 && map.getSource("plan").serialize().data.features.length === plan.steps.length`, 60), await text("#panel .error"));
   check("what the way goes along is said by kind, in the colours of the map", await js(`document.querySelectorAll(".plan-by li").length > 0 && plan.total.metres > 1000`), await text(".plan-by"));
+  // Where it ends, found by its name instead: typed in the To field, and chosen among what is found.
+  await js(`(() => { const f = document.querySelector('[data-plan-field="to"]'); f.focus(); f.value = "Sprongdals"; f.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  check("a place is searched for by its name as it is typed", await until(`[...document.querySelectorAll(".plan-found button")].some(b => b.textContent.startsWith("Sprongdalshytta"))`, 15), await text(".plan-found"));
+  await clickOn(`[...document.querySelectorAll(".plan-found button")].find(b => b.textContent.startsWith("Sprongdalshytta"))`);
+  check("chosen, it is where the walk ends, by its name, and the way is found anew", await until(`planAsk.names[planAsk.names.length - 1] === "Sprongdalshytta" && planAsk.points.length === 2
+    && document.querySelector('[data-plan-field="to"]').value === "Sprongdalshytta" && !planBusy && (Boolean(plan) || Boolean(planProblem))`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
   check("the heights are asked for: the climb and the time, or why not", await until(`!heightsBusy && (Boolean(planHeights) && /of walking by Naismith/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);

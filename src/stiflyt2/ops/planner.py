@@ -280,15 +280,20 @@ def plan(conn, points: list, o: Options | None = None) -> dict:
 
 
 def _named(conn, steps: list[dict], coords: list) -> None:
-    """The marked routes a step goes along, by their codes: in Turrutebasen, and ours."""
+    """The marked routes a step goes along, by their codes: Turrutebasen's, and ours (in use) where they lie."""
     marked = [s for s in steps if s["class"] in ("dnt", "marked")]
     if not marked:
         return
     mids = [coords[(s["at"][0] + s["at"][1]) // 2] for s in marked]
     with conn.cursor() as cur:
         found = cur.execute("""
-            SELECT i, (SELECT string_agg(DISTINCT c, ', ' ORDER BY c) FROM source_index.trail_segment t, unnest(t.codes) c
-                       WHERE ST_DWithin(t.geom, p, 25))
+            SELECT i, (SELECT string_agg(DISTINCT c, ', ' ORDER BY c) FROM (
+                           SELECT unnest(t.codes) AS c FROM source_index.trail_segment t WHERE ST_DWithin(t.geom, p, 25)
+                           UNION
+                           SELECT r.code FROM core.edge e JOIN core.edge_revision v ON v.id = e.current_revision_id
+                           JOIN core.route_leg l ON l.edge_id = e.id
+                           JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                           WHERE e.status = 'active' AND ST_DWithin(v.geom, p, 25)) x)
             FROM unnest(%s::float8[], %s::float8[]) WITH ORDINALITY u(x, y, i),
                  LATERAL ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 4326), 25833) p""",
             ([m[0] for m in mids], [m[1] for m in mids])).fetchall()
