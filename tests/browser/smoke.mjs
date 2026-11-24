@@ -209,6 +209,7 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("a click on the map is where it begins, a letter on the map and in the From field", await until(`planAsk.points.length === 1 && planMarkers.length === 1 && document.querySelector('[data-plan-field="from"]').placeholder.startsWith("Clicked at")`, 10));
   await click(await spot(7.41907, 61.66686));
   check("a second click is where it ends, and the way between is found and drawn", await until(`Boolean(plan) && plan.steps.length > 0 && map.getSource("plan").serialize().data.features.length === plan.steps.length`, 60), await text("#panel .error"));
+  check("bridges and fords have marks of their own on the map", await js(`map.hasImage("plan-bridge") && map.hasImage("plan-ford") && map.getLayer("plan-crossings").type === "symbol"`));
   check("what the way goes along is said by kind, in the colours of the map", await js(`document.querySelectorAll(".plan-by li").length > 0 && plan.total.metres > 1000`), await text(".plan-by"));
   // Where it ends, found by its name instead: typed in the To field, and chosen among what is found.
   await js(`(() => { const f = document.querySelector('[data-plan-field="to"]'); f.focus(); f.value = "Sprongdals"; f.dispatchEvent(new Event("input", { bubbles: true })); })()`);

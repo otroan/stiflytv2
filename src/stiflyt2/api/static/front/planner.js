@@ -466,8 +466,9 @@ function drawPlan() {
       map.addLayer({ id: "plan", type: "line", source: "plan", filter: ["!", ["get", "dashed"]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "colour"], "line-width": 4.5 } });
       map.addLayer({ id: "plan-dashed", type: "line", source: "plan", filter: ["get", "dashed"], layout: { "line-join": "round" }, paint: { "line-color": ["get", "colour"], "line-width": 4, "line-dasharray": [1.2, 1.2] } });
       map.addSource("plan-crossings", { type: "geojson", data: empty });
-      map.addLayer({ id: "plan-crossings", type: "circle", source: "plan-crossings",
-        paint: { "circle-radius": 6, "circle-color": ["case", ["==", ["get", "how"], "bridge"], "#fff", "#1f6fc5"], "circle-stroke-color": "#1f6fc5", "circle-stroke-width": 2 } });
+      for (const how of ["bridge", "ford"]) if (!map.hasImage(`plan-${how}`)) map.addImage(`plan-${how}`, crossingIcon(how), { pixelRatio: 2 });
+      map.addLayer({ id: "plan-crossings", type: "symbol", source: "plan-crossings",
+        layout: { "icon-image": ["match", ["get", "how"], "bridge", "plan-bridge", "plan-ford"], "icon-allow-overlap": true, "icon-ignore-placement": true } });
       map.addLayer({ id: "plan-days", type: "circle", source: "plan-days", paint: { "circle-radius": 9, "circle-color": "#1f2a30", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
       map.addLayer({ id: "plan-day-numbers", type: "symbol", source: "plan-days", layout: { "text-field": ["get", "day"], "text-size": 11, "text-font": ["Open Sans Semibold"], "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
       // The line can be taken hold of and dragged to another path: where it is let go is a point it passes.
@@ -536,6 +537,32 @@ function nearestIndex(at, a, b) {
     if (d < bestD) { bestD = d; best = k; }
   }
   return best;
+}
+// The marks of where the way crosses a river, drawn here: a bridge (an arch under its deck, over the water) on white,
+// and a ford, or a river waded, as waves on the blue of water. Twice the size, for screens that have the pixels.
+function crossingIcon(how) {
+  const S = 44, c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d"), blue = "#1f6fc5";
+  g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 3, 0, 2 * Math.PI);
+  g.fillStyle = how === "bridge" ? "#fff" : blue; g.fill();
+  g.lineWidth = 3; g.strokeStyle = how === "bridge" ? blue : "#fff"; g.stroke();
+  g.lineCap = "round"; g.lineJoin = "round";
+  const wave = (y, colour) => {
+    g.beginPath(); g.moveTo(10, y);
+    for (let x = 10; x < 34; x += 6) g.quadraticCurveTo(x + 1.5, y - 3, x + 3, y), g.quadraticCurveTo(x + 4.5, y + 3, x + 6, y);
+    g.strokeStyle = colour; g.lineWidth = 2.6; g.stroke();
+  };
+  if (how === "bridge") {
+    g.fillStyle = "#1f2a30"; g.fillRect(9, 15, 26, 4);                       // the deck
+    g.beginPath(); g.arc(22, 29, 9, Math.PI, 0);                              // the arch under it
+    g.moveTo(13, 19); g.lineTo(13, 29); g.moveTo(31, 19); g.lineTo(31, 29);   // and where it stands
+    g.strokeStyle = "#1f2a30"; g.lineWidth = 3; g.stroke();
+    wave(33, blue);
+  } else {
+    wave(18, "#fff"); wave(27, "#fff");
+  }
+  return g.getImageData(0, 0, S, S);
 }
 // Where on the way a day ends that ends at no hut: the point that far along it.
 function pointAlong(metres) {
