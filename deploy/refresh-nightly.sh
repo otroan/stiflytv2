@@ -20,6 +20,8 @@ echo "exit $status"
 if [ $status -gt 1 ]; then
     .venv/bin/stiflyt2 feedback failed "nightly check of the sources" "stiflyt2 refresh ended with status $status: see var/log/refresh.log"
 fi
+# The route planner's network, when a new extract of OpenStreetMap has come (weekly): some 11 minutes.
+.venv/bin/stiflyt2 planner build --if-new || .venv/bin/stiflyt2 feedback failed "the planner's network" "stiflyt2 planner build did not finish: see var/log/refresh.log"
 # Stretches that are new or were moved during the day get their heights. Asked once per line.
 .venv/bin/stiflyt2 height fill || .venv/bin/stiflyt2 feedback failed "nightly heights" "stiflyt2 height fill did not get every stretch: see var/log/refresh.log"
 exit $status

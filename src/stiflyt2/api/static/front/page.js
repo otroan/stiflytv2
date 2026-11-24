@@ -26,11 +26,11 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
+  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
 }
 function addressOf(at) {
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners"].includes(at.view) ? at.view : null,
+  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner"].includes(at.view) ? at.view : null,
       route: ROUTE_VIEWS.includes(at.view) && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
       issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
@@ -135,12 +135,13 @@ async function change(request) {
 }
 function render() {
   document.body.dataset.view = view;
-  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"]]) {
+  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"], ["tab-planner", "planner"]]) {
     const tab = document.getElementById(id);
     if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
     tab.href = addressOf({ view: is, area }).href;
   }
-  if (!area) renderAreas();
+  if (view === "planner") renderPlanner();
+  else if (!area) renderAreas();
   else if (route) renderRoute();
   else if (view === "routes") renderArea();
   else if (view === "trips") renderTrips();
@@ -156,6 +157,7 @@ function render() {
   renderBasket();
   drawMap();
   drawTrip();
+  drawPlan();
   drawIssues();
   drawPhotos();
   drawReports();

@@ -84,7 +84,8 @@ def build(*, force: bool = False, only: str | None = None) -> list[Built]:
                 rows[table] = conn.execute(f"SELECT count(*) FROM {BUILD}.{table}").fetchone()[0]
                 conn.execute(f"DROP TABLE IF EXISTS {INDEX}.{table}")
                 conn.execute(f"ALTER TABLE {BUILD}.{table} SET SCHEMA {INDEX}")
-                conn.execute(f"GRANT SELECT ON {INDEX}.{table} TO stiflyt2_api")
+                # The service reads it; and so does the owner, who builds the planner's network from it.
+                conn.execute(f"GRANT SELECT ON {INDEX}.{table} TO stiflyt2_api, stiflyt2_owner")
             seconds = time.monotonic() - started
             conn.execute(
                 f"""INSERT INTO {INDEX}.index_state (source, signature, seconds, rows)

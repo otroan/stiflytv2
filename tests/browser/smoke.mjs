@@ -45,7 +45,7 @@ ws.addEventListener("message", m => {
     // here, nobody else: the service takes where a page is only from a page a person has open, and keeps the refusal.
     if ((pretend || TOKEN) && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend || [])).toString("base64") }); return; }
     // (Planning a trip, and saying where the page is, are asked with POST and keep nothing: they are let through, as a look is.)
-    if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
+    if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|planner\/plan|planner\/heights|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
 });
@@ -194,6 +194,27 @@ if (await js(`(me.features || []).includes("trips")`)) {
   await clickOn(`document.getElementById("tab-routes")`);
   await until(`view === "routes"`, 10);
 } else check("the trips tab is not there for one who does not have the feature", await js(`document.getElementById("tab-trips").hidden`));
+
+// The route planner (the feature `planner`): a click where a walk begins and one where it ends, anywhere, and the way
+// between them is found, drawn in the colours of what it goes along, and timed with the heights.
+if (await js(`(me.features || []).includes("planner")`)) {
+  await clickOn(`document.getElementById("tab-planner")`);
+  check("the planner asks where the walk begins", await until(`view === "planner" && /Plan a walk/.test(document.querySelector("#panel h2").textContent) && /Click the map/.test(document.getElementById("panel").textContent)`, 20), await text("#panel h2"));
+  await js(`planAsk.points.length = 0; replan(); map.jumpTo({ center: [7.402, 61.6687], zoom: 13 })`);
+  await until(`!map.isMoving() && map.loaded()`, 10);
+  const spot = async (lon, lat) => JSON.parse(await js(`(() => { const p = map.project([${lon}, ${lat}]); const r = document.getElementById("map").getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + p.x), y: Math.round(r.top + p.y) }); })()`));
+  await click(await spot(7.38495, 61.67050));
+  check("a click on the map is where it begins, a letter on the map and in the list", await until(`planAsk.points.length === 1 && document.querySelectorAll(".plan-points li").length === 1 && planMarkers.length === 1`, 10));
+  await click(await spot(7.41907, 61.66686));
+  check("a second click is where it ends, and the way between is found and drawn", await until(`Boolean(plan) && plan.steps.length > 0 && map.getSource("plan").serialize().data.features.length === plan.steps.length`, 60), await text("#panel .error"));
+  check("what the way goes along is said by kind, in the colours of the map", await js(`document.querySelectorAll(".plan-by li").length > 0 && plan.total.metres > 1000`), await text(".plan-by"));
+  check("the heights are asked for: the climb and the time, or why not", await until(`!heightsBusy && (Boolean(planHeights) && /of walking by Naismith/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
+  check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
+  await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
+  check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));
+  await clickOn(`document.getElementById("tab-routes")`);
+  await until(`view === "routes"`, 10);
+} else check("the planner is not there for one who does not have the feature", await js(`document.getElementById("tab-planner").hidden`));
 
 // Who else is at work now (the feature `presence`): the page says where it is, and shows the others at the foot.
 const others = async (who, shown) => {

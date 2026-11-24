@@ -19,6 +19,8 @@ dependencies = [
     "pillow>=10.4",
     "pillow-heif>=0.18",
     "zeep>=4.2",
+    "osmium>=4.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

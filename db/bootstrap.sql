@@ -30,6 +30,8 @@ END $$;
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- The route planner's search over the walk network (the feature `planner`).
+CREATE EXTENSION IF NOT EXISTS pgrouting;
 
 DO $$
 BEGIN
@@ -63,12 +65,16 @@ CREATE SCHEMA IF NOT EXISTS height         AUTHORIZATION stiflyt2_owner;
 -- and never changes them.
 CREATE SCHEMA IF NOT EXISTS ops            AUTHORIZATION stiflyt2_owner;
 
+-- The network the route planner walks on, made from OpenStreetMap and the marked routes. Made from
+-- sources, rebuilt weekly: it stays when the overlay is taken away.
+CREATE SCHEMA IF NOT EXISTS walk           AUTHORIZATION stiflyt2_owner;
+
 -- Import side: usage only. Table-level grants are set by the migrations.
 GRANT USAGE ON SCHEMA source_raw, source_index, import_control TO stiflyt2_import;
 GRANT CREATE ON SCHEMA source_index TO stiflyt2_import;
 
 -- API side: reads the index and job state, owns nothing on the import side.
-GRANT USAGE ON SCHEMA source_index, import_control, core, history, feedback, access, height, ops TO stiflyt2_api;
+GRANT USAGE ON SCHEMA source_index, import_control, core, history, feedback, access, height, ops, walk TO stiflyt2_api;
 
 -- The hard wall: the import role has no access to core or history at all.
 REVOKE ALL ON SCHEMA core, history FROM stiflyt2_import;

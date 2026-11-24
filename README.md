@@ -1301,6 +1301,58 @@ Over the API: `POST /api/v1/trips/plan` with `routes` (codes) or `area`,
 and `start`, `hours`, `tent`, `over_ice`, `back_to_start`, `mapped`. An assistant has
 `plan_trip`, which it is told of only when the person has the feature.
 
+## The route planner: a feature of its own
+
+A walk from anywhere in Norway to anywhere, on foot, along DNT's routes as
+much as you like. With the feature `planner` (`stiflyt2 access give
+you@example.org planner`), the front page has the part **Plan a walk**:
+click the map where the walk begins, then where it ends; each click after
+that goes on further, so that the end before becomes a place passed on the
+way. Drag a letter to move it. A slider says how much DNT's marked routes are
+preferred, from the shortest way to "along DNT's routes" (a route of DNT's
+then counts half its length, another marked route 70 %); ferries may be left
+out, and glaciers, demanding alpine paths and via ferratas are left out unless
+ticked. The way is drawn in the colours of what it goes along (DNT's routes,
+other marked routes, paths, roads, ferries), with what each adds up to.
+Kartverket's height service is then asked about it, every 50 m: the climb, the
+time by Naismith's rule with no rests, a profile, and days that end at a hut
+within 400 m of the way (as far as a day of the hours you say goes, or up to an
+hour over to reach one; else where the hours run out). It can be taken out as a
+GPX file. Whether a hut is open, a bridge is up or a ferry runs is not known.
+
+It walks on a network of its own, in the schema `walk` (import migration
+`0025`), built from OpenStreetMap's extract of Norway, the one fetched weekly
+for the import (`src/stiflyt2/ops/walknet.py`):
+
+    stiflyt2 planner build [--if-new]     # some 11 minutes and 4.5 GB of memory
+    stiflyt2 planner                      # what it was built from, and what is in it
+
+Every way one may walk (paths, tracks, footways, steps, and roads of every
+kind but motorways and motor roads; not what says it is closed on foot) and
+ferries up to 30 km, cut where they share a node: 3.68 million stretches,
+463,000 km. A stretch along a marked route in Turrutebasen, or one of ours,
+is said to be (60,000 km), and whether DNT looks after it (29,000 km, by the
+maintainers' names). Where a marked route has nothing in OpenStreetMap along
+it (12,800 km of them), the route's own line is put in, joined to the nearest
+junction within 60 m. Glaciers (`natural=glacier`) and huts
+(`tourism=alpine_hut` and `wilderness_hut`, 995 of them) are taken from the
+extract too. The nightly job rebuilds it when a new extract has come.
+
+The search is pgRouting's A* (the extension `pgrouting`, which `db/bootstrap.sql`
+asks for) over the stretches in a box round each leg, widened once if no way
+is found in it. Each stretch costs its length times what it is: a path as it
+is, a road more the bigger it is (a trunk road 3.5 times), a ferry its length
+and 5 km more. Finse to Haukeliseter (120 km) takes a tenth of a second;
+Oslo to Trondheim (510–570 km) about eight. A point clicked off the network begins at the
+nearest stretch within 3 km, and says how far off it was. Nothing is kept;
+what of OpenStreetMap is in a plan is a produced work under ODbL, credited in
+the page and in the GPX file.
+
+Over the API: `POST /api/v1/planner/plan` with `points` ([lon, lat], 2 to 12),
+`prefer` (0 to 1), `ferries`, `ice`, `alpine`; `POST /api/v1/planner/heights`
+with the plan's steps as `parts` and `hours`. An assistant has `plan_walk`,
+which it is told of only when the person has the feature.
+
 ## Who else is at work now: a feature of its own
 
 At the foot of the front page and of the route editor, a line says who else

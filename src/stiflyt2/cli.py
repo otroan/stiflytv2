@@ -32,6 +32,8 @@ app.add_typer(feedback_app, name="feedback")
 app.add_typer(access_app, name="access")
 height_app = typer.Typer(help="How high the ground is along the routes, from Kartverket's height service")
 app.add_typer(height_app, name="height")
+planner_app = typer.Typer(help="The route planner's network: every way in Norway one may walk")
+app.add_typer(planner_app, name="planner")
 
 File = Annotated[Path | None, typer.Option(help="Use a local copy of the delivery")]
 
@@ -940,6 +942,62 @@ def history(source: str) -> None:
         ).fetchall()
     for r in rows:
         typer.echo(f"{r[0]}  {r[1]:<10} {r[2]:<9} {r[3]}  {r[4]} {r[5]}")
+
+
+@planner_app.callback(invoke_without_command=True)
+def planner_state(ctx: typer.Context) -> None:
+    """What the planner's network was built from, and what is in it."""
+    if ctx.invoked_subcommand:
+        return
+    from stiflyt2.ops import walknet
+
+    with psycopg.connect(settings.api_dsn) as conn:
+        found = walknet.built(conn)
+    if found is None:
+        typer.echo("The network has not been built. `stiflyt2 planner build` builds it.")
+        return
+    typer.echo(f"Built {found['built_at']:%Y-%m-%d %H:%M} in {found['took_s'] / 60:.0f} min, from the extract of "
+               f"{found['extract_at']:%Y-%m-%d} ({found['extract_md5'][:8]}): {json.dumps(found['counts'])}")
+
+
+@planner_app.command("build")
+def planner_build(
+    if_new: Annotated[bool, typer.Option("--if-new", help="Only if the extract is newer than the network")] = False,
+) -> None:
+    """Build the network from OpenStreetMap's extract of Norway, and put it in place of the one in use.
+
+    The extract is the one kept for the import of OpenStreetMap, fetched if there is none. Takes a while
+    (some half hour), and leaves the network in use as it is until the new one is done.
+    """
+    import logging
+    import os
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from stiflyt2 import overlay
+    from stiflyt2.importer.adapters import osm
+    from stiflyt2.ops import walknet
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    kept = sorted(osm._folder().glob("*-norway-latest.osm.pbf")) if osm._folder().is_dir() else []
+    if kept:
+        extract, md5 = kept[-1], kept[-1].name.split("-", 1)[0]
+    else:
+        with httpx.Client(headers={"User-Agent": settings.user_agent}, follow_redirects=True,
+                          timeout=httpx.Timeout(60.0, read=300.0)) as client:
+            extract, md5 = osm.download(client)
+    with psycopg.connect(dbname=overlay.database()) as conn:
+        conn.execute(f"SET ROLE {overlay.OWNER}")
+        conn.execute("SELECT set_config('application_name', %s, false)",
+                     (f"stiflyt2 planner build ({os.environ.get('USER', '?')})",))
+        before = walknet.built(conn)
+        if if_new and before and before["extract_md5"] == md5:
+            typer.echo(f"The network is built from this extract ({md5[:8]}) already.")
+            return
+        made = datetime.fromtimestamp(extract.stat().st_mtime, UTC)
+        counts = walknet.build(conn, extract, md5, made)
+    typer.echo(json.dumps(counts))
 
 
 if __name__ == "__main__":

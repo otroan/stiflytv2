@@ -127,6 +127,16 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .trip-steps li { margin: 1px 0; }
 .trip-steps li.again { color: var(--muted); font-style: italic; }
 .trip-days .swatch { flex: none; width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 600 12px/22px var(--tight); text-align: center; }
+/* The route planner (the feature `planner`): the points, how much DNT's routes are preferred, and what the way adds up to. */
+.plan-points { list-style: none; margin: 4px 0 8px; padding: 0; }
+.plan-points li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.plan-letter, .plan-marker { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--band, #c8161d); color: #fff; font: 600 12px/22px var(--tight); text-align: center; }
+.plan-marker { border: 2px solid #fff; box-shadow: 0 1px 3px #0006; cursor: grab; }
+.plan-prefer { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.plan-prefer input { flex: 1; }
+.plan-by { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.plan-swatch { display: inline-block; width: 18px; height: 5px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.plan-profile { display: block; width: 100%; max-width: 420px; height: auto; margin: 6px 0; }
 #present { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo .unsaved { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff7dc; border: 1.5px solid #b07d00; border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; color: var(--ink); }
