@@ -1,7 +1,7 @@
 """walk: where a way crosses a river: by a bridge, by a ford, or wading across country
 
-`walk.edge.ford` is a stretch that fords water (OpenStreetMap's ford=yes on the
-way or on a node of it), `bridge` one that is a bridge over a river, and `river`
+`walk.edge.ford` is a stretch that fords a river (OpenStreetMap's ford=yes on
+the way or on a node of it, where it crosses a river: a stream is not counted), `bridge` one that is a bridge over a river, and `river`
 the name of the river it crosses, where it has one. `walk.field.wade` is a
 stretch across country that wades a river (rivers drawn as a line; those drawn
 as an area are too wide, and are never waded), with the river's name.

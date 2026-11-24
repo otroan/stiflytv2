@@ -265,12 +265,13 @@ PIECES_AND_HEIGHTS = """
                                 ford, bridge, river)
     SELECT e.id, e.source, e.target, e.origin, e.osm_id, e.kind, e.name, e.sac, e.visibility, e.private, e.tunnel,
            e.discouraged, e.trail, e.dnt, e.ice, e.length_m, e.geom, e.x1, e.y1, e.x2, e.y2, c.component, s.n, h.z, h.high,
-           e.ford, e.bridge AND w.over IS NOT NULL, w.name
+           e.ford AND w.over IS NOT NULL, e.bridge AND w.over IS NOT NULL, w.name
     FROM walk.edge_next e
     LEFT JOIN walk.piece_load c ON c.node = e.source
     LEFT JOIN (SELECT component, count(*)::int AS n FROM walk.piece_load GROUP BY 1) s USING (component)
     LEFT JOIN walk.z_load h ON h.id = e.id
-    -- A ford, and a bridge that crosses a river (not a road or a railway): the river, by its name where it has one.
+    -- A ford and a bridge that cross a river (not a stream, which is stepped over as anywhere across country; nor a road
+    -- or a railway): the river, by its name where it has one.
     LEFT JOIN LATERAL (SELECT r.name, true AS over FROM walk.river_next r
                        WHERE (e.ford OR e.bridge) AND ST_Intersects(r.geom, e.geom)
                        ORDER BY r.name IS NULL LIMIT 1) w ON true;

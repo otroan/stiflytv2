@@ -414,8 +414,12 @@ def field_network(loaded, tmp_path, monkeypatch):
                 ({"waterway": "river", "name": "Vadelva"}, VADELVA),
                 ({"highway": "path", "name": "Vadstien"}, [FORD_W, (7.15, 61.70), FORD_E]),
                 ({"highway": "path", "name": "Brua", "bridge": "yes"}, [BRIDGE_W, BRIDGE_E]),
-                ({"highway": "path"}, [FORD_W, BRIDGE_W]), ({"highway": "path"}, [FORD_E, BRIDGE_E])]
-        counts = walknet.build(owner, extract(tmp_path / "test-latest.osm", ways, [((7.15, 61.70), {"ford": "yes"})]), "field1")
+                ({"highway": "path"}, [FORD_W, BRIDGE_W]), ({"highway": "path"}, [FORD_E, BRIDGE_E]),
+                # A stream with a ford on the path over it: stepped over, as streams are, and not told.
+                ({"waterway": "stream"}, [(7.17, 61.695), (7.17, 61.705)]),
+                ({"highway": "path", "name": "Over bekken"}, [FORD_E, (7.17, 61.70), (7.18, 61.70)])]
+        counts = walknet.build(owner, extract(tmp_path / "test-latest.osm", ways,
+                                              [((7.15, 61.70), {"ford": "yes"}), ((7.17, 61.70), {"ford": "yes"})]), "field1")
         yield {"a": a, "b": b, "counts": counts, "wall": (wall_x, wall_s + 100, wall_n - 100)}     # in the grid
     terrain._kept.clear()
 
@@ -549,6 +553,8 @@ def test_fords_and_bridges_are_told_and_a_ford_can_be_gone_round(field_network, 
     assert counts["fords"] >= 1 and counts["bridges_over_rivers"] >= 1 and counts["rivers"] == 2 and counts["wades"] > 0
     assert conn.execute("SELECT ford, bridge, river FROM walk.edge WHERE name = 'Vadstien'").fetchone() == (True, False, "Vadelva")
     assert conn.execute("SELECT ford, bridge, river FROM walk.edge WHERE name = 'Brua'").fetchone() == (False, True, "Vadelva")
+    assert conn.execute("SELECT ford, bridge, river FROM walk.edge WHERE name = 'Over bekken'").fetchone() == (False, False, None)
+    assert planner.plan(conn, [FORD_E, (7.18, 61.70)])["crossings"] == []
     # Over the ford as it comes; told where, and over what.
     over = planner.plan(conn, [FORD_W, FORD_E])
     assert [(c["how"], c["river"]) for c in over["crossings"]] == [("ford", "Vadelva")]
