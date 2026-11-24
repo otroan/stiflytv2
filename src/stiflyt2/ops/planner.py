@@ -77,6 +77,7 @@ ROUGH = 1.5                 # with no path, the flat takes this much longer than
 ROUNDABOUT, ROUNDABOUT_M = 2.5, 5000    # a leg this many times as long as the crow flies, and this much more, is said
 PROFILE_POINTS = 1500       # the profile is drawn with no more points than this
 GREAT = 1000                # a piece of the network with as many junctions as this is joined to more than itself
+GREAT_SNAP_M = 30_000       # and is looked for this far off, straight over the ground (the plateaus of Finnmark)
 
 
 class Options:
@@ -149,8 +150,10 @@ def _snap(conn, lon: float, lat: float, o: Options, great: bool = False) -> dict
             FROM walk.edge e, (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS p) q
             WHERE {o.allowed()} AND e.kind <> 'ferry' {f"AND e.piece_nodes >= {GREAT}" if great else ""}
             ORDER BY e.geom <-> p LIMIT 1""", (lon, lat)).fetchone()
-    if found is None or found["off_m"] > SNAP_M:
-        raise NotFound(f"no path or road within {SNAP_M / 1000:.0f} km of {lat:.5f} N {lon:.5f} E")
+    reach = GREAT_SNAP_M if great else SNAP_M
+    if found is None or found["off_m"] > reach:
+        raise NotFound(f"no path or road {'that leads anywhere ' if great else ''}within {reach / 1000:.0f} km "
+                       f"of {lat:.5f} N {lon:.5f} E")
     for part in ("before", "after"):         # at an end of the stretch, a part of it is a point
         if not isinstance(found[part][0], list):
             found[part] = [found[part], found[part]]
@@ -271,14 +274,18 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
 
     def ends(n: int) -> tuple:
         """Where a leg begins and ends on the network: on the nearest stretches, unless one of them is on a small
-        piece the other is not on (a path that joins nothing): then on the nearest of the great piece."""
+        piece the other is not on (a path that joins nothing), or none is near: then on the nearest stretch of a
+        great piece, further off."""
         a, b = snap(n), snap(n + 1)
-        if isinstance(a, dict) and isinstance(b, dict) and a["piece"] != b["piece"]:
-            if a["piece_nodes"] < GREAT and isinstance(snap(n, True), dict):
-                a = snap(n, True)
-            if b["piece_nodes"] < GREAT and isinstance(snap(n + 1, True), dict):
-                b = snap(n + 1, True)
-        return a, b
+        if isinstance(a, dict) and isinstance(b, dict) and a["piece"] == b["piece"]:
+            return a, b
+
+        def great(end: dict | str, i: int) -> dict | str:
+            if isinstance(end, dict) and end["piece_nodes"] >= GREAT:
+                return end
+            wider = snap(i, True)           # none near, or only a small piece: further off, one that leads somewhere
+            return wider if isinstance(wider, dict) else end
+        return great(a, n), great(b, n + 1)
 
     def add(cls: str, name, ice: bool, line: list, metres: float) -> None:
         line = [c for k, c in enumerate(line) if k == 0 or c != line[k - 1]]      # a point where a stretch is cut is in both

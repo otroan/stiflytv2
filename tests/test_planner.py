@@ -328,6 +328,11 @@ def test_a_point_by_a_path_that_joins_nothing_is_joined_to_the_network(network, 
     told = planner.plan(conn, [LONELY, network["b"]], planner.Options(prefer=1))
     assert told["legs"][0]["unfound"] is None and told["steps"][0]["class"] == "off" and told["off"][0]["off_m"] > 400
     assert "Ensom sti" not in [s["name"] for s in told["steps"]]
+    # Further off than a path is looked for, but not a path that leads anywhere: straight to that.
+    monkeypatch.setattr(planner, "SNAP_M", 100)
+    wide = planner.plan(conn, [(LONELY[0] - 0.01, LONELY[1]), network["b"]], planner.Options(prefer=1))
+    assert wide["legs"][0]["unfound"] is None and wide["steps"][0]["class"] == "off" and wide["off"][0]["off_m"] > 400
+    monkeypatch.setattr(planner, "SNAP_M", 10_000)
     # Both ends on the lonely path: it is walked.
     on = planner.plan(conn, [LONELY, (LONELY[0] - 0.002, LONELY[1] + 0.001)])
     assert [s["name"] for s in on["steps"]] == ["Ensom sti"]
