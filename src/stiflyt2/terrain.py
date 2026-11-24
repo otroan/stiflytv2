@@ -133,24 +133,44 @@ def _tile(code: str) -> np.ndarray | None:
     return grid
 
 
-def heights(points) -> list[float | None]:
-    """The height of the ground at each point (east, north in EPSG:25833), between the four nearest in the
-    grid; None where there is no tile (the sea, abroad)."""
-    pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
-    out = np.full(len(pts), np.nan)
-    codes = [code_of(x, y) for x, y in pts]
-    for code in set(codes):
+def heights_of(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """The height of the ground at each point (east and north, EPSG:25833, as arrays), between the four nearest
+    in the grid; NaN where there is no tile (the sea, abroad). Tile by tile, however many points."""
+    x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    out = np.full(len(x), np.nan)
+    if not len(x):
+        return out
+    e, n = np.floor(x / TILE_M).astype(np.int64), np.floor(y / TILE_M).astype(np.int64)
+    key = n * 1000 + e
+    order = np.argsort(key, kind="stable")
+    cuts = np.flatnonzero(np.diff(key[order])) + 1
+    for part in np.split(order, cuts):
+        ee, nn = int(e[part[0]]), int(n[part[0]])
+        if not -1 <= ee <= 99 or not 0 <= nn <= 99:
+            continue
+        code = f"{nn:02d}{'m1' if ee == -1 else f'{ee:02d}'}"
         grid = _tile(code) if code in TILES else None
         if grid is None:
             continue
-        mine = np.array([c == code for c in codes])
         x0, y0 = corner(code)
-        col = (pts[mine, 0] - x0) / CELL_M - 0.5
-        row = (y0 + TILE_M - pts[mine, 1]) / CELL_M - 0.5
-        col, row = np.clip(col, 0, SIDE - 1), np.clip(row, 0, SIDE - 1)
+        col = np.clip((x[part] - x0) / CELL_M - 0.5, 0, SIDE - 1)
+        row = np.clip((y0 + TILE_M - y[part]) / CELL_M - 0.5, 0, SIDE - 1)
         c0, r0 = np.floor(col).astype(int), np.floor(row).astype(int)
         c1, r1 = np.minimum(c0 + 1, SIDE - 1), np.minimum(r0 + 1, SIDE - 1)
         fc, fr = col - c0, row - r0
-        out[mine] = (grid[r0, c0] * (1 - fc) * (1 - fr) + grid[r0, c1] * fc * (1 - fr)
+        out[part] = (grid[r0, c0] * (1 - fc) * (1 - fr) + grid[r0, c1] * fc * (1 - fr)
                      + grid[r1, c0] * (1 - fc) * fr + grid[r1, c1] * fc * fr)
-    return [None if np.isnan(v) else float(v) for v in out]
+    return out
+
+
+def heights(points) -> list[float | None]:
+    """The height of the ground at each point (east, north in EPSG:25833); None where there is no tile."""
+    pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    return [None if np.isnan(v) else float(v) for v in heights_of(pts[:, 0], pts[:, 1])]
+
+
+def extent() -> tuple[int, int, int, int]:
+    """The box the tiles cover: west, south, east, north."""
+    corners = [corner(code) for code in TILES]
+    return (min(x for x, _ in corners), min(y for _, y in corners),
+            max(x for x, _ in corners) + TILE_M, max(y for _, y in corners) + TILE_M)

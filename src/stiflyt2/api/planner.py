@@ -25,6 +25,13 @@ class How(BaseModel):
     ferries: bool = Field(True, description="Ferries may be taken")
     ice: bool = Field(False, description="Glaciers may be crossed")
     alpine: bool = Field(False, description="Demanding alpine paths and via ferratas may be walked")
+    mountains: float = Field(0.0, ge=-1, le=1, description="How much it keeps up in the mountains (1) or down in the "
+                             "valleys (-1), by how high the ground lies against the tree line; 0 neither")
+    across: bool = Field(False, description="Across country where there is no path: over open ground, not over "
+                         "water or rivers nor where it is steeper than 35 degrees (a sketch)")
+
+    def options(self) -> planner.Options:
+        return planner.Options(self.prefer, self.ferries, self.ice, self.alpine, self.mountains, self.across)
 
 
 class Ask(How):
@@ -54,8 +61,7 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
     def plan(body: Ask, who: May) -> dict:
         """A way on foot through the points, along DNT's routes as much as asked for."""
         with read.connection() as conn:
-            return planner.plan(conn, body.points, planner.Options(body.prefer, body.ferries, body.ice, body.alpine),
-                                body.straight, body.snap)
+            return planner.plan(conn, body.points, body.options(), body.straight, body.snap)
 
     @app.post(f"{V1}/heights")
     def heights(body: Heights, who: May) -> dict:
@@ -91,10 +97,10 @@ def plan_walk(c: mcp.Call, a: PlanWalk) -> dict:
     leg how long it is against the crow's flight, and why one was drawn straight when no way was found. The line itself is not
     given. Name `credits` wherever the plan is passed on (OpenStreetMap's data is under ODbL). Whether a hut is
     open, a bridge is up or a ferry runs is not known here: say so."""
-    told = planner.plan(c.conn, a.points, planner.Options(a.prefer, a.ferries, a.ice, a.alpine), a.straight)
+    told = planner.plan(c.conn, a.points, a.options(), a.straight)
     if a.with_heights:
         parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1], "ferry": s["class"] == "ferry",
-                  "rough": s["class"] == "off", "ice": s["ice"]} for s in told["steps"]]
+                  "rough": s["class"] in ("off", "field"), "ice": s["ice"]} for s in told["steps"]]
         got = planner.heights(c.conn, parts, a.hours)
         got.pop("profile")
         told["heights"] = got

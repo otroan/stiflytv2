@@ -63,11 +63,13 @@ FERRY_KMH = 20              # how fast a ferry goes, for the time a plan takes
 START, END = 9_000_000_000_000_001, 9_000_000_000_000_002       # the two ends of a leg, as vertices of their own
 CLASSES = {                 # what a stretch is, as it is told and drawn
     "dnt": "a route of DNT's", "marked": "a marked route", "path": "a path", "road": "a road",
-    "ferry": "a ferry", "off": "no way mapped"}
+    "ferry": "a ferry", "off": "no way mapped", "field": "across country"}
 PATHS = ("path", "footway", "track", "bridleway", "steps", "via_ferrata", "trail")
 CREDITS = {"osm": "Paths and roads: © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright)",
            "turrutebasen": "Marked routes: Turrutebasen, Kartverket, CC BY 4.0",
-           "height": "Heights: Kartverket's height model"}
+           "height": "Heights: Kartverket's height model",
+           "terrain": "Across country: Kartverket's national height model, CC BY 4.0, and OpenStreetMap's water, "
+                      "rivers, bogs and glaciers"}
 HUT_M = 400                 # a hut this near the way is passed
 STEP_M = 50                 # heights are asked for this often along the way
 MOST_HEIGHTS = 4000         # and no more often than this many points for the whole way
@@ -78,15 +80,37 @@ ROUNDABOUT, ROUNDABOUT_M = 2.5, 5000    # a leg this many times as long as the c
 PROFILE_POINTS = 1500       # the profile is drawn with no more points than this
 GREAT = 1000                # a piece of the network with as many junctions as this is joined to more than itself
 GREAT_SNAP_M = 30_000       # and is looked for this far off, straight over the ground (the plateaus of Finnmark)
+HIGH_LESS = 0.4             # at the most, a metre up in the mountains (or down in the valleys) counts this much less
+FIELD = 2.0                 # a metre across country counts as two on a path
+BOG = 1.4                   # and over a bog as more again
+FIELD_CLIMB = 4.0           # a metre climbed or gone down across country, as many metres walked
+FIELD_NEAR_M = 250          # across country, a point is put on a path this near rather than on the lattice
 
 
 class Options:
     """What the person said about how to go."""
 
-    def __init__(self, prefer: float = PREFER, ferries: bool = True, ice: bool = False, alpine: bool = False):
+    def __init__(self, prefer: float = PREFER, ferries: bool = True, ice: bool = False, alpine: bool = False,
+                 mountains: float = 0.0, across: bool = False):
         if not 0 <= prefer <= 1:
             raise Invalid("how much DNT's routes are preferred is from 0 to 1")
+        if not -1 <= mountains <= 1:
+            raise Invalid("how much the mountains (1) or the valleys (-1) are preferred is from -1 to 1")
         self.prefer, self.ferries, self.ice, self.alpine = float(prefer), ferries, ice, alpine
+        self.mountains, self.across = float(mountains), across
+
+    def height(self) -> str:
+        """What a metre counts more or less for how high it lies, as SQL: up in the mountains less when they are
+        preferred, down in the valleys less when they are."""
+        if not self.mountains:
+            return "1"
+        return f"(CASE WHEN high IS NULL THEN 1 ELSE 1 - {HIGH_LESS * self.mountains} * (2 * high - 1) END)"
+
+    def field(self) -> str:
+        """What a stretch across country counts, as SQL: twice a path, more over bog and glacier, and what it
+        climbs and goes down."""
+        return f"""((length_m * {FIELD} * (CASE WHEN wet THEN {BOG} ELSE 1 END) * (CASE WHEN ice THEN 1.5 ELSE 1 END)
+                     + (up_m + down_m) * {FIELD_CLIMB}) * {self.height()})"""
 
     def allowed(self) -> str:
         """Which stretches may be walked, as SQL."""
@@ -112,7 +136,8 @@ class Options:
                                  WHEN 'demanding_alpine_hiking' THEN 2.5 WHEN 'difficult_alpine_hiking' THEN 3 ELSE 1 END)
                      * (CASE WHEN visibility IN ('bad', 'horrible', 'no') THEN 1.4 ELSE 1 END)
                      * (CASE WHEN private THEN 1.3 ELSE 1 END) * (CASE WHEN tunnel THEN 3 ELSE 1 END)
-                     * (CASE WHEN discouraged THEN 2 ELSE 1 END) * (CASE WHEN ice THEN 1.5 ELSE 1 END) END)"""
+                     * (CASE WHEN discouraged THEN 2 ELSE 1 END) * (CASE WHEN ice THEN 1.5 ELSE 1 END)
+                     * {self.height()} END)"""
 
     def least(self) -> float:
         """The least a metre can count: what A*'s guess of the way left is scaled by, a little less for the map's
@@ -120,12 +145,14 @@ class Options:
         least = min(1 - DNT_LESS * self.prefer, *KIND.values())
         if self.ferries:
             least = min(least, FERRY)
-        return least * 0.95
+        return least * (1 - HIGH_LESS * abs(self.mountains)) * 0.95
 
 
 def _class(e: dict) -> str:
     if e["kind"] == "ferry":
         return "ferry"
+    if e["kind"] == "field":
+        return "field"
     if e["dnt"]:
         return "dnt"
     if e["trail"]:
@@ -150,6 +177,10 @@ def _snap(conn, lon: float, lat: float, o: Options, great: bool = False) -> dict
             FROM walk.edge e, (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS p) q
             WHERE {o.allowed()} AND e.kind <> 'ferry' {f"AND e.piece_nodes >= {GREAT}" if great else ""}
             ORDER BY e.geom <-> p LIMIT 1""", (lon, lat)).fetchone()
+    if o.across and (found is None or found["off_m"] > FIELD_NEAR_M):
+        field = _snap_field(conn, lon, lat, o)       # across country: onto the lattice, unless a path is near
+        if field is not None and (found is None or field["off_m"] < found["off_m"]):
+            found = field
     reach = GREAT_SNAP_M if great else SNAP_M
     if found is None or found["off_m"] > reach:
         raise NotFound(f"no path or road {'that leads anywhere ' if great else ''}within {reach / 1000:.0f} km "
@@ -158,6 +189,25 @@ def _snap(conn, lon: float, lat: float, o: Options, great: bool = False) -> dict
         if not isinstance(found[part][0], list):
             found[part] = [found[part], found[part]]
     return found
+
+
+def _snap_field(conn, lon: float, lat: float, o: Options) -> dict | None:
+    """The stretch of the lattice across country nearest to a point."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(f"""
+            SELECT e.id, e.source, e.target, e.length_m, {o.field()} / greatest(e.length_m, 0.01) AS per_m,
+                   ST_LineLocatePoint(e.geom, p) AS f, ST_Distance(e.geom, p) AS off_m,
+                   ST_X(ST_ClosestPoint(e.geom, p)) AS x, ST_Y(ST_ClosestPoint(e.geom, p)) AS y,
+                   ST_AsGeoJSON(ST_Transform(ST_LineSubstring(e.geom, 0, ST_LineLocatePoint(e.geom, p)), 4326), 6)::json
+                       -> 'coordinates' AS before,
+                   ST_AsGeoJSON(ST_Transform(ST_LineSubstring(e.geom, ST_LineLocatePoint(e.geom, p), 1), 4326), 6)::json
+                       -> 'coordinates' AS after,
+                   ST_AsGeoJSON(ST_Transform(ST_ClosestPoint(e.geom, p), 4326), 6)::json -> 'coordinates' AS at,
+                   'field' AS kind, false AS dnt, false AS trail, e.ice, NULL AS name, 'field' AS origin,
+                   NULL::bigint AS piece, {GREAT} AS piece_nodes
+            FROM walk.field e, (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS p) q
+            WHERE e.kind = 'field' {"" if o.ice else "AND NOT e.ice"}
+            ORDER BY e.geom <-> p LIMIT 1""", (lon, lat)).fetchone()
 
 
 def _box(conn, a: dict, b: dict, margin: float) -> str:
@@ -183,15 +233,22 @@ def _leg(conn, a: dict, b: dict, o: Options) -> list[dict]:
     """The way from one snapped point to the next: the stretches walked, in order, each the way it is walked."""
     far = math.hypot(b["x"] - a["x"], b["y"] - a["y"])
     for margin in (max(5000, 0.3 * far), max(25_000, 1.0 * far)):
+        box = _box(conn, a, b, margin)
         edges = (f"SELECT id, source, target, {o.cost()} AS cost, x1, y1, x2, y2 FROM walk.edge "
-                 f"WHERE geom && {_box(conn, a, b, margin)} AND {o.allowed()} UNION ALL {_ends(a, b)}")
+                 f"WHERE geom && {box} AND {o.allowed()} UNION ALL {_ends(a, b)}")
+        if o.across:
+            edges += (f" UNION ALL SELECT id, source, target, {o.field()} AS cost, x1, y1, x2, y2 FROM walk.field "
+                      f"WHERE geom && {box}" + ("" if o.ice else " AND NOT ice"))
         with conn.cursor(row_factory=dict_row) as cur:
             walked = cur.execute("""
                 SELECT r.path_seq, r.node, r.edge, e.kind, e.name, e.trail, e.dnt, e.ice, e.origin, e.sac, e.length_m,
                        ST_AsGeoJSON(ST_Transform(CASE WHEN r.node = e.source THEN e.geom ELSE ST_Reverse(e.geom) END,
                                                  4326), 6)::json -> 'coordinates' AS coords
                 FROM pgr_aStar(%s, %s::bigint, %s::bigint, directed => false, heuristic => 4, factor => %s) r
-                LEFT JOIN walk.edge e ON e.id = r.edge
+                LEFT JOIN (SELECT id, source, kind, name, trail, dnt, ice, origin, sac, length_m, geom FROM walk.edge
+                           UNION ALL
+                           SELECT id, source, 'field', NULL, false, false, ice, 'field', NULL, length_m, geom
+                           FROM walk.field) e ON e.id = r.edge
                 WHERE r.edge <> -1 ORDER BY r.path_seq""", (edges, START, END, o.least())).fetchall()
         if walked:
             break
@@ -330,7 +387,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                 add("off", None, False, [p, a["at"]], a["off_m"])
                 off[n] = round(a["off_m"])
             for w in way:
-                origins.add("turrutebasen" if w["origin"] in ("turrutebasen", "ours") else "osm")
+                origins.add({"turrutebasen": "turrutebasen", "ours": "turrutebasen", "field": "terrain"}.get(w["origin"], "osm"))
                 add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
             if snap[n + 1]:
                 moved[n + 1] = b["at"]
@@ -355,8 +412,9 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                       "minutes": height.minutes(on_foot, 0), "ferry_minutes": round(by.get("ferry", 0) / FERRY_KMH * 0.06)},
             "off": [{"point": i, "off_m": m} for i, m in sorted(off.items())],
             "snapped": {str(i): at for i, at in sorted(moved.items())},
-            "credits": [CREDITS[k] for k in ("osm", "turrutebasen") if k in origins],
-            "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine}}
+            "credits": [CREDITS[k] for k in ("osm", "turrutebasen", "terrain") if k in origins],
+            "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine,
+                        "mountains": o.mountains, "across": o.across}}
 
 
 def _named(conn, steps: list[dict], coords: list) -> None:
@@ -384,7 +442,8 @@ def _named(conn, steps: list[dict], coords: list) -> None:
 
 def _says(s: dict) -> str:
     what = {"dnt": "Along DNT's marked route", "marked": "Along a marked route", "path": "Path",
-            "road": "Road", "ferry": "Ferry", "off": "Straight, with no path (a sketch)"}[s["class"]]
+            "road": "Road", "ferry": "Ferry", "off": "Straight, with no path (a sketch)",
+            "field": "Across country, with no path"}[s["class"]]
     if s.get("routes"):
         what += f" {s['routes']}"
     if s["name"] and (s["class"] in ("path", "road", "ferry") or not s.get("routes")):

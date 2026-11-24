@@ -352,3 +352,111 @@ def test_a_point_the_line_is_dragged_to_is_passed_on_the_nearest_path(network, c
     assert [o["point"] for o in out["off"]] == [1] and out["snapped"] == {}
     with pytest.raises(Invalid, match="for each point"):
         planner.plan(conn, [a, b], snap=[True])
+
+
+P, Q = (7.20, 61.72), (7.29, 61.72)                 # far from every path, with a lake and a river between them
+LAKE = [(7.225, 61.712), (7.235, 61.712), (7.235, 61.728), (7.225, 61.728), (7.225, 61.712)]
+RIVER = [(7.255, 61.705), (7.255, 61.735)]
+WALL = (7.32, 61.70, 61.74)                         # a cliff 500 m high, north to south at this longitude
+
+
+@pytest.fixture
+def field_network(loaded, tmp_path, monkeypatch):
+    """The network of `network`, built with a made-up height model: the ground rises 30 m for every 50 m north,
+    is at the tree line at A, and has a cliff; and with a lake, a river and a bog in the extract."""
+    with psycopg.connect(dbname=TEST_DB) as owner:
+        owner.execute("SET ROLE stiflyt2_owner")
+        along = [tuple(round(v, 7) for v in c) for c in owner.execute(
+            "SELECT ST_AsGeoJSON(ST_Transform(geom, 4326), 7)::json->'coordinates' FROM source_index.trail_segment "
+            "WHERE id = %s", (TRAIL,)).fetchone()[0]]
+        a, b = along[0], along[-1]
+
+        def xy(lon, lat):
+            return owner.execute("SELECT ST_X(p), ST_Y(p) FROM ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) p",
+                                 (lon, lat)).fetchone()
+
+        ax, ay = xy(*a)
+        code = terrain.code_of(ax, ay)
+        x0, y0 = terrain.corner(code)
+        row_a = (y0 + terrain.TILE_M - ay) / terrain.CELL_M
+        wall_x, wall_n, wall_s = xy(WALL[0], WALL[2])[0], xy(WALL[0], WALL[2])[1], xy(WALL[0], WALL[1])[1]
+        col_w = (wall_x - x0) / terrain.CELL_M
+        rows_w = sorted(((y0 + terrain.TILE_M - wall_n) / terrain.CELL_M, (y0 + terrain.TILE_M - wall_s) / terrain.CELL_M))
+        line = tuple(round(float(v), 3) for v in high_tree(ay))
+        monkeypatch.setattr(settings, "data_dir", tmp_path)
+        monkeypatch.setattr(terrain, "TILES", [code])
+        terrain._kept.clear()
+        terrain.folder().mkdir(parents=True)
+        tile(lambda r, c: line[0] + 30 * (row_a - r) + 500 * ((c >= col_w) & (r >= rows_w[0]) & (r <= rows_w[1]))
+             ).save(terrain.folder() / f"{code}.tif")
+        aside = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.003)
+        ways = [({"highway": "path", "name": "Langs ruta"}, along), ({"highway": "path", "name": "Snarveien"}, [a, aside, b]),
+                ({"natural": "water", "name": "Testvatnet"}, LAKE), ({"waterway": "river", "name": "Testelva"}, RIVER)]
+        counts = walknet.build(owner, extract(tmp_path / "test-latest.osm", ways), "field1")
+        yield {"a": a, "b": b, "counts": counts, "wall": (wall_x, wall_s + 100, wall_n - 100)}     # in the grid
+    terrain._kept.clear()
+
+
+@pytest.fixture
+def field_conn(field_network):
+    """As `conn`, on the network built with the height model (not anew without it)."""
+    with psycopg.connect(role_dsn("stiflyt2_api")) as c:
+        yield c
+        c.rollback()
+
+
+def high_tree(north):
+    return (float(walknet.tree_line(north)),)
+
+
+def test_each_stretch_knows_how_high_it_lies_and_how_far_up_the_mountains(field_network, field_conn):
+    conn = field_conn
+    counts = field_network["counts"]
+    assert counts["with_heights"] > 0 and counts["across_country"] > 10_000 and counts["ties"] > 0
+    rows = {n: (z, h) for n, z, h in conn.execute(
+        "SELECT name, z, high FROM walk.edge WHERE name IN ('Langs ruta', 'Snarveien')").fetchall()}
+    assert rows["Snarveien"][0] > rows["Langs ruta"][0] + 50 and 0 < rows["Langs ruta"][1] < rows["Snarveien"][1] < 1
+    assert walknet.high_of(walknet.tree_line(7_000_000) + 300, 7_000_000) == 1
+    assert walknet.high_of(walknet.tree_line(7_000_000) - 300, 7_000_000) == 0
+
+
+def test_the_mountains_or_the_valleys_are_preferred_as_asked(field_network, field_conn):
+    conn = field_conn
+    a, b = field_network["a"], field_network["b"]
+    up = planner.plan(conn, [a, b], planner.Options(prefer=0, mountains=1))
+    down = planner.plan(conn, [a, b], planner.Options(prefer=0, mountains=-1))
+    assert [s["name"] for s in up["steps"]] == ["Snarveien"] and down["steps"][0]["class"] == "dnt"
+    assert up["options"]["mountains"] == 1
+    with pytest.raises(Invalid, match="mountains"):
+        planner.Options(mountains=2)
+
+
+def test_across_country_it_goes_round_water_rivers_and_cliffs(field_network, field_conn):
+    conn = field_conn
+    # No path within 10 km of either end: without the lattice the leg is drawn straight, over the lake and the river.
+    kept = planner.plan(conn, [P, Q])
+    assert kept["legs"][0]["unfound"] and set(kept["total"]["by"]) == {"off"}
+    told = planner.plan(conn, [P, Q], planner.Options(across=True))
+    assert told["legs"][0]["unfound"] is None
+    assert set(told["total"]["by"]) <= {"field", "off"} and told["total"]["by"]["field"] > 4000
+    across = [s for s in told["steps"] if s["class"] == "field"]
+    assert across[0]["says"] == "Across country, with no path" and planner.CREDITS["terrain"] in told["credits"]
+    assert told["total"]["by"].get("off", 0) < 2 * 360            # to the lattice and from it, at each end
+    assert kept["total"]["metres"] < told["total"]["metres"] < 2 * kept["total"]["metres"]       # round the water
+    line = psycopg.types.json.Json({"type": "LineString", "coordinates": told["coords"]})
+    for what in (LAKE, RIVER):
+        shape = {"type": "Polygon", "coordinates": [what]} if what is LAKE else {"type": "LineString", "coordinates": what}
+        assert not conn.execute("SELECT ST_Intersects(ST_GeomFromGeoJSON(%s), ST_GeomFromGeoJSON(%s))",
+                                (line, psycopg.types.json.Json(shape))).fetchone()[0], what
+    # Nothing across country climbs the cliff, nor crosses the river or the lake.
+    x, south, north = field_network["wall"]
+    assert conn.execute("SELECT count(*) FROM walk.field WHERE kind = 'field' AND ST_Intersects(geom, "
+                        "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 25833))",
+                        (x, south, x, north)).fetchone()[0] == 0
+    for shape in ({"type": "LineString", "coordinates": RIVER}, {"type": "Polygon", "coordinates": [LAKE]}):
+        assert conn.execute("SELECT count(*) FROM walk.field WHERE kind = 'field' AND ST_Intersects(geom, "
+                            "ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 25833))",
+                            (psycopg.types.json.Json(shape),)).fetchone()[0] == 0, shape
+    # Timed as ground with no path.
+    parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1], "rough": s["class"] in ("off", "field")} for s in told["steps"]]
+    assert planner.heights(conn, parts)["rough_m"] == pytest.approx(told["total"]["walked_m"], rel=0.02)

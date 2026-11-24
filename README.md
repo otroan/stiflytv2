@@ -1317,6 +1317,27 @@ whole country, nearest the map first). The way is drawn in the colours of what
 it goes along (DNT's routes, other marked routes, paths, roads, ferries), with
 what each adds up to.
 
+**Drag the line** to another path or road to go that way: where it is let go is
+a point the way passes, put on the nearest path or road and passed there, not
+walked out to and back. A second slider says whether it keeps **down in the
+valleys or up in the mountains**: each stretch knows how high it lies, from the
+height model, and how far that is above or below the tree line (taken as 1,100 m
+at 60° north, 300 m at 70°); at either end of the slider a stretch up in the
+mountains (or down in the valleys) counts up to 40 % less, and one at the other
+end as much more.
+
+**Across country** (ticked to ask for it): where there is no path, over open
+ground. The network has a lattice for it (`walk.field`, import migration `0027`):
+a point every 500 m over land, each joined to its eight neighbours where the
+ground between allows, looked at every 50 m along the way: not over the sea,
+a lake or a river (OpenStreetMap's water and rivers, rasterised at 100 m), nor
+where it is steeper than 35°; over a glacier only when glaciers are ticked;
+slower over bog. Each point is tied to the nearest junction of the paths in its
+square. A metre across country counts as two on a path, and every metre climbed
+or gone down as four more; it is drawn green and dashed, and timed half as slow
+again as a path. It knows nothing of the forest, the scree or whether a stream
+can be waded: it is a sketch to look at on the map, not a route.
+
 Each leg between two points goes along paths and roads, or **straight over the
 ground** where nothing is mapped ("Straight instead"): a sketch, dashed, that
 knows nothing of the terrain but its heights, and is timed half as slow again
@@ -1368,8 +1389,8 @@ what of OpenStreetMap is in a plan is a produced work under ODbL, credited in
 the page and in the GPX file.
 
 Over the API: `POST /api/v1/planner/plan` with `points` ([lon, lat], 2 to 12),
-`prefer` (0 to 1), `ferries`, `ice`, `alpine`, and `straight` (one for each
-leg); `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
+`prefer` (0 to 1), `mountains` (-1 to 1), `across`, `ferries`, `ice`, `alpine`,
+`straight` (one for each leg) and `snap` (one for each point); `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
 with `coords`, `ferry`, `rough`, `ice`) and `hours`. An assistant has `plan_walk`,
 which it is told of only when the person has the feature.
 

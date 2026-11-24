@@ -3,13 +3,13 @@
 // days that end at huts. The tab is only there for one who has the feature; the server refuses the rest.
 // What a stretch is, is told by its colour: on the map, and in the list of what the way adds up to, which is the legend.
 const PLAN_CLASSES = { dnt: ["DNT's routes", "#c8161d"], marked: ["Other marked routes", "#e8741c"], path: ["Paths", "#8a5a2b"],
-                       road: ["Roads", "#5f6b73"], ferry: ["Ferries", "#1f6fc5"], off: ["No path, straight", "#1f2a30"] };
+                       road: ["Roads", "#5f6b73"], ferry: ["Ferries", "#1f6fc5"], field: ["Across country", "#5b8a3c"], off: ["No path, straight", "#1f2a30"] };
 const PLAN_KEY = "stiflyt2.plan";
 // The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
 // point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
 // two points, whether it is drawn straight over the ground, with no path.
 // A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to.
-const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
+const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7 },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
 if (planAsk.snap.length !== planAsk.points.length) planAsk.snap = planAsk.points.map(() => false);
@@ -117,7 +117,7 @@ async function askPlan() {
   const asked = ++planAsked;
   planBusy = true; render();
   try {
-    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains, across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
     if (asked !== planAsked) return;
     plan = got;
     // A point moved onto the path it is passed on: its letter goes there too.
@@ -131,7 +131,7 @@ async function askPlan() {
 async function askHeights(asked) {
   heightsBusy = true; render();
   try {
-    const parts = plan.steps.map(s => ({ coords: plan.coords.slice(s.at[0], s.at[1] + 1), ferry: s.class === "ferry", rough: s.class === "off", ice: s.ice }));
+    const parts = plan.steps.map(s => ({ coords: plan.coords.slice(s.at[0], s.at[1] + 1), ferry: s.class === "ferry", rough: s.class === "off" || s.class === "field", ice: s.ice }));
     const got = await send("POST", "planner/heights", { parts, hours: planAsk.hours });
     if (asked !== planAsked) return;
     planHeights = got;
@@ -200,9 +200,12 @@ function renderPlanner() {
     placeField("to", "To", end === null ? null : lone ? "B" : letter(last), end === null ? null : N[end], end === null ? "" : at(P[end])));
   const slider = el("input", { type: "range", min: 0, max: 100, step: 5, value: Math.round(planAsk.prefer * 100), "aria-label": "How much DNT's routes are preferred",
     oninput: e => { planAsk.prefer = Number(e.target.value) / 100; replanSoon(); } });
+  const heights = el("input", { type: "range", min: -100, max: 100, step: 10, value: Math.round(planAsk.mountains * 100), "aria-label": "Whether it keeps to the valleys or up in the mountains",
+    oninput: e => { planAsk.mountains = Number(e.target.value) / 100; replanSoon(); } });
   const form = el("div", { class: "trip-ask" },
     el("label", { class: "plan-prefer" }, el("span", {}, "Shortest"), slider, el("span", {}, "Along DNT's routes")),
-    ...[["ferries", "Ferries may be taken"], ["ice", "Over glaciers too"], ["alpine", "Demanding alpine paths and via ferratas too"]].map(([key, says]) =>
+    el("label", { class: "plan-prefer" }, el("span", {}, "Valleys"), heights, el("span", {}, "Mountains")),
+    ...[["across", "Across country where there is no path (a sketch)"], ["ferries", "Ferries may be taken"], ["ice", "Over glaciers too"], ["alpine", "Demanding alpine paths and via ferratas too"]].map(([key, says]) =>
       el("label", {}, el("input", { type: "checkbox", checked: planAsk[key] ? "" : false, onchange: e => { planAsk[key] = e.target.checked; replan(); } }), ` ${says}`)),
     el("label", {}, "A day is ", el("input", { type: "number", min: 3, max: 14, step: 0.5, value: planAsk.hours, style: "width:5em",
       onchange: e => { planAsk.hours = Math.min(14, Math.max(3, Number(e.target.value) || 7)); keepAsk(); if (plan) { planHeights = null; askHeights(planAsked); } } }), " hours of walking, with no rests"));
@@ -220,7 +223,7 @@ function renderPlanner() {
       // A few metres from a click to the nearest way are said below, not as a kind of their own.
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
-      ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from the nearest path or road: that bit is drawn straight.`)),
+      ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from where the way passes: that bit is drawn straight.`)),
       // Each leg: along paths, or straight over the ground where nothing is mapped. One with no way found is drawn
       // straight and says why; one that goes far round says so, for it to be drawn straight if that is better.
       el("ol", { class: "plan-legs" }, ...plan.legs.map(l => el("li", { class: l.unfound ? "unfound" : l.roundabout ? "roundabout" : "" },
@@ -299,7 +302,7 @@ function drawPlan() {
     const steps = on && plan ? plan.steps : [];
     const legOf = s => plan.legs.findIndex(l => s.at[0] >= l.at[0] && s.at[0] < Math.max(l.at[1], l.at[0] + 1));
     map.getSource("plan").setData({ type: "FeatureCollection", features: steps.map(s => ({ type: "Feature",
-      properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.ice, leg: legOf(s) },
+      properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.class === "field" || s.ice, leg: legOf(s) },
       geometry: { type: "LineString", coordinates: plan.coords.slice(s.at[0], s.at[1] + 1) } })) });
     const days = on && plan && planHeights ? planHeights.days.filter(d => !d.last) : [];
     map.getSource("plan-days").setData({ type: "FeatureCollection", features: days.map(d => ({ type: "Feature", properties: { day: String(d.day) },
