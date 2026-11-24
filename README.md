@@ -1242,6 +1242,13 @@ lens (its reports, its issues, the properties it crosses first). Under Plan,
 routes of an area). Each part goes back to the lens last used in it; a row with
 only one choice in it is not shown.
 
+Beside the parts, a **search** ("/" goes to it): a route of ours in use by its
+code, its name or a place it passes (in any area: `GET /api/v1/search/routes?q=`),
+an area by its letters, and a place anywhere in Norway by its name (Stedsnavn).
+A route opens in its area, in the lens one is in; an area opens; the map goes to
+a place and says what it is, and in the planner offers to begin or end the walk
+there. Enter takes the first, the arrows choose, Escape leaves it.
+
 ## Trips for work: a feature of its own
 
 For whoever is to inspect or mark some routes: say which, and get a trip on

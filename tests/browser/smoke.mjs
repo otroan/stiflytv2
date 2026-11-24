@@ -89,6 +89,26 @@ check("the front page lists the areas", await until(`document.querySelectorAll("
 await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = false; drawPhotos(); } })()`);
 check("routes is the part that is open, and the basket is out of the way", await js(`document.getElementById("tab-routes").getAttribute("aria-current") === "page" && getComputedStyle(document.getElementById("basket")).display === "none"`));
 check("the routes are on the map", await until(`Boolean(lines) && lines.features.length > 0 && styled`));
+// The search: a route by its code, opened where it is; and a place, the map gone there.
+{
+  const type = q => js(`(() => { const s = document.getElementById("search"); s.focus(); s.value = ${JSON.stringify(q)}; s.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  const first = await js(`get("search/routes", { q: "bre" }).then(r => r.length ? r[0].code : null)`);
+  check("there are routes of ours to search for", Boolean(first));
+  if (first) {
+    await type(first);
+    check("the search finds a route by its code", await until(`!document.getElementById("search-found").hidden && [...document.querySelectorAll("#search-found li.hit .code")].some(e => e.textContent === ${JSON.stringify(first)})`, 15),
+      await text("#search-found"));
+    await js(`document.getElementById("search").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))`);
+    check("and Enter opens it, in its area, from wherever one is", await until(`route === ${JSON.stringify(first)} && area === "bre" && Boolean(shownRoute && shownRoute.detail) && document.getElementById("search-found").hidden`, 20), await js("location.search"));
+    await js("history.back()");
+    check("and the browser's back goes back to where one was", await until(`route === null && area === null`, 15), await js("location.search"));
+  }
+  await type("Sprongdalshytta");
+  check("the search finds a place by its name", await until(`[...document.querySelectorAll("#search-found li.hit")].some(e => /^Sprongdalshytta/.test(e.textContent))`, 15), await text("#search-found"));
+  await js(`[...document.querySelectorAll("#search-found li.hit")].find(e => /^Sprongdalshytta/.test(e.textContent)).dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))`);
+  check("and the map goes there, saying what it is", await until(`Boolean(searchPin) && searchPin.isOpen() && /Sprongdalshytta/.test(searchPin.getElement().textContent)`, 15));
+  await js("searchPin.remove()");
+}
 check("at the top three parts, and under the routes the lenses one has", await js(`[...document.querySelectorAll("nav[aria-label='Parts of Stiflyt'] a")].filter(a => !a.hidden).map(a => a.textContent).join(",") === "Routes,Signs,Plan"
   && !document.getElementById("lenses").hidden && document.getElementById("lens-routes").getAttribute("aria-current") === "page" && document.getElementById("plans").hidden`),
   await js(`[...document.querySelectorAll("header nav a")].filter(a => !a.hidden).map(a => a.textContent).join(",")`));

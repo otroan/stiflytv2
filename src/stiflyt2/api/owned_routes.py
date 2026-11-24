@@ -23,6 +23,7 @@ from stiflyt2.domain import (
     proposals,
     report,
     routes,
+    search,
     undo,
     worklist,
 )
@@ -269,6 +270,13 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 
         with read.connection() as conn:
             return nightly.status(conn, Folder("var/backup"))
+
+    @app.get("/api/v1/search/routes")
+    def search_routes(q: Annotated[str, Query(min_length=1, max_length=100)],
+                      limit: Annotated[int, Query(ge=1, le=30)] = 10) -> list[dict]:
+        """Routes of ours in use by code, by name, or by a place they pass: for the search on the front page."""
+        with read.connection() as conn:
+            return search.routes(conn, q, limit)
 
     @app.get("/api/v1/owned/route-names")
     def route_names(ids: Annotated[str, Query(max_length=1000)]) -> dict[str, str | None]:
