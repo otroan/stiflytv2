@@ -162,7 +162,7 @@ def test_a_ferry_a_glacier_and_a_point_off_the_way(network, conn):
     # Clicked a little beside a path: it begins on the path, and says how far off it was.
     beside = planner.plan(conn, [[a[0] - 0.001, a[1]], network["b"]], planner.Options(prefer=1))
     assert beside["steps"][0]["class"] == "off" and 30 < beside["off"][0]["off_m"] < 80
-    for wrong in ([a], [a] * 13):
+    for wrong in ([a], [a] * (planner.MOST_POINTS + 1)):
         with pytest.raises(Invalid):
             planner.plan(conn, wrong)
     far = planner.plan(conn, [a, (10.0, 60.0)])
@@ -237,6 +237,15 @@ def test_the_planner_is_a_feature_of_its_own(network, monkeypatch):
             parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1]} for s in told["steps"]]
             up = client.post(f"{V1}/planner/heights", json={"parts": parts, "hours": 7}).json()
             assert up["days"][0]["last"] and up["up_m"] >= 0
+            # A leg kept as it was found, sent back as it came.
+            leg = told["legs"][0]
+            kept = {"coords": told["coords"], "joints": told["joints"], "origins": leg["origins"],
+                    "steps": [{k: st[k] for k in ("class", "name", "ice", "metres", "at")} for st in told["steps"]]}
+            again = client.post(f"{V1}/planner/plan", json={**ask, "kept": [kept]})
+            assert again.status_code == 200 and again.json()["coords"] == told["coords"] and again.json()["legs"][0]["kept"]
+            assert client.post(f"{V1}/planner/estimate", json={**ask, "kept": [kept]}).json()["legs"] == [0]
+            assert client.post(f"{V1}/planner/plan", json={**ask, "kept": [{**kept, "steps": [{"class": "nonsense", "metres": 1, "at": [0, 1]}]}]}).status_code == 422
+            assert client.get(f"{V1}/planner/near", params={"lon": network["a"][0], "lat": network["a"][1]}).json()["off_m"] < 1
             said, refused = call(client, "plan_walk", points=ask["points"], prefer=1)
             assert not refused and "coords" not in said and said["steps"][0]["says"].startswith("Along DNT's")
             assert said["heights"]["minutes"] > 0 and planner.CREDITS["height"] in said["credits"]
@@ -472,3 +481,31 @@ def test_how_long_a_plan_takes_is_said_before_it_is_asked_for(network, conn):
     assert planner.estimate(conn, [a, b], planner.Options(across=True))["seconds"] >= planner.LEG_S
     with pytest.raises(Invalid):
         planner.estimate(conn, [a])
+
+
+def test_a_leg_kept_as_it_was_found_is_not_looked_for_again(network, conn):
+    """Kept, a leg is taken as it was: the same line and steps; the legs that are not kept are found anew."""
+    a, b = network["a"], network["b"]
+    first = planner.plan(conn, [a, b, C], planner.Options(prefer=1))
+    assert {0, first["legs"][0]["at"][1], len(first["coords"]) - 1} <= set(first["joints"])
+
+    def kept(told, n):
+        leg = told["legs"][n]
+        i0, i1 = leg["at"]
+        return {"coords": told["coords"][i0:i1 + 1], "origins": leg["origins"], "unfound": leg["unfound"],
+                "roundabout": leg["roundabout"], "joints": [j - i0 for j in told["joints"] if i0 <= j <= i1],
+                "steps": [{**st, "at": [st["at"][0] - i0, st["at"][1] - i0]} for st in told["steps"]
+                          if i0 <= st["at"][0] and st["at"][1] <= i1]}
+
+    again = planner.plan(conn, [a, b, C], planner.Options(prefer=1), kept=[kept(first, 0), kept(first, 1)])
+    assert again["coords"] == first["coords"] and [s["says"] for s in again["steps"]] == [s["says"] for s in first["steps"]]
+    assert again["joints"] == first["joints"] and all(leg["kept"] for leg in again["legs"])
+    assert again["credits"] == first["credits"]
+    # The first kept, though now the shortest way would be asked for: it stays as it was; the second is found anew.
+    mixed = planner.plan(conn, [a, b, C], planner.Options(prefer=0), kept=[kept(first, 0), None])
+    assert mixed["steps"][0]["class"] == "dnt" and [leg["kept"] for leg in mixed["legs"]] == [True, False]
+    assert planner.estimate(conn, [a, b, C], kept=[True, False])["legs"][0] == 0
+    with pytest.raises(Invalid, match="kept"):
+        planner.plan(conn, [a, b], kept=[None, None])
+    # How far a spot is from the nearest path, for the line dragged there.
+    assert planner.near(conn, *a)["off_m"] < 1 and planner.near(conn, 10.0, 60.0)["off_m"] is None

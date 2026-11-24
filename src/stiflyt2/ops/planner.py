@@ -59,7 +59,7 @@ PREFER = 0.6                # how much DNT's routes are preferred when nothing i
 ALPINE = ("demanding_alpine_hiking", "difficult_alpine_hiking")
 SNAP_M = 10_000             # a point clicked further than this from any way has none near it: the leg is drawn straight
 OFF_M = 5                   # nearer than this to a way is on it
-MOST_POINTS = 12
+MOST_POINTS = 100           # a walk the line of which has been dragged here and there has many
 FERRY_KMH = 20              # how fast a ferry goes, for the time a plan takes
 START, END = 9_000_000_000_000_001, 9_000_000_000_000_002       # the two ends of a leg, as vertices of their own
 CLASSES = {                 # what a stretch is, as it is told and drawn
@@ -299,7 +299,7 @@ def _metres(coords: list) -> float:
 
 
 def plan(conn, points: list, o: Options | None = None, straight: list[bool] | None = None,
-         snap: list[bool] | None = None) -> dict:
+         snap: list[bool] | None = None, kept: list[dict | None] | None = None) -> dict:
     """A way on foot through the points, in order: the line, told in steps, and what it adds up to.
 
     A leg between two points goes along paths and roads, or straight over the ground where `straight` says so
@@ -307,6 +307,11 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     too, and says why (`legs`). A point `snap` says of (one for each point; the line dragged to another path)
     is where the way passes on the nearest stretch, not the spot itself: it is not walked out to and back,
     and where it was moved to is in `snapped`.
+
+    A leg `kept` gives (one for each leg, or None) is not looked for again but taken as it was found before:
+    its line, its steps, the junctions along it and what it is from, as this gave them. So a change to one part
+    of a way (a point moved, the line dragged) finds that part anew and leaves the rest as it was. Where the
+    stretches along the way meet, by index into the line, is in `joints`.
     """
     o = o or Options()
     if not 2 <= len(points) <= MOST_POINTS:
@@ -317,7 +322,11 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     snap = list(snap) if snap is not None else [False] * len(points)
     if len(snap) != len(points):
         raise Invalid("say for each point, and only for them, whether it is moved onto the nearest stretch")
+    kept = list(kept) if kept is not None else [None] * (len(points) - 1)
+    if len(kept) != len(points) - 1:
+        raise Invalid("say for each leg between two points, and only for them, whether it is kept as it was found")
     moved: dict[int, list] = {}
+    joints: set[int] = set()
     if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM walk.built)").fetchone()[0]:
         raise NotFound("the planner's network has not been built yet (`stiflyt2 planner build`)")
     conn.execute(f"SET LOCAL statement_timeout = '{SLOW_S}s'")         # a long way is a big search
@@ -359,6 +368,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
         walked[0] += metres
         start = len(coords) - 1 if coords else 0
         coords.extend(line[1:] if coords else line)
+        joints.update((start, len(coords) - 1))
         last = steps[-1] if steps else None
         if last and last["class"] == cls and last["name"] == name and last["ice"] == ice and "via" not in last:
             last["metres"] += metres
@@ -371,6 +381,21 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
         p, q = [float(v) for v in points[n]], [float(v) for v in points[n + 1]]
         begun, before, crow = len(coords) - 1 if coords else 0, walked[0], _metres([p, q])
         why = way = None
+        mine: set[str] = set()
+        if kept[n]:
+            k = kept[n]
+            for st in k["steps"]:
+                add(st["class"], st.get("name"), bool(st.get("ice")), k["coords"][st["at"][0]:st["at"][1] + 1], st["metres"])
+            joints.update(begun + j for j in k.get("joints", []) if 0 <= j < len(k["coords"]))
+            mine = set(k.get("origins", [])) & set(CREDITS)
+            origins.update(mine)
+            metres = walked[0] - before
+            legs.append({"from": n, "to": n + 1, "straight": straight[n], "unfound": k.get("unfound"),
+                         "metres": round(metres), "crow_m": round(crow), "at": [begun, len(coords) - 1],
+                         "roundabout": bool(k.get("roundabout")), "origins": sorted(mine), "kept": True})
+            if n + 2 < len(points) and steps:
+                steps[-1]["via"] = n + 1
+            continue
         if not straight[n]:
             a, b = ends(n)
             why = a if isinstance(a, str) else b if isinstance(b, str) else None
@@ -388,16 +413,17 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                 add("off", None, False, [p, a["at"]], a["off_m"])
                 off[n] = round(a["off_m"])
             for w in way:
-                origins.add({"turrutebasen": "turrutebasen", "ours": "turrutebasen", "field": "terrain"}.get(w["origin"], "osm"))
+                mine.add({"turrutebasen": "turrutebasen", "ours": "turrutebasen", "field": "terrain"}.get(w["origin"], "osm"))
                 add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
             if snap[n + 1]:
                 moved[n + 1] = b["at"]
             elif b["off_m"] > OFF_M:
                 add("off", None, False, [b["at"], q], b["off_m"])
                 off[n + 1] = round(b["off_m"])
+        origins.update(mine)
         metres = walked[0] - before
         legs.append({"from": n, "to": n + 1, "straight": straight[n], "unfound": why, "metres": round(metres),
-                     "crow_m": round(crow), "at": [begun, len(coords) - 1],
+                     "crow_m": round(crow), "at": [begun, len(coords) - 1], "origins": sorted(mine), "kept": False,
                      "roundabout": way is not None and metres > ROUNDABOUT * crow and metres - crow > ROUNDABOUT_M})
         if n + 2 < len(points) and steps:
             steps[-1]["via"] = n + 1                # a point passed on the way
@@ -413,6 +439,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                       "minutes": height.minutes(on_foot, 0), "ferry_minutes": round(by.get("ferry", 0) / FERRY_KMH * 0.06)},
             "off": [{"point": i, "off_m": m} for i, m in sorted(off.items())],
             "snapped": {str(i): at for i, at in sorted(moved.items())},
+            "joints": sorted(j for j in joints if j < len(coords)),
             "credits": [CREDITS[k] for k in ("osm", "turrutebasen", "terrain") if k in origins],
             "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine,
                         "mountains": o.mountains, "across": o.across}}
@@ -436,7 +463,8 @@ def _share(conn, table: str, box: str) -> float:
         return 0.0
 
 
-def estimate(conn, points: list, o: Options | None = None, straight: list[bool] | None = None) -> dict:
+def estimate(conn, points: list, o: Options | None = None, straight: list[bool] | None = None,
+             kept: list[bool] | None = None) -> dict:
     """About how long a plan would take, before it is asked for: from how many stretches lie in the box each leg is
     searched in, as the database's statistics have it. Takes a millisecond."""
     o = o or Options()
@@ -452,8 +480,8 @@ def estimate(conn, points: list, o: Options | None = None, straight: list[bool] 
     for n, ((x1, y1), (x2, y2)) in enumerate(itertools.pairwise(xy)):
         far = math.hypot(x2 - x1, y2 - y1)
         crow += far
-        if n < len(straight) and straight[n]:
-            legs.append(0.0)
+        if (n < len(straight) and straight[n]) or (kept and n < len(kept) and kept[n]):
+            legs.append(0.0)                # drawn straight, or kept as it was found: nothing to look for
             continue
         m = max(5000, 0.3 * far)
         box = f"ST_MakeEnvelope({min(x1, x2) - m}, {min(y1, y2) - m}, {max(x1, x2) + m}, {max(y1, y2) + m}, 25833)"
@@ -462,6 +490,16 @@ def estimate(conn, points: list, o: Options | None = None, straight: list[bool] 
         legs.append(LEG_S + edges * tuples.get("edge", 0) * EDGE_S + fields * tuples.get("field", 0) * FIELD_S)
     return {"seconds": round(sum(legs), 1), "legs": [round(s, 1) for s in legs],
             "heights_seconds": round(HEIGHTS_S + crow * WALKED_PER_CROW / 1000 * HEIGHTS_S_PER_KM, 1)}
+
+
+def near(conn, lon: float, lat: float, o: Options | None = None) -> dict:
+    """How far a point is from the nearest path or road one may walk, and where on it: for the line dragged
+    there, to tell a path from open ground."""
+    try:
+        found = _snap(conn, lon, lat, o or Options())
+    except NotFound:
+        return {"off_m": None, "at": None}
+    return {"off_m": round(found["off_m"], 1), "at": found["at"], "kind": found["kind"]}
 
 
 def _named(conn, steps: list[dict], coords: list) -> None:

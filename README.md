@@ -1317,9 +1317,16 @@ whole country, nearest the map first). The way is drawn in the colours of what
 it goes along (DNT's routes, other marked routes, paths, roads, ferries), with
 what each adds up to.
 
-**Drag the line** to another path or road to go that way: where it is let go is
-a point the way passes, put on the nearest path or road and passed there, not
-walked out to and back. A second slider says whether it keeps **down in the
+**Drag the line** to change one part of the way and leave the rest as it is:
+only the part between the junctions on either side of where it was taken hold
+of is found anew, and the way is held where it was by hidden points there. Let
+go of within 150 m of a path or road, the point goes onto it and is passed
+there; on open ground, or where the line went across country or straight, it
+stays exactly where it was let go of, straight from the points on either side
+("as you have laid it"; "Find it anew" makes it one leg again). The same holds
+for every change: the legs found before are sent back as they were (`kept`)
+and only those that changed are looked for, so moving a point, adding one or
+taking one away finds only the legs about it. A second slider says whether it keeps **down in the
 valleys or up in the mountains**: each stretch knows how high it lies, from the
 height model, and how far that is above or below the tree line (taken as 1,100 m
 at 60° north, 300 m at 70°); at either end of the slider a stretch up in the
@@ -1390,7 +1397,9 @@ the page and in the GPX file.
 
 Over the API: `POST /api/v1/planner/plan` with `points` ([lon, lat], 2 to 12),
 `prefer` (0 to 1), `mountains` (-1 to 1), `across`, `ferries`, `ice`, `alpine`,
-`straight` (one for each leg) and `snap` (one for each point); `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
+`straight` and `kept` (one for each leg: a leg as it was found, to be taken as it is) and `snap` (one for each
+point); the plan says where its stretches meet (`joints`). `GET /api/v1/planner/near` says how far a spot is
+from the nearest path or road; `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
 with `coords`, `ferry`, `rough`, `ice`) and `hours`. An assistant has `plan_walk`,
 which it is told of only when the person has the feature.
 

@@ -8,11 +8,21 @@ const PLAN_KEY = "stiflyt2.plan";
 // The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
 // point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
 // two points, whether it is drawn straight over the ground, with no path.
-// A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to.
-const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
+// A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to. A point that is
+// `hidden` is not one of yours: it holds the way where it was on either side of where the line was dragged, so that
+// only the part between is found anew. It has no letter, and goes when the point it was made for goes.
+const planAsk = Object.assign({ points: [], names: [], snap: [], hidden: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
-if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
-if (planAsk.snap.length !== planAsk.points.length) planAsk.snap = planAsk.points.map(() => false);
+function pointsFit() {       // a name, a snap and a hidden for each point, whatever was done to them
+  for (const k of ["names", "snap", "hidden"]) {
+    const A = planAsk[k] || (planAsk[k] = []);
+    while (A.length < planAsk.points.length) A.push(k === "names" ? null : false);
+    A.length = planAsk.points.length;
+  }
+}
+pointsFit();
+const planVisible = () => planAsk.points.map((_, i) => i).filter(i => !planAsk.hidden[i]);
+const letterOf = i => { const v = planVisible().indexOf(i); return v < 0 ? "" : planAsk.lone === "end" ? "B" : letter(v); };
 function legsFit() {         // one for each leg, whatever was done to the points
   const S = planAsk.straight, n = Math.max(0, planAsk.points.length - 1);
   while (S.length < n) S.push(false);
@@ -24,6 +34,11 @@ let planAsked = 0, planMarkers = [], planDay = null;
 let planDrag = null, planIgnoreClick = false;       // the line taken hold of, and the click that letting go of it makes
 let planEstimate = null, planStale = false, planPhase = null, planEstimating = false;     // how long, whether from before, what is under way
 const PLAN_AUTO_S = 3;          // a way thought to take no longer than this is found by itself, when the person lets it
+const PLAN_SNAP_M = 150;        // the line let go of this near a path or road goes along it; further off, exactly there
+const PLAN_MOST = 100;
+// The legs found so far, by what they were found for: a leg asked for again just as it was is sent back to be kept,
+// not looked for again. So a change to one part of the way finds that part anew and leaves the rest as it is.
+let planLegCache = new Map();
 const hasPlanner = () => (me.features || []).includes("planner");
 const letter = i => String.fromCharCode(65 + i);
 const hoursAndMinutes = m => `${Math.floor(m / 60)} h ${String(Math.round(m) % 60).padStart(2, "0")}`;
@@ -32,45 +47,98 @@ function keepAsk() { localStorage.setItem(PLAN_KEY, JSON.stringify(planAsk)); }
 // A click on the map: the first is where the walk begins, the next where it ends, and each one after that goes on
 // further from there, so that the end before becomes a place passed on the way.
 function planAt(at) {
-  if (planAsk.points.length >= 12) { planProblem = "A walk goes through 12 points at the most."; render(); return; }
+  if (planAsk.points.length >= PLAN_MOST) { planProblem = `A walk goes through ${PLAN_MOST} points at the most.`; render(); return; }
   const p = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))];
-  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.snap.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
-  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.snap.push(false); planAsk.straight.push(false); }
+  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
+  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.straight.push(false); }
   replan();
 }
 // A place found by its name, as where the walk begins or where it ends.
 function planFrom(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.snap.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }
+  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }
   else { P[0] = p; N[0] = name; planAsk.snap[0] = false; }
   replan();
 }
 function planTo(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length) { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.lone = "end"; }
-  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.straight.push(false); }
+  if (!P.length) { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.lone = "end"; }
+  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.straight.push(false); }
   else { P[P.length - 1] = p; N[N.length - 1] = name; planAsk.snap[P.length - 1] = false; }
   replan();
 }
+// A point of yours taken away, and the hidden ones that held the way on either side of it: the legs about it become one.
 function planRemove(i) {
-  const P = planAsk.points;
-  if (P.length === 1) { planStartAgain(); return; }
-  const S = planAsk.straight;
-  if (i === 0) S.shift(); else if (i === P.length - 1) S.pop(); else S.splice(i - 1, 2, S[i - 1] && S[i]);    // two legs become one
-  P.splice(i, 1); planAsk.names.splice(i, 1); planAsk.snap.splice(i, 1);
-  if (P.length === 1 && i === 0) planAsk.lone = "end";        // what is left is where it ends
+  const P = planAsk.points, H = planAsk.hidden, S = planAsk.straight;
+  if (planVisible().length === 1) { planStartAgain(); return; }
+  let lo = i, hi = i;
+  while (lo > 0 && H[lo - 1]) lo--;
+  while (hi < P.length - 1 && H[hi + 1]) hi++;
+  if (lo === 0) S.splice(0, hi + 1);
+  else if (hi === P.length - 1) S.splice(lo - 1, hi - lo + 1);
+  else S.splice(lo - 1, hi - lo + 2, S.slice(lo - 1, hi + 1).every(Boolean));        // the legs about it become one
+  for (const k of ["points", "names", "snap", "hidden"]) planAsk[k].splice(lo, hi - lo + 1);
+  if (P.length === 1 && lo === 0) planAsk.lone = "end";        // what is left is where it ends
   replan();
 }
-function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.snap.length = 0; planAsk.straight.length = 0; planAsk.lone = null; replan(); }
-// The line dragged somewhere else: a point there, between the two the leg runs between, that the way passes on the
-// nearest path or road. The leg becomes two, each drawn as the one was.
-function planInsert(i, p) {
-  const S = planAsk.straight;
-  planAsk.points.splice(i, 0, p); planAsk.names.splice(i, 0, null); planAsk.snap.splice(i, 0, true);
-  S.splice(i - 1, 1, S[i - 1] || false, S[i - 1] || false);
+function planStartAgain() { for (const k of ["points", "names", "snap", "hidden", "straight"]) planAsk[k].length = 0; planAsk.lone = null; replan(); }
+// Between two points of yours, straight or along paths: as one leg, the hidden points between taken away.
+function planSegmentStraight(a, b, straight) {
+  planAsk.straight.splice(a, b - a, straight);
+  for (const k of ["points", "names", "snap", "hidden"]) planAsk[k].splice(a + 1, b - a - 1);
   replan();
 }
-function planStraight(leg, straight) { planAsk.straight[leg] = straight; replan(); }
+const round6 = v => Number(v.toFixed(6));
+function metresOf(C) {
+  let m = 0;
+  for (let k = 1; k < C.length; k++) {
+    const [x0, y0] = C[k - 1], [x1, y1] = C[k];
+    m += 6371000 * Math.hypot((x1 - x0) * Math.PI / 180 * Math.cos((y0 + y1) / 2 * Math.PI / 180), (y1 - y0) * Math.PI / 180);
+  }
+  return m;
+}
+// What leg k is found for: its two points, how it is to be drawn, and how to go. The same again is the same leg.
+const legKey = k => JSON.stringify([planAsk.points[k], planAsk.points[k + 1], planAsk.straight[k], planAsk.snap[k], planAsk.snap[k + 1],
+  planAsk.prefer, planAsk.mountains, planAsk.across, planAsk.ferries, planAsk.ice, planAsk.alpine]);
+// The part of the way found from one index of its line to another, as a leg to be kept: its line, its steps (cut where
+// it is cut), the junctions along it, and what it is from.
+function keptOf(a, b, L) {
+  const coords = plan.coords.slice(a, b + 1);
+  const steps = plan.steps.filter(st => st.at[1] > a && st.at[0] < b).map(st => {
+    const lo = Math.max(st.at[0], a), hi = Math.min(st.at[1], b);
+    return { class: st.class, name: st.name, ice: st.ice, at: [lo - a, hi - a],
+             metres: lo === st.at[0] && hi === st.at[1] ? st.metres : metresOf(plan.coords.slice(lo, hi + 1)) };
+  });
+  return { coords, steps, joints: plan.joints.filter(j => j >= a && j <= b).map(j => j - a), origins: L.origins || [],
+           unfound: a === L.at[0] && b === L.at[1] ? L.unfound : null, roundabout: a === L.at[0] && b === L.at[1] && L.roundabout };
+}
+// The line taken hold of at index i of its line (on leg `leg`) and let go of at `at`. Only the part between the
+// junctions on either side of where it was taken is found anew: the way is held there by hidden points. Let go of
+// near a path or road, the way goes along it; on open ground, or where the line went across country or straight,
+// it goes exactly where it was let go of, straight from the points on either side.
+async function planDragTo(i, leg, at) {
+  const L = plan.legs[leg], J = plan.joints;
+  if (!L) return;
+  const j0 = Math.max(L.at[0], ...J.filter(j => j <= i && j >= L.at[0]));
+  const j1 = Math.min(L.at[1], ...J.filter(j => j > i && j <= L.at[1]));
+  const step = plan.steps.find(st => st.at[0] <= i && i < Math.max(st.at[1], st.at[0] + 1));
+  const p = [round6(at.lng), round6(at.lat)];
+  let ground = Boolean(step && (step.class === "field" || step.class === "off"));
+  if (!ground) {
+    try { const n = await get("planner/near", { lon: p[0], lat: p[1] }); ground = n.off_m === null || n.off_m > PLAN_SNAP_M; } catch { /* along paths, then */ }
+  }
+  const s = planAsk.straight[leg], add = [], legs = [];
+  const before = j0 > L.at[0] ? keptOf(L.at[0], j0, L) : null, after = j1 < L.at[1] ? keptOf(j1, L.at[1], L) : null;
+  if (before) { add.push({ p: plan.coords[j0], hidden: true, snap: true }); legs.push({ straight: s, kept: before }); }
+  add.push({ p, hidden: false, snap: !ground }); legs.push({ straight: ground, kept: null });
+  if (after) { add.push({ p: plan.coords[j1], hidden: true, snap: true }); legs.push({ straight: ground, kept: null }); }
+  legs.push({ straight: after ? s : ground, kept: after });
+  planAsk.points.splice(leg + 1, 0, ...add.map(x => x.p)); planAsk.names.splice(leg + 1, 0, ...add.map(() => null));
+  planAsk.snap.splice(leg + 1, 0, ...add.map(x => x.snap)); planAsk.hidden.splice(leg + 1, 0, ...add.map(x => x.hidden));
+  planAsk.straight.splice(leg, 1, ...legs.map(x => x.straight));
+  legs.forEach((x, k) => { if (x.kept) planLegCache.set(legKey(leg + k), x.kept); });
+  replan();
+}
 // What is typed in the From and To fields, and what was found for it.
 const planSeek = { from: { text: null, found: [] }, to: { text: null, found: [] } };
 const typeOf = t => (t || "").replace(/([A-ZÆØÅ])/g, " $1").toLowerCase();
@@ -108,11 +176,13 @@ function placeField(which, label, point, name, coords) {
 }
 // What is asked of the server: the points and how to go.
 const planBody = () => ({ points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains,
-                          across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+                          across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine,
+                          kept: planAsk.straight.map((_, k) => planLegCache.get(legKey(k)) || null) });
 // Something was changed: how long the way would take to find is asked for at once (a millisecond), and the way itself
 // only when that is quick (and it is to be found by itself), or when "Find the way" is pressed. Until then the way
 // found before stays, faded, and says it is from before.
 function replan() {
+  pointsFit();
   legsFit();
   keepAsk();
   const asked = ++planAsked;            // what is on its way back from before is for what was asked before
@@ -142,8 +212,10 @@ async function askPlan(asked = ++planAsked) {
     const got = await send("POST", "planner/plan", planBody());
     if (asked !== planAsked) return;
     plan = got; planStale = false; planHeights = null; heightsProblem = null;
-    // A point moved onto the path it is passed on: its letter goes there too.
-    for (const [i, at] of Object.entries(got.snapped || {})) planAsk.points[Number(i)] = at;
+    // A point of yours moved onto the path it is passed on: its letter goes there too. (A hidden one stays where it
+    // was put, on the way as it was: so the legs it holds are the same legs.)
+    for (const [i, at] of Object.entries(got.snapped || {})) if (!planAsk.hidden[Number(i)]) planAsk.points[Number(i)] = at;
+    planLegCache = new Map(got.legs.map((L, k) => [legKey(k), keptOf(L.at[0], L.at[1], L)]));
     keepAsk();
   } catch (err) { if (asked === planAsked) planProblem = err.message; }
   if (asked !== planAsked) return;
@@ -235,6 +307,16 @@ function profileOf(H) {
   add("text", { x: pad + 2, y: Ht - 6, "font-size": 10, fill: "#5f6b73" }).textContent = `${Math.round(lo)} m`;
   return svg;
 }
+// The way between each two points of yours: its legs together (a dragged line cuts one into several).
+function planSegments() {
+  const V = planVisible(), P = planAsk.points;
+  return V.slice(0, -1).map((a, n) => {
+    const b = V[n + 1], legs = plan.legs.slice(a, b), metres = legs.reduce((m, l) => m + l.metres, 0), crow = metresOf([P[a], P[b]]);
+    return { a, b, metres, crow_m: crow, straight: legs.every(l => l.straight), manual: legs.length > 1,
+             unfound: (legs.find(l => l.unfound) || {}).unfound || null,
+             roundabout: legs.length === 1 && legs[0].roundabout };
+  });
+}
 function renderPlanner() {
   const P = planAsk.points;
   // Opened with a walk from before (kept in the browser): how long its way takes is asked for, and it is found by
@@ -243,17 +325,17 @@ function renderPlanner() {
     planEstimating = true;
     askEstimate(planAsked).finally(() => { planEstimating = false; });
   }
-  const at = p => `${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`, N = planAsk.names;
+  const at = p => `${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`, N = planAsk.names, V = planVisible();
   const lone = planAsk.lone === "end", last = P.length - 1;
   const start = P.length && !lone ? 0 : null, end = P.length > 1 ? last : lone ? 0 : null;
   // Where it begins and where it ends, each found by its name or clicked on the map; the places passed between.
   const ends = el("div", { class: "plan-ends" },
-    placeField("from", "From", start === null ? null : letter(0), start === null ? null : N[0], start === null ? "" : at(P[0])),
-    ...P.slice(1, -1).map((p, k) => el("div", { class: "plan-field" }, el("label", {},
-      el("span", { class: "plan-letter" }, letter(k + 1)), el("span", { class: "plan-label" }, "Via"),
-      el("span", { class: "grow" }, N[k + 1] || el("span", { class: "sub" }, at(p))),
-      el("button", { class: "link", type: "button", title: `Take point ${letter(k + 1)} away`, "aria-label": `Take point ${letter(k + 1)} away`, onclick: () => planRemove(k + 1) }, "✕")))),
-    placeField("to", "To", end === null ? null : lone ? "B" : letter(last), end === null ? null : N[end], end === null ? "" : at(P[end])));
+    placeField("from", "From", start === null ? null : letterOf(0), start === null ? null : N[0], start === null ? "" : at(P[0])),
+    ...V.slice(1, -1).map(i => el("div", { class: "plan-field" }, el("label", {},
+      el("span", { class: "plan-letter" }, letterOf(i)), el("span", { class: "plan-label" }, "Via"),
+      el("span", { class: "grow" }, N[i] || el("span", { class: "sub" }, at(P[i]))),
+      el("button", { class: "link", type: "button", title: `Take point ${letterOf(i)} away`, "aria-label": `Take point ${letterOf(i)} away`, onclick: () => planRemove(i) }, "✕")))),
+    placeField("to", "To", end === null ? null : letterOf(end), end === null ? null : N[end], end === null ? "" : at(P[end])));
   const slider = el("input", { type: "range", min: 0, max: 100, step: 5, value: Math.round(planAsk.prefer * 100), "aria-label": "How much DNT's routes are preferred",
     oninput: e => { planAsk.prefer = Number(e.target.value) / 100; replanSoon(); } });
   const heights = el("input", { type: "range", min: -100, max: 100, step: 10, value: Math.round(planAsk.mountains * 100), "aria-label": "Whether it keeps to the valleys or up in the mountains",
@@ -287,17 +369,19 @@ function renderPlanner() {
       // A few metres from a click to the nearest way are said below, not as a kind of their own.
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
-      ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from where the way passes: that bit is drawn straight.`)),
+      ...plan.off.filter(o => !planAsk.hidden[o.point]).map(o => el("div", { class: "sub" }, `${letterOf(o.point)} is ${o.off_m.toLocaleString("en")} m from where the way passes: that bit is drawn straight.`)),
       // Each leg: along paths, or straight over the ground where nothing is mapped. One with no way found is drawn
       // straight and says why; one that goes far round says so, for it to be drawn straight if that is better.
-      el("ol", { class: "plan-legs" }, ...plan.legs.map(l => el("li", { class: l.unfound ? "unfound" : l.roundabout ? "roundabout" : "" },
+      // Between two points of yours, however many legs the hidden points cut it into.
+      planStale ? "" : el("ol", { class: "plan-legs" }, ...planSegments().map(l => el("li", { class: l.unfound ? "unfound" : l.roundabout ? "roundabout" : "" },
         el("div", { class: "grow" },
-          el("div", {}, `${letter(l.from)} → ${letter(l.to)}: ${km(l.metres / 1000)} `, el("span", { class: "sub" },
-            l.straight ? "straight, with no path" : l.unfound ? "drawn straight" : "along paths and roads")),
+          el("div", {}, `${letterOf(l.a)} → ${letterOf(l.b)}: ${km(l.metres / 1000)} `, el("span", { class: "sub" },
+            l.straight ? "straight, with no path" : l.unfound ? "drawn straight" : l.manual ? "as you have laid it" : "along paths and roads")),
           l.unfound ? el("div", { class: "sub" }, `No way on foot was found: ${l.unfound}. It is drawn straight over whatever lies there: add points to go round, or allow ferries or glaciers.`) : "",
           l.roundabout ? el("div", { class: "sub" }, `${km(l.metres / 1000)} for ${km(l.crow_m / 1000)} as the crow flies: if the ground allows, it may be better straight.`) : ""),
-        el("button", { class: "link", type: "button", onclick: () => planStraight(l.from, !l.straight) },
-          l.straight ? "Along paths" : l.unfound ? "Keep it straight" : "Straight instead")))));
+        el("button", { class: "link", type: "button", title: l.manual ? "As one leg again, found anew" : "",
+                       onclick: () => planSegmentStraight(l.a, l.b, l.manual ? false : !l.straight) },
+          l.manual ? "Find it anew" : l.straight ? "Along paths" : l.unfound ? "Keep it straight" : "Straight instead")))));
     if (H && H.days.length > 1) told.push(el("ol", { class: "trip-days" }, ...H.days.map(d => el("li", { class: planDay === d.day ? "hit current" : "hit" },
       el("span", { class: "swatch", style: "background:#1f2a30" }, String(d.day)),
       el("div", { class: "grow" },
@@ -320,7 +404,7 @@ function renderPlanner() {
       : "Search for where the walk begins and ends, anywhere in Norway, or click the map. Click again to go on further; drag a point to move it."),
     ends,
     P.length ? el("div", { class: "actions" },
-      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); planAsk.snap.reverse(); planAsk.straight.reverse(); replan(); } }, "The other way") : "",
+      P.length > 1 ? el("button", { class: "btn", onclick: () => { for (const k of ["points", "names", "snap", "hidden", "straight"]) planAsk[k].reverse(); replan(); } }, "The other way") : "",
       el("button", { class: "btn", onclick: planStartAgain }, "Start again")) : "",
     form, ...told);
   if (typing) { const field = panel.querySelector(`[data-plan-field="${typing}"]`); if (field) { field.focus(); field.setSelectionRange(caret, caret); } }
@@ -343,7 +427,8 @@ function drawPlan() {
       for (const id of ["plan", "plan-dashed"]) map.on("mousedown", id, e => {
         if (e.originalEvent.button !== 0 || !plan || planBusy) return;
         e.preventDefault();
-        planDrag = { leg: e.features[0].properties.leg, from: e.point, moved: false, ghost: null };
+        const leg = e.features[0].properties.leg, L = plan.legs[leg];
+        planDrag = { leg, index: L ? nearestIndex(e.lngLat, L.at[0], L.at[1]) : -1, from: e.point, moved: false, ghost: null };
         planIgnoreClick = true;
       });
       map.on("mousemove", e => {
@@ -359,7 +444,7 @@ function drawPlan() {
         planDrag = null;
         if (d.ghost) d.ghost.remove();
         setTimeout(() => { planIgnoreClick = false; });       // after the click the browser makes of it, if it makes one
-        if (d.moved && d.leg >= 0) planInsert(d.leg + 1, [Number(e.lngLat.lng.toFixed(6)), Number(e.lngLat.lat.toFixed(6))]);
+        if (d.moved && d.leg >= 0 && d.index >= 0) planDragTo(d.index, d.leg, e.lngLat);
       });
       planLayers = true;
     }
@@ -375,20 +460,33 @@ function drawPlan() {
     for (const id of ["plan", "plan-dashed"]) map.setPaintProperty(id, "line-opacity", planStale ? 0.4 : 1);
     // The points: markers that can be dragged, made anew when they are not the ones shown.
     for (const m of planMarkers) m.remove();
-    planMarkers = on ? planAsk.points.map((p, i) => {
-      const mark = planAsk.lone === "end" ? "B" : letter(i);
+    planMarkers = on ? planVisible().map(i => {
+      const p = planAsk.points[i], mark = letterOf(i);
       const dot = el("div", { class: "plan-marker", title: `${planAsk.names[i] ? `${planAsk.names[i]}. ` : ""}${mark}: drag to move` }, mark);
       const m = new maplibregl.Marker({ element: dot, draggable: true }).setLngLat(p).addTo(map);
       m.on("dragend", () => {
         const at = m.getLngLat(), last = planAsk.points.length - 1;
         planAsk.points[i] = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]; planAsk.names[i] = null;
         planAsk.snap[i] = i > 0 && i < last;          // a point passed on the way goes onto the path it is dropped by
+        planAsk.hidden[i] = false;
         replan();
       });
       dot.addEventListener("click", e => e.stopPropagation());
       return m;
     }) : [];
   });
+}
+// Which piece of the line (from index k to k + 1, between a and b) is nearest to where it was taken hold of.
+function nearestIndex(at, a, b) {
+  const C = plan.coords, f = Math.cos(at.lat * Math.PI / 180);
+  let best = a, bestD = Infinity;
+  for (let k = a; k < b; k++) {
+    const ax = (C[k][0] - at.lng) * f, ay = C[k][1] - at.lat, bx = (C[k + 1][0] - at.lng) * f, by = C[k + 1][1] - at.lat;
+    const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+    const d = Math.hypot(ax + t * dx, ay + t * dy);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  return best;
 }
 // Where on the way a day ends that ends at no hut: the point that far along it.
 function pointAlong(metres) {

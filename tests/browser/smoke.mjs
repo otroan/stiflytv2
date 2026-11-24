@@ -213,9 +213,10 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("a place is searched for by its name as it is typed", await until(`[...document.querySelectorAll(".plan-found button")].some(b => b.textContent.startsWith("Sprongdalshytta"))`, 15), await text(".plan-found"));
   await clickOn(`[...document.querySelectorAll(".plan-found button")].find(b => b.textContent.startsWith("Sprongdalshytta"))`);
   check("chosen, it is where the walk ends, by its name, and the way is found anew", await until(`planAsk.names[planAsk.names.length - 1] === "Sprongdalshytta" && planAsk.points.length === 2
-    && document.querySelector('[data-plan-field="to"]').value === "Sprongdalshytta" && !planBusy && (Boolean(plan) || Boolean(planProblem))`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
+    && document.querySelector('[data-plan-field="to"]').value === "Sprongdalshytta" && !planBusy && !planStale && (Boolean(plan) || Boolean(planProblem))`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
   check("the heights are asked for: the climb and the time, or why not", await until(`!heightsBusy && (Boolean(planHeights) && /of walking by Naismith/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
   // A leg straight over the ground, where nothing is mapped: a sketch, dashed, and timed as such; and back again.
+  await until(`!planBusy && !heightsBusy && !planStale`, 60);
   await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Straight instead")`);
   check("a leg can be drawn straight, with no path: dashed, and said so", await until(`planAsk.straight[0] === true && Boolean(plan) && plan.legs[0].straight
     && plan.steps.every(s => s.class === "off") && map.getSource("plan").serialize().data.features.every(f => f.properties.dashed)
@@ -231,9 +232,17 @@ if (await js(`(me.features || []).includes("planner")`)) {
   await mouse("mouseMoved", grip.x, grip.y); await mouse("mousePressed", grip.x, grip.y, 1);
   for (let k = 1; k <= 6; k++) { await mouse("mouseMoved", grip.x + 8 * k, grip.y + 5 * k, 1); await sleep(30); }
   await mouse("mouseReleased", grip.x + 48, grip.y + 30);
-  check("the line dragged aside makes a point it passes, on the nearest path, with no step out to it", await until(`planAsk.points.length === 3 && planAsk.snap[1] === true
-    && Boolean(plan) && !planBusy && plan.legs.length === 2 && !plan.off.some(o => o.point === 1) && Boolean(plan.snapped["1"])`, 30),
-    `${await js("planAsk.points.length")} ${JSON.stringify(grip)} ${await js(`JSON.stringify(map.queryRenderedFeatures([${grip.x}, ${grip.y}].map((v, k) => v - document.getElementById("map").getBoundingClientRect()[k ? "top" : "left"]), { layers: ["plan", "plan-dashed"] }).map(f => f.properties))`)} ${await text("#panel .error")}`);
+  // Let go of near a path, the point goes onto it; further off, it stays exactly where it was let go of, the way
+  // straight to it: either way only the part between the junctions on either side is found anew.
+  check("the line dragged aside makes a point of yours it passes, and only the part about it is found anew",
+    await until(`planVisible().length === 3 && Boolean(plan) && !planBusy && !planStale && plan.legs.length === planAsk.points.length - 1
+      && (() => { const v = planVisible()[1]; return planAsk.snap[v] ? !plan.off.some(o => o.point === v) : planAsk.straight[v - 1] && planAsk.straight[v]
+                                                                          && plan.coords.some(c => c[0] === planAsk.points[v][0] && c[1] === planAsk.points[v][1]); })()
+      && (planAsk.points.length === 3 || plan.legs.some(l => l.kept))`, 30),
+    `${await js("JSON.stringify({ n: planAsk.points.length, h: planAsk.hidden, snap: planAsk.snap, st: planAsk.straight, stale: planStale, busy: planBusy, prob: planProblem, legs: plan && plan.legs.map(l => [l.kept, l.straight]), off: plan && plan.off })")} ${await text("#panel .error")}`);
+  await clickOn(`[...document.querySelectorAll(".plan-field button")].find(b => /Take point B away/.test(b.getAttribute("aria-label") || ""))`);
+  check("taken away, it goes with the hidden points that held the way about it", await until(`planAsk.points.length === 2 && !planAsk.hidden.some(Boolean) && Boolean(plan) && !planBusy && plan.legs.length === 1`, 30),
+    await js("JSON.stringify(planAsk.hidden)"));
   // Across country, and up in the mountains: asked for in the form, and the way found anew with them.
   await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Across country/.test(l.textContent)).querySelector("input")`);
   check("across country can be asked for", await until(`planAsk.across === true && Boolean(plan) && !planBusy && plan.options.across === true`, 60), await text("#panel .error"));

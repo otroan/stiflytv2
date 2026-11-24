@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from stiflyt2 import height
 from stiflyt2.api import auth, mcp
@@ -34,6 +34,25 @@ class How(BaseModel):
         return planner.Options(self.prefer, self.ferries, self.ice, self.alpine, self.mountains, self.across)
 
 
+class KeptStep(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    what: str = Field(alias="class", pattern="^(dnt|marked|path|road|ferry|field|off)$")
+    name: str | None = Field(None, max_length=300)
+    ice: bool = False
+    metres: float = Field(ge=0)
+    at: list[int] = Field(min_length=2, max_length=2)
+
+
+class Kept(BaseModel):
+    """A leg as it was found before, to be taken again as it is."""
+    coords: list[Point] = Field(min_length=2, max_length=200_000)
+    steps: list[KeptStep] = Field(min_length=1, max_length=20_000)
+    joints: list[int] = Field(default_factory=list, max_length=200_000)
+    origins: list[str] = Field(default_factory=list, max_length=5)
+    unfound: str | None = Field(None, max_length=500)
+    roundabout: bool = False
+
+
 class Ask(How):
     points: list[Point] = Field(min_length=2, max_length=planner.MOST_POINTS,
                                 description="Where it begins, the places to pass on the way, and where it ends")
@@ -42,6 +61,15 @@ class Ask(How):
                                                     "with no path (a sketch), or along paths and roads")
     snap: list[bool] | None = Field(None, max_length=planner.MOST_POINTS,
                                     description="For each point: passed on the nearest stretch, not walked out to")
+    kept: list[Kept | None] | None = Field(None, max_length=planner.MOST_POINTS - 1,
+                                           description="For each leg, as it was found before (to keep it), or none")
+
+    def kept_legs(self) -> list[dict | None] | None:
+        if self.kept is None:
+            return None
+        return [None if k is None else {**k.model_dump(exclude={"steps"}),
+                                        "steps": [{**st.model_dump(exclude={"what"}), "class": st.what} for st in k.steps]}
+                for k in self.kept]
 
 
 class Part(BaseModel):
@@ -61,13 +89,20 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
     def plan(body: Ask, who: May) -> dict:
         """A way on foot through the points, along DNT's routes as much as asked for."""
         with read.connection() as conn:
-            return planner.plan(conn, body.points, body.options(), body.straight, body.snap)
+            return planner.plan(conn, body.points, body.options(), body.straight, body.snap, body.kept_legs())
 
     @app.post(f"{V1}/estimate")
     def estimate(body: Ask, who: May) -> dict:
         """About how long a plan would take, before it is asked for."""
         with read.connection() as conn:
-            return planner.estimate(conn, body.points, body.options(), body.straight)
+            return planner.estimate(conn, body.points, body.options(), body.straight,
+                                    None if body.kept is None else [k is not None for k in body.kept])
+
+    @app.get(f"{V1}/near")
+    def near(lon: Annotated[float, Query(ge=-180, le=180)], lat: Annotated[float, Query(ge=-90, le=90)], who: May) -> dict:
+        """How far a point is from the nearest path or road, and where on it."""
+        with read.connection() as conn:
+            return planner.near(conn, lon, lat)
 
     @app.post(f"{V1}/heights")
     def heights(body: Heights, who: May) -> dict:
