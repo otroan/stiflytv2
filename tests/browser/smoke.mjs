@@ -199,6 +199,8 @@ if (await js(`(me.features || []).includes("trips")`)) {
 // between them is found, drawn in the colours of what it goes along, and timed with the heights.
 if (await js(`(me.features || []).includes("planner")`)) {
   await clickOn(`document.getElementById("tab-planner")`);
+  const areaBefore = await js("localStorage.getItem('stiflyt2.area')");
+  check("the planner is of no area: none is chosen, and the address names none", await until(`view === "planner" && area === null && !/[?&]area=/.test(location.search)`, 20), await js("location.search"));
   check("the planner asks where the walk begins", await until(`view === "planner" && /Plan a walk/.test(document.querySelector("#panel h2").textContent) && /Search for where the walk begins .* or click the map/.test(document.getElementById("panel").textContent)`, 20), await text("#panel h2"));
   await js(`planAsk.points.length = 0; replan(); map.jumpTo({ center: [7.402, 61.6687], zoom: 13 })`);
   await until(`!map.isMoving() && map.loaded()`, 10);
@@ -283,7 +285,7 @@ if (await js(`(me.features || []).includes("planner")`)) {
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));
   await clickOn(`document.getElementById("tab-routes")`);
-  await until(`view === "routes"`, 10);
+  check("out of the planner, back in the area one was in", await until(`view === "routes" && area === ${JSON.stringify(areaBefore)}`, 15), await js("location.search"));
 } else check("the planner is not there for one who does not have the feature", await js(`document.getElementById("tab-planner").hidden`));
 
 // Who else is at work now (the feature `presence`): the page says where it is, and shows the others at the foot.

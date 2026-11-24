@@ -1,7 +1,12 @@
 // The front page starts: the browser's back, the tabs, Escape, and what the address asks for.
 window.addEventListener("popstate", () => arrive(here()));
 for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"], ["tab-planner", "planner"]])
-  document.getElementById(id).addEventListener("click", e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); visit({ view: is, route: null, site: null, entry: null, report: null }); });
+  document.getElementById(id).addEventListener("click", e => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    // Out of the planner, back to the area one was in before it.
+    visit({ view: is, route: null, site: null, entry: null, report: null, area: is === "planner" ? null : area || localStorage.getItem("stiflyt2.area") });
+  });
 
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else undoLast(); }
@@ -35,6 +40,6 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     // With no area in the address: the first of yours, as your profile says; else the one last looked at.
     if (!new URLSearchParams(location.search).has("area")) at.area = (me.profile && me.profile.areas[0]) || localStorage.getItem("stiflyt2.area") || localStorage.getItem("stiflyt2.signs.area");
     await Promise.all([arrive(at, false), drawn]);
-    if (!location.hash) fit();
+    if (!location.hash && view !== "planner") fit();
   } catch (err) { panel.replaceChildren(el("div", { class: "error" }, `No contact with the server: ${err.message}`)); }
 })();

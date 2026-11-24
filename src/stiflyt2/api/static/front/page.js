@@ -49,7 +49,8 @@ function visit(next, sure) {
 }
 // Arriving somewhere: by a click, by the browser going back, or by the address the page was opened with.
 function arrive(to, fitting = true) {
-  const wanted = areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
+  // The planner is of no area: anywhere in Norway. The area one was in is remembered, for the other parts.
+  const wanted = to.view !== "planner" && areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
   // Going in among the signs, or to a sign site: the signs are asked for as they are now.
   const goingIn = to.view === "signs" && wanted && (view !== "signs" || (to.site || null) !== open && Boolean(to.site));
   view = to.view; route = ROUTE_VIEWS.includes(view) && wanted ? to.route || null : null; open = view === "signs" && wanted ? to.site || null : null;
@@ -67,9 +68,9 @@ function arrive(to, fitting = true) {
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
   entries = null; entriesFor = null; entriesProblem = null; entryShown = null; photosAll = null; photosFor = null;
   reportsAll = upkeep = sinceLines = null; reportsFor = null; reportShown = null;
-  if (area) localStorage.setItem("stiflyt2.area", area); else localStorage.removeItem("stiflyt2.area");
+  if (area) localStorage.setItem("stiflyt2.area", area); else if (to.view !== "planner") localStorage.removeItem("stiflyt2.area");
   render();
-  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos(), loadReports()]) : Promise.resolve()).then(() => { if (fitting) fit(); });
+  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos(), loadReports()]) : Promise.resolve()).then(() => { if (fitting && view !== "planner") fit(); });
 }
 async function loadArea() {
   const asked = area;
@@ -138,7 +139,7 @@ function render() {
   for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"], ["tab-planner", "planner"]]) {
     const tab = document.getElementById(id);
     if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
-    tab.href = addressOf({ view: is, area }).href;
+    tab.href = addressOf({ view: is, area: is === "planner" ? null : area || localStorage.getItem("stiflyt2.area") }).href;
   }
   if (view === "planner") renderPlanner();
   else if (!area) renderAreas();

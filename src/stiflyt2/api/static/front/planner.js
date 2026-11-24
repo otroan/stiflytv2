@@ -231,6 +231,7 @@ async function askPlan(asked = ++planAsked) {
     for (const [i, at] of Object.entries(got.snapped || {})) if (!planAsk.hidden[Number(i)]) planAsk.points[Number(i)] = at;
     planLegCache = new Map(got.legs.map((L, k) => [legKey(k), keptOf(L.at[0], L.at[1], L)]));
     keepAsk();
+    fitWhenNew();
   } catch (err) { if (asked === planAsked) planProblem = err.message; }
   if (asked !== planAsked) return;
   planBusy = false; render();
@@ -276,6 +277,17 @@ function planTick() {
     if (share !== null) bar.style.width = `${Math.round(share * 100)}%`;
     said.textContent = says;
   }, 200);
+}
+// When the way is found from somewhere else or to somewhere else than before (or first), the map goes to it, unless
+// it is all in sight already. Not when a point between is moved or the line dragged: one is at work where one is.
+let planFitFor = null;
+function fitWhenNew() {
+  const P = planAsk.points, ends = JSON.stringify([P[0], P[P.length - 1]]);
+  if (ends === planFitFor || !plan || !plan.coords.length) return;
+  planFitFor = ends;
+  const b = map.getBounds(), C = plan.coords;
+  if (C.every(([x, y]) => b.contains([x, y]))) return;
+  showPlan();
 }
 function showPlan() {
   if (!plan) return;
