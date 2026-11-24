@@ -336,3 +336,19 @@ def test_a_point_by_a_path_that_joins_nothing_is_joined_to_the_network(network, 
     # Both ends on the lonely path: it is walked.
     on = planner.plan(conn, [LONELY, (LONELY[0] - 0.002, LONELY[1] + 0.001)])
     assert [s["name"] for s in on["steps"]] == ["Ensom sti"]
+
+
+def test_a_point_the_line_is_dragged_to_is_passed_on_the_nearest_path(network, conn):
+    """Dropped beside the shorter path: the way goes that way, on the path, with no step out to the spot."""
+    a, b = network["a"], network["b"]
+    beside = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.0035)          # some 50 m north of Snarveien's bend
+    told = planner.plan(conn, [a, beside, b], planner.Options(prefer=1), snap=[False, True, False])
+    assert [s["class"] for s in told["steps"]] == ["path", "path"] and told["off"] == []
+    assert {s["name"] for s in told["steps"]} == {"Snarveien"} and told["steps"][0].get("via") == 1
+    on = told["snapped"]["1"]
+    assert on != list(beside) and told["coords"][told["legs"][1]["at"][0]] == pytest.approx(on, abs=1e-6)
+    # Not snapped: walked out to the spot and back.
+    out = planner.plan(conn, [a, beside, b], planner.Options(prefer=1))
+    assert [o["point"] for o in out["off"]] == [1] and out["snapped"] == {}
+    with pytest.raises(Invalid, match="for each point"):
+        planner.plan(conn, [a, b], snap=[True])

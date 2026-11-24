@@ -223,6 +223,17 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("and timed as ground with no path", await until(`!heightsBusy && (Boolean(planHeights) && planHeights.rough_m > 0 && /with no path, timed half as slow again/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
   await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Along paths")`);
   check("and back along paths", await until(`planAsk.straight[0] === false && Boolean(plan) && !plan.legs[0].straight && plan.steps.some(s => s.class !== "off")`, 30), await text(".plan-legs"));
+  // The line taken hold of and dragged aside: a point it passes, put on the nearest path, and the way found anew.
+  await until(`!planBusy && !heightsBusy`, 60);
+  await js(`showPlan()`);
+  await sleep(600); await until(`!map.isMoving()`, 10);
+  const grip = await onMap(`(() => { const l = plan.legs[0]; return plan.coords[Math.floor((l.at[0] + l.at[1]) / 2)]; })()`);
+  await mouse("mouseMoved", grip.x, grip.y); await mouse("mousePressed", grip.x, grip.y, 1);
+  for (let k = 1; k <= 6; k++) { await mouse("mouseMoved", grip.x + 8 * k, grip.y + 5 * k, 1); await sleep(30); }
+  await mouse("mouseReleased", grip.x + 48, grip.y + 30);
+  check("the line dragged aside makes a point it passes, on the nearest path, with no step out to it", await until(`planAsk.points.length === 3 && planAsk.snap[1] === true
+    && Boolean(plan) && !planBusy && plan.legs.length === 2 && !plan.off.some(o => o.point === 1) && Boolean(plan.snapped["1"])`, 30),
+    `${await js("planAsk.points.length")} ${JSON.stringify(grip)} ${await js(`JSON.stringify(map.queryRenderedFeatures([${grip.x}, ${grip.y}].map((v, k) => v - document.getElementById("map").getBoundingClientRect()[k ? "top" : "left"]), { layers: ["plan", "plan-dashed"] }).map(f => f.properties))`)} ${await text("#panel .error")}`);
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));

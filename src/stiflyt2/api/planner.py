@@ -33,6 +33,8 @@ class Ask(How):
     straight: list[bool] | None = Field(None, max_length=planner.MOST_POINTS - 1,
                                         description="For each leg between two points: drawn straight over the ground, "
                                                     "with no path (a sketch), or along paths and roads")
+    snap: list[bool] | None = Field(None, max_length=planner.MOST_POINTS,
+                                    description="For each point: passed on the nearest stretch, not walked out to")
 
 
 class Part(BaseModel):
@@ -53,7 +55,7 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
         """A way on foot through the points, along DNT's routes as much as asked for."""
         with read.connection() as conn:
             return planner.plan(conn, body.points, planner.Options(body.prefer, body.ferries, body.ice, body.alpine),
-                                body.straight)
+                                body.straight, body.snap)
 
     @app.post(f"{V1}/heights")
     def heights(body: Heights, who: May) -> dict:

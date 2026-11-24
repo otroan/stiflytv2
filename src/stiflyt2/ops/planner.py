@@ -240,12 +240,15 @@ def _metres(coords: list) -> float:
     return out
 
 
-def plan(conn, points: list, o: Options | None = None, straight: list[bool] | None = None) -> dict:
+def plan(conn, points: list, o: Options | None = None, straight: list[bool] | None = None,
+         snap: list[bool] | None = None) -> dict:
     """A way on foot through the points, in order: the line, told in steps, and what it adds up to.
 
     A leg between two points goes along paths and roads, or straight over the ground where `straight` says so
     (one for each leg): a sketch, where nothing is mapped. A leg no way on foot is found for is drawn straight
-    too, and says why (`legs`).
+    too, and says why (`legs`). A point `snap` says of (one for each point; the line dragged to another path)
+    is where the way passes on the nearest stretch, not the spot itself: it is not walked out to and back,
+    and where it was moved to is in `snapped`.
     """
     o = o or Options()
     if not 2 <= len(points) <= MOST_POINTS:
@@ -253,6 +256,10 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     straight = list(straight) if straight is not None else [False] * (len(points) - 1)
     if len(straight) != len(points) - 1:
         raise Invalid("say for each leg between two points, and only for them, whether it is drawn straight")
+    snap = list(snap) if snap is not None else [False] * len(points)
+    if len(snap) != len(points):
+        raise Invalid("say for each point, and only for them, whether it is moved onto the nearest stretch")
+    moved: dict[int, list] = {}
     if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM walk.built)").fetchone()[0]:
         raise NotFound("the planner's network has not been built yet (`stiflyt2 planner build`)")
     conn.execute(f"SET LOCAL statement_timeout = '{SLOW_S}s'")         # a long way is a big search
@@ -263,7 +270,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     origins: set[str] = set()
     walked = [0.0]
 
-    def snap(i: int, great: bool = False) -> dict | str:
+    def nearest(i: int, great: bool = False) -> dict | str:
         """The stretch nearest to a point, or why there is none."""
         if (i, great) not in snapped:
             try:
@@ -276,14 +283,14 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
         """Where a leg begins and ends on the network: on the nearest stretches, unless one of them is on a small
         piece the other is not on (a path that joins nothing), or none is near: then on the nearest stretch of a
         great piece, further off."""
-        a, b = snap(n), snap(n + 1)
+        a, b = nearest(n), nearest(n + 1)
         if isinstance(a, dict) and isinstance(b, dict) and a["piece"] == b["piece"]:
             return a, b
 
         def great(end: dict | str, i: int) -> dict | str:
             if isinstance(end, dict) and end["piece_nodes"] >= GREAT:
                 return end
-            wider = snap(i, True)           # none near, or only a small piece: further off, one that leads somewhere
+            wider = nearest(i, True)        # none near, or only a small piece: further off, one that leads somewhere
             return wider if isinstance(wider, dict) else end
         return great(a, n), great(b, n + 1)
 
@@ -317,13 +324,17 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
         if way is None:
             add("off", None, False, [p, q], crow)
         else:
-            if a["off_m"] > OFF_M:
+            if snap[n]:
+                moved[n] = a["at"]
+            elif a["off_m"] > OFF_M:
                 add("off", None, False, [p, a["at"]], a["off_m"])
                 off[n] = round(a["off_m"])
             for w in way:
                 origins.add("turrutebasen" if w["origin"] in ("turrutebasen", "ours") else "osm")
                 add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
-            if b["off_m"] > OFF_M:
+            if snap[n + 1]:
+                moved[n + 1] = b["at"]
+            elif b["off_m"] > OFF_M:
                 add("off", None, False, [b["at"], q], b["off_m"])
                 off[n + 1] = round(b["off_m"])
         metres = walked[0] - before
@@ -343,6 +354,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             "total": {"metres": round(sum(by.values())), "walked_m": on_foot, "by": by,
                       "minutes": height.minutes(on_foot, 0), "ferry_minutes": round(by.get("ferry", 0) / FERRY_KMH * 0.06)},
             "off": [{"point": i, "off_m": m} for i, m in sorted(off.items())],
+            "snapped": {str(i): at for i, at in sorted(moved.items())},
             "credits": [CREDITS[k] for k in ("osm", "turrutebasen") if k in origins],
             "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine}}
 

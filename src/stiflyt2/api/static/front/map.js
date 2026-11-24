@@ -158,7 +158,7 @@ map.on("click", e => {
     return;
   }
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
-  if (view === "planner") { planAt(e.lngLat); return; }      // anywhere: a point of the walk
+  if (view === "planner") { if (!planIgnoreClick) planAt(e.lngLat); return; }      // anywhere: a point of the walk
   const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
   const shown = map.getLayoutProperty("photos", "visibility") === "visible";
   const group = shown && map.queryRenderedFeatures(box, { layers: ["photo-groups"] })[0];
@@ -252,7 +252,7 @@ map.on("mousemove", e => {
   // Among the owners every spot can be clicked: a hand where a property is drawn, else a crosshair (zoomed out, or none known).
   const owners = view === "landowners" && area && map.getLayoutProperty("parcels-fill", "visibility") === "visible";
   map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (routesOpen() && routesAt(e.point).length) ? "pointer"
-    : owners ? (map.queryRenderedFeatures(e.point, { layers: ["parcels-fill"] }).length ? "pointer" : "crosshair") : view === "planner" ? "crosshair" : "";
+    : owners ? (map.queryRenderedFeatures(e.point, { layers: ["parcels-fill"] }).length ? "pointer" : "crosshair") : view === "planner" ? (planDrag ? "grabbing" : map.getLayer("plan") && map.queryRenderedFeatures(e.point, { layers: ["plan", "plan-dashed"] }).length ? "grab" : "crosshair") : "";
   const ray = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: ["rays"] })[0];
   point(ray ? ray.properties.post : null, ray ? ray.properties.bearing : null);
 });

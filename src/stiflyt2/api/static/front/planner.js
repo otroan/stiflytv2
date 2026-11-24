@@ -8,9 +8,11 @@ const PLAN_KEY = "stiflyt2.plan";
 // The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
 // point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
 // two points, whether it is drawn straight over the ground, with no path.
-const planAsk = Object.assign({ points: [], names: [], lone: null, straight: [], prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
+// A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to.
+const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
+if (planAsk.snap.length !== planAsk.points.length) planAsk.snap = planAsk.points.map(() => false);
 function legsFit() {         // one for each leg, whatever was done to the points
   const S = planAsk.straight, n = Math.max(0, planAsk.points.length - 1);
   while (S.length < n) S.push(false);
@@ -19,6 +21,7 @@ function legsFit() {         // one for each leg, whatever was done to the point
 legsFit();
 let plan = null, planProblem = null, planBusy = false, planHeights = null, heightsProblem = null, heightsBusy = false;
 let planAsked = 0, planMarkers = [], planDay = null;
+let planDrag = null, planIgnoreClick = false;       // the line taken hold of, and the click that letting go of it makes
 const hasPlanner = () => (me.features || []).includes("planner");
 const letter = i => String.fromCharCode(65 + i);
 const hoursAndMinutes = m => `${Math.floor(m / 60)} h ${String(Math.round(m) % 60).padStart(2, "0")}`;
@@ -29,22 +32,22 @@ function keepAsk() { localStorage.setItem(PLAN_KEY, JSON.stringify(planAsk)); }
 function planAt(at) {
   if (planAsk.points.length >= 12) { planProblem = "A walk goes through 12 points at the most."; render(); return; }
   const p = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))];
-  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
-  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.straight.push(false); }
+  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.snap.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
+  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.snap.push(false); planAsk.straight.push(false); }
   replan();
 }
 // A place found by its name, as where the walk begins or where it ends.
 function planFrom(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.straight.unshift(false); planAsk.lone = null; }
-  else { P[0] = p; N[0] = name; }
+  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.snap.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }
+  else { P[0] = p; N[0] = name; planAsk.snap[0] = false; }
   replan();
 }
 function planTo(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length) { P.push(p); N.push(name); planAsk.lone = "end"; }
-  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.straight.push(false); }
-  else { P[P.length - 1] = p; N[N.length - 1] = name; }
+  if (!P.length) { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.lone = "end"; }
+  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.straight.push(false); }
+  else { P[P.length - 1] = p; N[N.length - 1] = name; planAsk.snap[P.length - 1] = false; }
   replan();
 }
 function planRemove(i) {
@@ -52,11 +55,19 @@ function planRemove(i) {
   if (P.length === 1) { planStartAgain(); return; }
   const S = planAsk.straight;
   if (i === 0) S.shift(); else if (i === P.length - 1) S.pop(); else S.splice(i - 1, 2, S[i - 1] && S[i]);    // two legs become one
-  P.splice(i, 1); planAsk.names.splice(i, 1);
+  P.splice(i, 1); planAsk.names.splice(i, 1); planAsk.snap.splice(i, 1);
   if (P.length === 1 && i === 0) planAsk.lone = "end";        // what is left is where it ends
   replan();
 }
-function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.straight.length = 0; planAsk.lone = null; replan(); }
+function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.snap.length = 0; planAsk.straight.length = 0; planAsk.lone = null; replan(); }
+// The line dragged somewhere else: a point there, between the two the leg runs between, that the way passes on the
+// nearest path or road. The leg becomes two, each drawn as the one was.
+function planInsert(i, p) {
+  const S = planAsk.straight;
+  planAsk.points.splice(i, 0, p); planAsk.names.splice(i, 0, null); planAsk.snap.splice(i, 0, true);
+  S.splice(i - 1, 1, S[i - 1] || false, S[i - 1] || false);
+  replan();
+}
 function planStraight(leg, straight) { planAsk.straight[leg] = straight; replan(); }
 // What is typed in the From and To fields, and what was found for it.
 const planSeek = { from: { text: null, found: [] }, to: { text: null, found: [] } };
@@ -106,9 +117,12 @@ async function askPlan() {
   const asked = ++planAsked;
   planBusy = true; render();
   try {
-    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, prefer: planAsk.prefer, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
     if (asked !== planAsked) return;
     plan = got;
+    // A point moved onto the path it is passed on: its letter goes there too.
+    for (const [i, at] of Object.entries(got.snapped || {})) planAsk.points[Number(i)] = at;
+    keepAsk();
   } catch (err) { if (asked === planAsked) planProblem = err.message; }
   if (asked !== planAsked) return;
   planBusy = false; render();
@@ -235,11 +249,11 @@ function renderPlanner() {
   const caret = typing ? document.activeElement.selectionStart : 0;
   panel.replaceChildren(
     el("h2", { class: "area" }, "Plan a walk"),
-    el("div", { class: "sub", style: "margin-bottom:8px" }, P.length > 1 ? "Click the map to go on further from the last point. Drag a point to move it."
+    el("div", { class: "sub", style: "margin-bottom:8px" }, P.length > 1 ? "Click the map to go on further from the last point. Drag a point to move it, or the line to another path to go that way."
       : "Search for where the walk begins and ends, anywhere in Norway, or click the map. Click again to go on further; drag a point to move it."),
     ends,
     P.length ? el("div", { class: "actions" },
-      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); planAsk.straight.reverse(); replan(); } }, "The other way") : "",
+      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); planAsk.snap.reverse(); planAsk.straight.reverse(); replan(); } }, "The other way") : "",
       el("button", { class: "btn", onclick: planStartAgain }, "Start again")) : "",
     form, ...told);
   if (typing) { const field = panel.querySelector(`[data-plan-field="${typing}"]`); if (field) { field.focus(); field.setSelectionRange(caret, caret); } }
@@ -258,11 +272,34 @@ function drawPlan() {
       map.addLayer({ id: "plan-dashed", type: "line", source: "plan", filter: ["get", "dashed"], layout: { "line-join": "round" }, paint: { "line-color": ["get", "colour"], "line-width": 4, "line-dasharray": [1.2, 1.2] } });
       map.addLayer({ id: "plan-days", type: "circle", source: "plan-days", paint: { "circle-radius": 9, "circle-color": "#1f2a30", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
       map.addLayer({ id: "plan-day-numbers", type: "symbol", source: "plan-days", layout: { "text-field": ["get", "day"], "text-size": 11, "text-font": ["Open Sans Semibold"], "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
+      // The line can be taken hold of and dragged to another path: where it is let go is a point it passes.
+      for (const id of ["plan", "plan-dashed"]) map.on("mousedown", id, e => {
+        if (e.originalEvent.button !== 0 || !plan || planBusy) return;
+        e.preventDefault();
+        planDrag = { leg: e.features[0].properties.leg, from: e.point, moved: false, ghost: null };
+        planIgnoreClick = true;
+      });
+      map.on("mousemove", e => {
+        if (!planDrag) return;
+        if (!planDrag.moved && Math.hypot(e.point.x - planDrag.from.x, e.point.y - planDrag.from.y) < 4) return;
+        planDrag.moved = true;
+        if (!planDrag.ghost) planDrag.ghost = new maplibregl.Marker({ element: el("div", { class: "plan-marker ghost" }, "+") }).setLngLat(e.lngLat).addTo(map);
+        else planDrag.ghost.setLngLat(e.lngLat);
+      });
+      map.on("mouseup", e => {
+        if (!planDrag) return;
+        const d = planDrag;
+        planDrag = null;
+        if (d.ghost) d.ghost.remove();
+        setTimeout(() => { planIgnoreClick = false; });       // after the click the browser makes of it, if it makes one
+        if (d.moved && d.leg >= 0) planInsert(d.leg + 1, [Number(e.lngLat.lng.toFixed(6)), Number(e.lngLat.lat.toFixed(6))]);
+      });
       planLayers = true;
     }
     const steps = on && plan ? plan.steps : [];
+    const legOf = s => plan.legs.findIndex(l => s.at[0] >= l.at[0] && s.at[0] < Math.max(l.at[1], l.at[0] + 1));
     map.getSource("plan").setData({ type: "FeatureCollection", features: steps.map(s => ({ type: "Feature",
-      properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.ice },
+      properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.ice, leg: legOf(s) },
       geometry: { type: "LineString", coordinates: plan.coords.slice(s.at[0], s.at[1] + 1) } })) });
     const days = on && plan && planHeights ? planHeights.days.filter(d => !d.last) : [];
     map.getSource("plan-days").setData({ type: "FeatureCollection", features: days.map(d => ({ type: "Feature", properties: { day: String(d.day) },
@@ -274,7 +311,12 @@ function drawPlan() {
       const mark = planAsk.lone === "end" ? "B" : letter(i);
       const dot = el("div", { class: "plan-marker", title: `${planAsk.names[i] ? `${planAsk.names[i]}. ` : ""}${mark}: drag to move` }, mark);
       const m = new maplibregl.Marker({ element: dot, draggable: true }).setLngLat(p).addTo(map);
-      m.on("dragend", () => { const at = m.getLngLat(); planAsk.points[i] = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]; planAsk.names[i] = null; replan(); });
+      m.on("dragend", () => {
+        const at = m.getLngLat(), last = planAsk.points.length - 1;
+        planAsk.points[i] = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))]; planAsk.names[i] = null;
+        planAsk.snap[i] = i > 0 && i < last;          // a point passed on the way goes onto the path it is dropped by
+        replan();
+      });
       dot.addEventListener("click", e => e.stopPropagation());
       return m;
     }) : [];

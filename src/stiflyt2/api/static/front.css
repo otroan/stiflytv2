@@ -139,6 +139,7 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .plan-found button { text-align: left; }
 .plan-letter, .plan-marker { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--band, #c8161d); color: #fff; font: 600 12px/22px var(--tight); text-align: center; }
 .plan-marker { border: 2px solid #fff; box-shadow: 0 1px 3px #0006; cursor: grab; }
+.plan-marker.ghost { background: #fff; color: var(--band, #c8161d); border-color: var(--band, #c8161d); opacity: .9; pointer-events: none; }
 .plan-prefer { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
 .plan-prefer input { flex: 1; }
 .plan-by { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
