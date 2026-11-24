@@ -54,6 +54,19 @@ const until = async (expr, seconds = 30) => { for (let i = 0; i < seconds * 4; i
 const mouse = (type, x, y, buttons = 0) => send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons, clickCount: 1 });
 const click = async at => { await mouse("mouseMoved", at.x, at.y); await mouse("mousePressed", at.x, at.y, 1); await mouse("mouseReleased", at.x, at.y); };
 const centre = async sel => JSON.parse(await js(`(() => { const e = ${sel}; if (!e) return "null"; e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }); })()`));
+// A lens under Routes, or a kind of plan under Plan: its row is there once its part is open.
+const LENSES = { "lens-routes": "routes", "tab-issues": "issues", "tab-reports": "reports", "tab-photos": "photos", "tab-landowners": "landowners",
+                 "tab-planner": "planner", "tab-trips": "trips" };
+const toPart = async id => {
+  const v = LENSES[id], plan = v === "planner" || v === "trips", top = plan ? "tab-plan" : "tab-routes", row = plan ? "plans" : "lenses";
+  if (await js(`view === ${JSON.stringify(v)}`)) return true;
+  if (await js(`document.getElementById("${row}").hidden`)) {
+    await clickOn(`document.getElementById("${top}")`);
+    await until(`partOf(view) === ${JSON.stringify(plan ? "plan" : "routes")}`, 15);
+    if (await js(`view === ${JSON.stringify(v)}`)) return true;
+  }
+  return clickOn(`document.getElementById("${id}")`);
+};
 const clickOn = async sel => { const at = await centre(sel); if (!at) return false; await click(at); return true; };
 const text = sel => js(`(document.querySelector(${JSON.stringify(sel)}) || {}).innerText || ""`);
 const onMap = expr => js(`(() => { const c = ${expr}; if (!c) return "null"; const p = map.project(c), r = document.getElementById("map").getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + p.x), y: Math.round(r.top + p.y) }); })()`).then(JSON.parse);
@@ -76,6 +89,9 @@ check("the front page lists the areas", await until(`document.querySelectorAll("
 await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = false; drawPhotos(); } })()`);
 check("routes is the part that is open, and the basket is out of the way", await js(`document.getElementById("tab-routes").getAttribute("aria-current") === "page" && getComputedStyle(document.getElementById("basket")).display === "none"`));
 check("the routes are on the map", await until(`Boolean(lines) && lines.features.length > 0 && styled`));
+check("at the top three parts, and under the routes the lenses one has", await js(`[...document.querySelectorAll("nav[aria-label='Parts of Stiflyt'] a")].filter(a => !a.hidden).map(a => a.textContent).join(",") === "Routes,Signs,Plan"
+  && !document.getElementById("lenses").hidden && document.getElementById("lens-routes").getAttribute("aria-current") === "page" && document.getElementById("plans").hidden`),
+  await js(`[...document.querySelectorAll("header nav a")].filter(a => !a.hidden).map(a => a.textContent).join(",")`));
 
 // Your areas (the profile): chosen and saved, listed first, and the front page opens with the first of them. And a route
 // added to an area from another counts there, also on the map.
@@ -117,6 +133,14 @@ check("pointing at a route in the list shows it on the map", await js(`JSON.stri
 // A route: length, climb, grading, description.
 await click(row);
 check("a click on a route opens it", await until(`Boolean(route) && Boolean(shownRoute && shownRoute.detail) && document.querySelector("#panel h2 .code") !== null`), await text("#panel h2"));
+if (await js(`hasReports()`)) {
+  // Another lens with the route open: the route stays open, seen through it; and back.
+  const opened = await js("route");
+  await clickOn(`document.getElementById("tab-reports")`);
+  check("a lens chosen with a route open keeps the route open, seen through it", await until(`view === "reports" && route === ${JSON.stringify(opened)} && Boolean(shownRoute)`, 15), await js("location.search"));
+  await js("history.back()");
+  check("and the browser's back goes back to the overview, the route still open", await until(`view === "routes" && route === ${JSON.stringify(opened)} && Boolean(shownRoute && shownRoute.detail)`, 15), await js("location.search"));
+}
 check("the route says what it climbs, or that it is not known yet", await until(`(() => { const dt = [...document.querySelectorAll("#panel dl.facts dt")].find(d => d.textContent === "Climbs"); return Boolean(dt) && dt.nextElementSibling.innerText.trim().length > 3; })()`), await text("#panel dl.facts"));
 await until(`Boolean(shownRoute && shownRoute.height)`, 25);        // heights not kept yet are asked for while one waits
 if (await js(`Boolean(shownRoute && shownRoute.height && shownRoute.height.known_m > 0)`)) {
@@ -173,7 +197,7 @@ if (await js(`me.operates && document.querySelectorAll("#panel .plate:not([disab
   await clickOn(`[...document.querySelectorAll("#chosen button")].find(b => b.textContent === "Clear")`); await sleep(300);
   check("and it is let go of again", await js(`chosen.size === 0 && document.getElementById("chosen").hidden`));
 } else console.log("    (signed in to look: choosing a sign is not checked)");
-await clickOn(`document.getElementById("tab-routes")`);
+await toPart("lens-routes");
 check("the routes tab goes back to the routes", await until(`view === "routes" && document.querySelectorAll("#panel dl.facts dt").length >= 4`));
 const dot = await js(`(() => { const s = found.sites[0]; map.jumpTo({ center: [s.lon, s.lat], zoom: 13 }); return s.key; })()`);
 await sleep(1500);
@@ -182,7 +206,7 @@ check("a sign site's point among the routes opens the site among the signs", awa
 
 // Trips: a feature of its own. Without it the tab is not there. With it, a trip is planned, listed and drawn.
 if (await js(`(me.features || []).includes("trips")`)) {
-  await clickOn(`document.getElementById("tab-trips")`);
+  await toPart("tab-trips");
   check("the trips tab asks which routes, where from and how long a day is", await until(`view === "trips" && Boolean(document.querySelector("form.trip-ask button.main")) && /Every route in use here/.test(document.querySelector("form.trip-ask").textContent)`, 20), await text("#panel h2"));
   await clickOn(`document.querySelector("form.trip-ask button.main")`);
   check("a trip is planned: every day is in the list, and a line on the map", await until(`Boolean(trip) && trip.days.length > 0 && document.querySelectorAll(".trip-days > li").length === trip.days.length && Boolean(map.getLayer("trip")) && trip.covered.length > 0`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
@@ -191,14 +215,14 @@ if (await js(`(me.features || []).includes("trips")`)) {
   await clickOn(`document.querySelector(".trip-days li .grow")`);
   check("a click on a day shows that day alone", await until(`tripDay === 1 && document.querySelector(".trip-days li").classList.contains("current")`, 10));
   check("the address says the trips are open, so that it can be linked to", (await js("location.search")).includes("view=trips"));
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("the trips tab is not there for one who does not have the feature", await js(`document.getElementById("tab-trips").hidden`));
 
 // The route planner (the feature `planner`): a click where a walk begins and one where it ends, anywhere, and the way
 // between them is found, drawn in the colours of what it goes along, and timed with the heights.
 if (await js(`(me.features || []).includes("planner")`)) {
-  await clickOn(`document.getElementById("tab-planner")`);
+  await toPart("tab-planner");
   const areaBefore = await js("localStorage.getItem('stiflyt2.area')");
   check("the planner is of no area: none is chosen, and the address names none", await until(`view === "planner" && area === null && !/[?&]area=/.test(location.search)`, 20), await js("location.search"));
   check("the planner asks where the walk begins", await until(`view === "planner" && /Plan a walk/.test(document.querySelector("#panel h2").textContent) && /Search for where the walk begins .* or click the map/.test(document.getElementById("panel").textContent)`, 20), await text("#panel h2"));
@@ -285,7 +309,7 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   check("out of the planner, back in the area one was in", await until(`view === "routes" && area === ${JSON.stringify(areaBefore)}`, 15), await js("location.search"));
 } else check("the planner is not there for one who does not have the feature", await js(`document.getElementById("tab-planner").hidden`));
 
@@ -305,7 +329,7 @@ if (await js(`(me.features || []).includes("presence")`)) {
 
 // Issues and notices (the feature `issues`): reported by a click on a route, changed, taken back, and told in the route.
 if (await js(`hasIssues()`)) {
-  await clickOn(`document.getElementById("tab-issues")`);
+  await toPart("tab-issues");
   check("the issues tab lists what is open in the area", await until(`view === "issues" && Array.isArray(entries) && /Issues in/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel h2"));
   check("the address says the issues are open", (await js("location.search")).includes("view=issues"));
   const spot = EDIT && await onMap(`(() => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1); if (!f) return null;
@@ -368,7 +392,7 @@ if (await js(`hasIssues()`)) {
     editing = false;
   } else if (EDIT) console.log("    (no stretch here is walked by one route only: reporting an issue is not tried)");
   else console.log("    (not asked to change anything: reporting an issue is not tried)");
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("the issues tab is not there for one who does not have the feature", await js(`document.getElementById("tab-issues").hidden`));
 
@@ -377,7 +401,7 @@ await js(`(() => { if (typeof photosShown !== "undefined") { photosShown = true;
 if (await js(`hasPhotos()`)) {
   if (EDIT) {
     editing = true;
-    await clickOn(`document.getElementById("tab-photos")`);
+    await toPart("tab-photos");
     check("the photos part offers to add photos, by dropping them, choosing them or a folder", await until(`view === "photos" && /Photos in/.test(document.querySelector("#panel h2").textContent)
       && Boolean(document.querySelector("#panel .photo-drop")) && /Choose a folder/.test(document.querySelector("#panel .photo-drop").textContent)`, 10), await text("#panel"));
     await js(`(async () => { const c = document.createElement("canvas"); c.width = 640; c.height = 480; const g = c.getContext("2d"); g.fillStyle = "#4a7"; g.fillRect(0, 0, 640, 480);
@@ -410,7 +434,7 @@ if (await js(`hasPhotos()`)) {
     editing = false;
   } else {
     check("the photos of the area are on the map", await until(`photosFor === area`, 15));
-    await clickOn(`document.getElementById("tab-photos")`);
+    await toPart("tab-photos");
     check("the photos part shows the area's photos, the newest first", await until(`view === "photos" && document.querySelectorAll("#panel .photo-thumb").length === Math.min(photosAll.length, photoMore)`, 15), await text("#panel h2"));
   }
   // A button among the map's own hides them, and shows them again; the choice is remembered.
@@ -419,7 +443,7 @@ if (await js(`hasPhotos()`)) {
   check("the photo button hides the photos on the map, and says so", await until(`map.getLayoutProperty("photos", "visibility") === "none" && photoSwitch.getAttribute("aria-pressed") === "false" && localStorage.getItem("stiflyt2.photos") === "off"`, 5));
   await clickOn(`document.querySelector("button.photo-switch")`);
   check("and shows them again", await until(`map.getLayoutProperty("photos", "visibility") === "visible" && photoSwitch.getAttribute("aria-pressed") === "true"`, 5), pressed);
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
   // Among the signs too, to see which side of the path a post stands on; a click on a site still opens the site.
   await clickOn(`document.getElementById("tab-signs")`);
@@ -434,13 +458,13 @@ if (await js(`hasPhotos()`)) {
     check("a click on a sign site among the photos opens the site", await until(`view === "signs" && Boolean(open) && !photoBox.open`, 10), await text("#panel h2"));
     await js(`visit({ site: null })`);
   }
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));
 
 // Reports (the feature `reports`): how long since each route was inspected, as a list and on the map; a report made in the form.
 if (await js(`hasReports()`)) {
-  await clickOn(`document.getElementById("tab-reports")`);
+  await toPart("tab-reports");
   check("the reports part lists the routes, those longest since first, with what the colours mean, and others' routes apart", await until(`view === "reports" && Array.isArray(upkeep)
     && document.querySelectorAll("#panel li.hit .age-dot").length === upkeep.filter(r => r.ours !== false).length && /due/.test(document.querySelector("#panel .since-legend").textContent)`, 20), await text("#panel h2"));
   if (await js(`hasPhotos()`)) check("the photos are on the map among the reports too, with the button that hides them", await until(`photosFor === area && !photoControl.box.hidden
@@ -493,14 +517,14 @@ if (await js(`hasReports()`)) {
     check("taken away, the trial report is gone", await until(`!reportOpen && !(reportsAll || []).some(r => r.text === "Trial inspection")`, 10));
     editing = false;
   }
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("the reports part is not there for one who does not have the feature", await js(`document.getElementById("tab-reports").hidden`));
 
 // Who owns the ground (the feature `landowners`): a route's properties in order, and the property at a click on the map.
 // Who owns them is asked of the register only on the test viewer, which has no account for it: never of the real one.
 if (await js(`hasLandowners()`)) {
-  await clickOn(`document.getElementById("tab-landowners")`);
+  await toPart("tab-landowners");
   check("the owners tab lists the area's routes to open", await until(`view === "landowners" && document.querySelectorAll("#panel li.hit").length === over.routes.length
     && /Landowners in/.test(document.querySelector("#panel h2").textContent)`, 15), await text("#panel h2"));
   await clickOn(`document.querySelector("#panel li.hit")`);
@@ -529,7 +553,7 @@ if (await js(`hasLandowners()`)) {
     check("with no account for the register, asking who owns it says so", await until(`/no account for Kartverket's property register/.test(document.querySelector(".owned-box").textContent)`, 15), await text(".owned-box"));
   }
   await js(`ownedPopup.remove()`);
-  await clickOn(`document.getElementById("tab-routes")`);
+  await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("the owners tab is not there for one who does not have the feature", await js(`document.getElementById("tab-landowners").hidden`));
 

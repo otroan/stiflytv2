@@ -1,12 +1,12 @@
 // The front page starts: the browser's back, the tabs, Escape, and what the address asks for.
 window.addEventListener("popstate", () => arrive(here()));
-for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"], ["tab-planner", "planner"]])
-  document.getElementById(id).addEventListener("click", e => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-    e.preventDefault();
-    // Out of the planner, back to the area one was in before it.
-    visit({ view: is, route: null, site: null, entry: null, report: null, area: is === "planner" ? null : area || localStorage.getItem("stiflyt2.area") });
-  });
+// A part at the top goes to the lens last used in it; a lens to itself, with the route that is open where it has
+// something to say of it.
+const goTo = to => e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); visit({ site: null, entry: null, report: null, ...placeFor(to()) }); };
+document.getElementById("tab-routes").addEventListener("click", goTo(() => lastOf("routes")));
+document.getElementById("tab-signs").addEventListener("click", goTo(() => "signs"));
+document.getElementById("tab-plan").addEventListener("click", goTo(() => lastOf("plan")));
+for (const [v, id] of Object.entries(PART_TABS)) if (v !== "signs") document.getElementById(id).addEventListener("click", goTo(() => v));
 
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else undoLast(); }
@@ -30,6 +30,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     document.getElementById("tab-reports").hidden = !hasReports();
     document.getElementById("tab-landowners").hidden = !hasLandowners();
     document.getElementById("tab-planner").hidden = !hasPlanner();
+    document.getElementById("tab-plan").hidden = !hasPlanner() && !(me.features || []).includes("trips");
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     document.getElementById("who").replaceChildren(me.name ? (me.operates ? `Signed in as ${me.name}. What you decide about signs is kept under that name. ` : `Signed in as ${me.name}, to look. Changing signs needs the operations role. `) : "Read-only. ", out);
     areas = await get("owned/areas");

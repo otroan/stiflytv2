@@ -1231,6 +1231,17 @@ role is enough for them.
 Not there yet, of what v1 has: the field sheet as PDF, and photos. See
 `docs/TODO.md`.
 
+## The front page's parts
+
+At the top, three parts: **Routes**, **Signs** and **Plan**. Under Routes, the
+lenses the routes are looked at through, each a feature of its own and there
+only for one who has it: **Overview**, **Issues**, **Reports**, **Photos**,
+**Owners**. A lens chosen with a route open keeps it open, seen through that
+lens (its reports, its issues, the properties it crosses first). Under Plan,
+**A walk** (anywhere in Norway, of no area) and **A work trip** (covering the
+routes of an area). Each part goes back to the lens last used in it; a row with
+only one choice in it is not shown.
+
 ## Trips for work: a feature of its own
 
 For whoever is to inspect or mark some routes: say which, and get a trip on
@@ -1243,7 +1254,7 @@ nobody has it until it is given.
     stiflyt2 access role editor --features routes,signs,trips   # or everybody with a role
     stiflyt2 access feature trips all                       # or everybody who is let in
 
-With it, the front page has a third part, **Trips**. Choose an area, and
+With it, the front page has **A work trip** under **Plan**. Choose an area, and
 either every route in use there or the ones you tick; say where it begins
 (or leave that to it), how many hours of walking a day is, and whether you
 carry a tent, cross glaciers, or want to end where you began. "Plan the trip"
@@ -1305,7 +1316,7 @@ and `start`, `hours`, `tent`, `over_ice`, `back_to_start`, `mapped`. An assistan
 
 A walk from anywhere in Norway to anywhere, on foot, along DNT's routes as
 much as you like. With the feature `planner` (`stiflyt2 access give
-you@example.org planner`), the front page has the part **Planner**:
+you@example.org planner`), the front page has **A walk** under **Plan**:
 click the map where the walk begins, then where it ends; each click after
 that goes on further, so that the end before becomes a place passed on the
 way. Drag a letter to move it. A slider says how much DNT's marked routes are
@@ -1462,7 +1473,7 @@ the plan in `docs/TODO.md`), with the feature `issues`:
     stiflyt2 access role editor --features routes,signs,presence,issues
     stiflyt2 access role operations --features signs,issues
 
-The front page has a part of its own, **Issues**. "Report an issue", then a
+The front page has a lens of its own under **Routes**, **Issues**. "Report an issue", then a
 click on a route: say what it is, and whether it is about that spot, part
 of the route, or the whole route. Part of the route is from wherever to
 wherever, not from junction to junction: two clicks on its line, where it
@@ -1542,7 +1553,7 @@ are done, and photos may be of it.
 
 From the reports, each time it is asked, comes when each route was last
 inspected and last had a work party, as skisporet.no shows when a ski track
-was last prepared: the part **Reports** lists the routes of an area, those
+was last prepared: the lens **Reports** lists the routes of an area, those
 longest since first, and colours the map stretch by stretch (green under
 half the interval, yellow under all of it, red over it, grey never). A route
 is due for inspection every third year and a work party every tenth;
@@ -1586,7 +1597,7 @@ script when it is printed.
 
 With the feature `landowners`, which is in no role and is given to a person by
 name (`stiflyt2 access give <email> landowners`): owners' names and addresses
-are personal data. The part **Owners** lists an area's routes. A route opened
+are personal data. The lens **Owners** lists an area's routes. A route opened
 there shows the properties it crosses, in the order it crosses them, with
 where along it (km) and how far; pointing at one lights up where the route
 crosses it. A click on the map off the routes says the property there, with

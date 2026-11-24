@@ -134,13 +134,42 @@ async function change(request) {
   try { await request(); } catch (err) { problem = err.message; }
   await load();
 }
+// The parts of the page: the routes, the signs and planning, at the top; under the routes the lenses one looks at
+// them through (their overview, issues, reports, photos, owners), under planning what is planned. A lens or a kind
+// of plan one does not have is not there, nor a row with only one in it. Each part goes back to the lens last used.
+const PARTS = { routes: ["routes", "issues", "reports", "photos", "landowners"], plan: ["planner", "trips"] };
+const PART_TABS = { routes: "lens-routes", issues: "tab-issues", reports: "tab-reports", photos: "tab-photos", landowners: "tab-landowners",
+                    planner: "tab-planner", trips: "tab-trips", signs: "tab-signs" };
+const partOf = v => PARTS.routes.includes(v) ? "routes" : PARTS.plan.includes(v) ? "plan" : "signs";
+const partShown = id => !document.getElementById(id).hidden;
+function lastOf(part) {
+  const kept = localStorage.getItem(`stiflyt2.lens.${part}`), have = PARTS[part].filter(v => partShown(PART_TABS[v]));
+  return have.includes(kept) ? kept : have[0] || PARTS[part][0];
+}
+// Where a part or a lens leads: the area one is in (none for the planner, which is of no area), and the route one has
+// open where the lens has something to say of it.
+const placeFor = v => ({ view: v, area: v === "planner" ? null : area || localStorage.getItem("stiflyt2.area"),
+                         route: ROUTE_VIEWS.includes(v) && ROUTE_VIEWS.includes(view) ? route : null });
+function renderParts() {
+  const part = partOf(view);
+  if (part !== "signs") localStorage.setItem(`stiflyt2.lens.${part}`, view);
+  for (const [id, p, to] of [["tab-routes", "routes", lastOf("routes")], ["tab-signs", "signs", "signs"], ["tab-plan", "plan", lastOf("plan")]]) {
+    const tab = document.getElementById(id);
+    if (part === p) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
+    tab.href = addressOf({ view: to, area: to === "planner" ? null : area || localStorage.getItem("stiflyt2.area") }).href;
+  }
+  for (const [v, id] of Object.entries(PART_TABS)) {
+    if (v === "signs") continue;
+    const tab = document.getElementById(id);
+    if (view === v) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
+    tab.href = addressOf(placeFor(v)).href;
+  }
+  document.getElementById("lenses").hidden = part !== "routes" || PARTS.routes.filter(v => partShown(PART_TABS[v])).length < 2;
+  document.getElementById("plans").hidden = part !== "plan" || PARTS.plan.filter(v => partShown(PART_TABS[v])).length < 2;
+}
 function render() {
   document.body.dataset.view = view;
-  for (const [id, is] of [["tab-routes", "routes"], ["tab-signs", "signs"], ["tab-issues", "issues"], ["tab-photos", "photos"], ["tab-reports", "reports"], ["tab-landowners", "landowners"], ["tab-trips", "trips"], ["tab-planner", "planner"]]) {
-    const tab = document.getElementById(id);
-    if (view === is) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
-    tab.href = addressOf({ view: is, area: is === "planner" ? null : area || localStorage.getItem("stiflyt2.area") }).href;
-  }
+  renderParts();
   if (view === "planner") renderPlanner();
   else if (!area) renderAreas();
   else if (route) renderRoute();
