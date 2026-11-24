@@ -45,7 +45,7 @@ ws.addEventListener("message", m => {
     // here, nobody else: the service takes where a page is only from a page a person has open, and keeps the refusal.
     if ((pretend || TOKEN) && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend || [])).toString("base64") }); return; }
     // (Planning a trip, and saying where the page is, are asked with POST and keep nothing: they are let through, as a look is.)
-    if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|planner\/plan|planner\/heights|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
+    if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|planner\/plan|planner\/estimate|planner\/heights|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
     send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
   }
 });
@@ -243,6 +243,20 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("and the mountains preferred to the valleys", await until(`planAsk.mountains === 0.6 && Boolean(plan) && !planBusy && plan.options.mountains === 0.6`, 60), await text("#panel .error"));
   await js(`(() => { const r = [...document.querySelectorAll(".plan-prefer input")].find(i => /valleys/.test(i.getAttribute("aria-label"))); r.value = 0; r.dispatchEvent(new Event("input", { bubbles: true })); })()`);
   await until(`planAsk.mountains === 0 && Boolean(plan) && !planBusy`, 60);
+  // Not by itself: a change leaves the way as it was, faded and said to be from before, until "Find the way" is pressed,
+  // which says how long it is thought to take; while it is found, a bar fills.
+  await clickOn(`document.querySelector(".plan-auto input")`);
+  await until(`planAsk.auto === false`, 5);
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Ferries may be taken/.test(l.textContent)).querySelector("input")`);
+  check("not by itself, a change waits for the button, which says about how long it takes", await until(`planStale && !planBusy && Boolean(planEstimate)
+    && /^Find the way [(]about [0-9.]+ s[)]$/.test(document.querySelector(".plan-find button").textContent) && /as it was before/.test(document.getElementById("panel").textContent)`, 20),
+    await text(".plan-find"));
+  await clickOn(`document.querySelector(".plan-find button")`);
+  check("and pressed, the way is found anew", await until(`!planStale && Boolean(plan) && !planBusy && plan.options.ferries === false`, 60),
+    await text("#panel .error"));
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Ferries may be taken/.test(l.textContent)).querySelector("input")`);
+  await clickOn(`document.querySelector(".plan-auto input")`);
+  await until(`planAsk.auto === true && !planBusy && !planStale`, 60);
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));

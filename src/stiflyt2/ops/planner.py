@@ -34,6 +34,7 @@ import itertools
 import json
 import math
 
+import psycopg
 from psycopg.rows import dict_row
 
 from stiflyt2 import features, height, terrain
@@ -415,6 +416,52 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             "credits": [CREDITS[k] for k in ("osm", "turrutebasen", "terrain") if k in origins],
             "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine,
                         "mountains": o.mountains, "across": o.across}}
+
+
+# How long a search takes, as measured: a little for each leg, and then for every stretch in its box. A walk the
+# length of Norway: 12 s along paths, 21 s across country too.
+LEG_S = 0.2
+EDGE_S = 3.2e-6
+FIELD_S = 2.0e-6
+HEIGHTS_S, HEIGHTS_S_PER_KM = 0.3, 0.0015
+WALKED_PER_CROW = 1.4           # a way on foot is about this much longer than the crow flies
+
+
+def _share(conn, table: str, box: str) -> float:
+    """How much of a table lies in a box, as its statistics say; nothing where it has none (never analysed)."""
+    try:
+        with conn.transaction():
+            return conn.execute(f"SELECT _postgis_selectivity('walk.{table}', 'geom', {box})").fetchone()[0] or 0.0
+    except psycopg.Error:
+        return 0.0
+
+
+def estimate(conn, points: list, o: Options | None = None, straight: list[bool] | None = None) -> dict:
+    """About how long a plan would take, before it is asked for: from how many stretches lie in the box each leg is
+    searched in, as the database's statistics have it. Takes a millisecond."""
+    o = o or Options()
+    if not 2 <= len(points) <= MOST_POINTS:
+        raise Invalid(f"a way goes through 2 to {MOST_POINTS} points")
+    straight = list(straight) if straight is not None else [False] * (len(points) - 1)
+    tuples = dict(conn.execute("""SELECT relname, greatest(reltuples, 0) FROM pg_class
+                                  WHERE relnamespace = 'walk'::regnamespace AND relname IN ('edge', 'field')""").fetchall())
+    xy = conn.execute("""SELECT ST_X(p), ST_Y(p) FROM unnest(%s::float8[], %s::float8[]) WITH ORDINALITY u(x, y, i),
+                         LATERAL ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 4326), 25833) p ORDER BY i""",
+                      ([float(p[0]) for p in points], [float(p[1]) for p in points])).fetchall()
+    legs, crow = [], 0.0
+    for n, ((x1, y1), (x2, y2)) in enumerate(itertools.pairwise(xy)):
+        far = math.hypot(x2 - x1, y2 - y1)
+        crow += far
+        if n < len(straight) and straight[n]:
+            legs.append(0.0)
+            continue
+        m = max(5000, 0.3 * far)
+        box = f"ST_MakeEnvelope({min(x1, x2) - m}, {min(y1, y2) - m}, {max(x1, x2) + m}, {max(y1, y2) + m}, 25833)"
+        edges = _share(conn, "edge", box) if tuples.get("edge") else 0.0
+        fields = _share(conn, "field", box) if o.across and tuples.get("field") else 0.0
+        legs.append(LEG_S + edges * tuples.get("edge", 0) * EDGE_S + fields * tuples.get("field", 0) * FIELD_S)
+    return {"seconds": round(sum(legs), 1), "legs": [round(s, 1) for s in legs],
+            "heights_seconds": round(HEIGHTS_S + crow * WALKED_PER_CROW / 1000 * HEIGHTS_S_PER_KM, 1)}
 
 
 def _named(conn, steps: list[dict], coords: list) -> None:

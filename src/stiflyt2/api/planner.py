@@ -63,6 +63,12 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
         with read.connection() as conn:
             return planner.plan(conn, body.points, body.options(), body.straight, body.snap)
 
+    @app.post(f"{V1}/estimate")
+    def estimate(body: Ask, who: May) -> dict:
+        """About how long a plan would take, before it is asked for."""
+        with read.connection() as conn:
+            return planner.estimate(conn, body.points, body.options(), body.straight)
+
     @app.post(f"{V1}/heights")
     def heights(body: Heights, who: May) -> dict:
         """How high a way planned goes, what it climbs, the time it takes, and days that end at huts."""

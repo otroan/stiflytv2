@@ -149,6 +149,14 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .plan-legs li.unfound .sub { color: var(--band); }
 .plan-legs li.roundabout .sub:last-child { color: #8a5a00; }
 .plan-legs button { flex: none; }
+.plan-find { align-items: center; flex-wrap: wrap; }
+.plan-auto { font-size: 13px; color: var(--muted); }
+.plan-progress { margin: 6px 0 8px; }
+.plan-bar { height: 8px; border-radius: 4px; background: var(--wash, #eef0f2); overflow: hidden; }
+.plan-bar span { display: block; height: 100%; background: var(--band, #c8161d); transition: width .2s linear; }
+.plan-bar.unknown span { width: 30% !important; animation: plan-sweep 1.2s ease-in-out infinite alternate; }
+@keyframes plan-sweep { from { margin-left: 0; } to { margin-left: 70%; } }
+.stale { color: #8a5a00; }
 .plan-profile { display: block; width: 100%; max-width: 420px; height: auto; margin: 6px 0; }
 #present { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }

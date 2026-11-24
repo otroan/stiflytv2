@@ -9,7 +9,7 @@ const PLAN_KEY = "stiflyt2.plan";
 // point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
 // two points, whether it is drawn straight over the ground, with no path.
 // A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to.
-const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7 },
+const planAsk = Object.assign({ points: [], names: [], snap: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
 if (planAsk.snap.length !== planAsk.points.length) planAsk.snap = planAsk.points.map(() => false);
@@ -22,6 +22,8 @@ legsFit();
 let plan = null, planProblem = null, planBusy = false, planHeights = null, heightsProblem = null, heightsBusy = false;
 let planAsked = 0, planMarkers = [], planDay = null;
 let planDrag = null, planIgnoreClick = false;       // the line taken hold of, and the click that letting go of it makes
+let planEstimate = null, planStale = false, planPhase = null, planEstimating = false;     // how long, whether from before, what is under way
+const PLAN_AUTO_S = 3;          // a way thought to take no longer than this is found by itself, when the person lets it
 const hasPlanner = () => (me.features || []).includes("planner");
 const letter = i => String.fromCharCode(65 + i);
 const hoursAndMinutes = m => `${Math.floor(m / 60)} h ${String(Math.round(m) % 60).padStart(2, "0")}`;
@@ -104,32 +106,54 @@ function placeField(which, label, point, name, coords) {
   setTimeout(list);         // once the field is in the page
   return field;
 }
+// What is asked of the server: the points and how to go.
+const planBody = () => ({ points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains,
+                          across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+// Something was changed: how long the way would take to find is asked for at once (a millisecond), and the way itself
+// only when that is quick (and it is to be found by itself), or when "Find the way" is pressed. Until then the way
+// found before stays, faded, and says it is from before.
 function replan() {
   legsFit();
   keepAsk();
-  plan = planHeights = null; planProblem = heightsProblem = null; planDay = null;
-  if (planAsk.points.length < 2) { render(); return; }
-  askPlan();
+  const asked = ++planAsked;            // what is on its way back from before is for what was asked before
+  planProblem = heightsProblem = null; planDay = null; planBusy = heightsBusy = false; planEstimate = null;
+  if (planAsk.points.length < 2) { plan = planHeights = null; planStale = false; render(); return; }
+  planStale = Boolean(plan);
+  render();
+  askEstimate(asked);
 }
 let planTimer = null;
 function replanSoon() { clearTimeout(planTimer); planTimer = setTimeout(replan, 400); }
-async function askPlan() {
-  const asked = ++planAsked;
-  planBusy = true; render();
+async function askEstimate(asked) {
   try {
-    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains, across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+    const got = await send("POST", "planner/estimate", planBody());
     if (asked !== planAsked) return;
-    plan = got;
+    planEstimate = got;
+  } catch { if (asked !== planAsked) return; planEstimate = { seconds: null, heights_seconds: null }; }
+  if (planAsk.auto && planEstimate.seconds !== null && planEstimate.seconds <= PLAN_AUTO_S) askPlan(asked);
+  else render();
+}
+async function askPlan(asked = ++planAsked) {
+  clearTimeout(planTimer);          // a slider's change still waiting is in what is asked now
+  planBusy = true; planProblem = null;
+  planPhase = { finding: "way", began: Date.now(), about: planEstimate && planEstimate.seconds };
+  render(); planTick();
+  try {
+    const got = await send("POST", "planner/plan", planBody());
+    if (asked !== planAsked) return;
+    plan = got; planStale = false; planHeights = null; heightsProblem = null;
     // A point moved onto the path it is passed on: its letter goes there too.
     for (const [i, at] of Object.entries(got.snapped || {})) planAsk.points[Number(i)] = at;
     keepAsk();
   } catch (err) { if (asked === planAsked) planProblem = err.message; }
   if (asked !== planAsked) return;
   planBusy = false; render();
-  if (plan) askHeights(asked);
+  if (plan && !planProblem) askHeights(asked);
 }
 async function askHeights(asked) {
-  heightsBusy = true; render();
+  heightsBusy = true;
+  planPhase = { finding: "heights", began: Date.now(), about: planEstimate && planEstimate.heights_seconds };
+  render(); planTick();
   try {
     const parts = plan.steps.map(s => ({ coords: plan.coords.slice(s.at[0], s.at[1] + 1), ferry: s.class === "ferry", rough: s.class === "off" || s.class === "field", ice: s.ice }));
     const got = await send("POST", "planner/heights", { parts, hours: planAsk.hours });
@@ -138,6 +162,34 @@ async function askHeights(asked) {
   } catch (err) { if (asked === planAsked) heightsProblem = err.message; }
   if (asked !== planAsked) return;
   heightsBusy = false; render();
+}
+// How far it has come, as the time it was thought to take goes: a bar that fills, and stops short until it is done.
+const aboutTime = t => t >= 60 ? `${Math.floor(t / 60)} min ${String(Math.round(t % 60)).padStart(2, "0")} s` : t >= 10 ? `${Math.round(t)} s` : `${t.toFixed(1)} s`;
+function planProgress() {
+  const P = planPhase, gone = (Date.now() - P.began) / 1000;
+  const what = P.finding === "way" ? "Finding the way" : "Reading how high it goes";
+  if (!P.about) return [null, `${what}… ${aboutTime(gone)}`];
+  const share = Math.min(0.95, gone / Math.max(P.about, 0.1));
+  return [share, gone > P.about * 1.2 ? `${what}… ${aboutTime(gone)}: longer than the ${aboutTime(P.about)} it was thought to take`
+    : `${what}… ${Math.round(share * 100)} %, about ${aboutTime(Math.max(0, P.about - gone))} left`];
+}
+function progressBar() {
+  const [share, says] = planProgress();
+  return el("div", { class: "plan-progress", role: "status" },
+    el("div", { class: "plan-bar" + (share === null ? " unknown" : "") }, el("span", { style: `width:${share === null ? 100 : Math.round(share * 100)}%` })),
+    el("div", { class: "sub" }, says));
+}
+let planTicker = null;
+function planTick() {
+  clearInterval(planTicker);
+  planTicker = setInterval(() => {
+    if (!planBusy && !heightsBusy) { clearInterval(planTicker); return; }
+    const bar = document.querySelector("#panel .plan-bar span"), said = document.querySelector("#panel .plan-progress .sub");
+    if (!bar || !said || !planPhase) return;
+    const [share, says] = planProgress();
+    if (share !== null) bar.style.width = `${Math.round(share * 100)}%`;
+    said.textContent = says;
+  }, 200);
 }
 function showPlan() {
   if (!plan) return;
@@ -185,8 +237,12 @@ function profileOf(H) {
 }
 function renderPlanner() {
   const P = planAsk.points;
-  // Opened with a walk from before (kept in the browser): its way is asked for again.
-  if (P.length >= 2 && !plan && !planBusy && !planProblem && hasPlanner()) { askPlan(); return; }
+  // Opened with a walk from before (kept in the browser): how long its way takes is asked for, and it is found by
+  // itself if that is quick.
+  if (P.length >= 2 && !plan && !planBusy && !planProblem && !planEstimate && !planEstimating && hasPlanner()) {
+    planEstimating = true;
+    askEstimate(planAsked).finally(() => { planEstimating = false; });
+  }
   const at = p => `${p[1].toFixed(4)} N ${p[0].toFixed(4)} E`, N = planAsk.names;
   const lone = planAsk.lone === "end", last = P.length - 1;
   const start = P.length && !lone ? 0 : null, end = P.length > 1 ? last : lone ? 0 : null;
@@ -210,7 +266,15 @@ function renderPlanner() {
     el("label", {}, "A day is ", el("input", { type: "number", min: 3, max: 14, step: 0.5, value: planAsk.hours, style: "width:5em",
       onchange: e => { planAsk.hours = Math.min(14, Math.max(3, Number(e.target.value) || 7)); keepAsk(); if (plan) { planHeights = null; askHeights(planAsked); } } }), " hours of walking, with no rests"));
   const told = [];
-  if (planBusy) told.push(el("div", { class: "sub" }, "Finding the way…"));
+  // Find the way: by itself when it is quick, else when asked; with how long it is thought to take.
+  const about = planEstimate && planEstimate.seconds !== null && planEstimate.seconds !== undefined ? ` (about ${aboutTime(planEstimate.seconds)})` : "";
+  told.push(el("div", { class: "actions plan-find" },
+    el("button", { class: "btn main", type: "button", disabled: P.length < 2 || planBusy ? "" : false, onclick: () => askPlan() },
+      planBusy ? "Finding the way…" : `${plan && !planStale ? "Find it again" : "Find the way"}${about}`),
+    el("label", { class: "plan-auto" }, el("input", { type: "checkbox", checked: planAsk.auto ? "" : false, onchange: e => { planAsk.auto = e.target.checked; keepAsk(); } }),
+      ` By itself when it takes under ${PLAN_AUTO_S} s`)));
+  if (planBusy || heightsBusy) told.push(progressBar());
+  if (plan && planStale && !planBusy) told.push(el("div", { class: "sub stale" }, "Below is the way as it was before what you changed: find it again for the new one."));
   if (planProblem) told.push(el("div", { class: "error", role: "alert" }, `No way was found: ${planProblem}`));
   if (plan && !planBusy) {
     const T = plan.total, H = planHeights;
@@ -218,7 +282,7 @@ function renderPlanner() {
       el("div", { class: "sub" }, H ? `${hoursAndMinutes(H.minutes)} of walking by Naismith's rule, with no rests; ${H.up_m.toLocaleString("en")} m up and ${H.down_m.toLocaleString("en")} m down, `
           + `from ${H.lowest_m} to ${H.highest_m} m above the sea.` + (H.rough_m >= 100 ? ` ${km(H.rough_m / 1000)} of it with no path, timed half as slow again.` : "")
           + (H.ferries.length ? ` Ferries besides: about ${hoursAndMinutes(H.ferries.reduce((t, f) => t + f.minutes, 0))} on board.` : "")
-        : heightsBusy ? "Asking Kartverket how high it goes…" : heightsProblem ? `The heights could not be had: ${heightsProblem}` : ""),
+        : heightsBusy ? "" : heightsProblem ? `The heights could not be had: ${heightsProblem}` : ""),
       H ? profileOf(H) : "",
       // A few metres from a click to the nearest way are said below, not as a kind of their own.
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
@@ -308,6 +372,7 @@ function drawPlan() {
     map.getSource("plan-days").setData({ type: "FeatureCollection", features: days.map(d => ({ type: "Feature", properties: { day: String(d.day) },
       geometry: { type: "Point", coordinates: d.hut ? [d.hut.lon, d.hut.lat] : pointAlong(d.at_m) } })).filter(f => f.geometry.coordinates) });
     if (on && plan) for (const id of ["routes", "routes-ice"]) if (map.getLayer(id)) map.setPaintProperty(id, "line-opacity", 0.3);
+    for (const id of ["plan", "plan-dashed"]) map.setPaintProperty(id, "line-opacity", planStale ? 0.4 : 1);
     // The points: markers that can be dragged, made anew when they are not the ones shown.
     for (const m of planMarkers) m.remove();
     planMarkers = on ? planAsk.points.map((p, i) => {

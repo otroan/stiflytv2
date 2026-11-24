@@ -460,3 +460,15 @@ def test_across_country_it_goes_round_water_rivers_and_cliffs(field_network, fie
     # Timed as ground with no path.
     parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1], "rough": s["class"] in ("off", "field")} for s in told["steps"]]
     assert planner.heights(conn, parts)["rough_m"] == pytest.approx(told["total"]["walked_m"], rel=0.02)
+
+
+def test_how_long_a_plan_takes_is_said_before_it_is_asked_for(network, conn):
+    a, b = network["a"], network["b"]
+    said = planner.estimate(conn, [a, b, C])
+    assert len(said["legs"]) == 2 and all(planner.LEG_S <= s < 5 for s in said["legs"]) and said["heights_seconds"] > 0
+    assert said["seconds"] == pytest.approx(sum(said["legs"]), abs=0.15)
+    assert planner.estimate(conn, [a, b, C], straight=[True, False])["legs"][0] == 0
+    # Across country with no lattice built (no height model): counted as none, not refused.
+    assert planner.estimate(conn, [a, b], planner.Options(across=True))["seconds"] >= planner.LEG_S
+    with pytest.raises(Invalid):
+        planner.estimate(conn, [a])
