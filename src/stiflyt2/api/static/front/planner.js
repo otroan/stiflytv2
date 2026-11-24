@@ -11,7 +11,7 @@ const PLAN_KEY = "stiflyt2.plan";
 // A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to. A point that is
 // `hidden` is not one of yours: it holds the way where it was on either side of where the line was dragged, so that
 // only the part between is found anew. It has no letter, and goes when the point it was made for goes.
-const planAsk = Object.assign({ points: [], names: [], snap: [], hidden: [], lone: null, modes: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
+const planAsk = Object.assign({ points: [], names: [], snap: [], hidden: [], lone: null, modes: [], prefer: 0.6, mountains: 0, across: false, wade: false, fords: true, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 function pointsFit() {       // a name, a snap and a hidden for each point, whatever was done to them
   for (const k of ["names", "snap", "hidden"]) {
@@ -102,7 +102,7 @@ function metresOf(C) {
 }
 // What leg k is found for: its two points, how it is to be drawn, and how to go. The same again is the same leg.
 const legKey = k => JSON.stringify([planAsk.points[k], planAsk.points[k + 1], planAsk.modes[k], planAsk.snap[k], planAsk.snap[k + 1],
-  planAsk.prefer, planAsk.mountains, planAsk.across, planAsk.ferries, planAsk.ice, planAsk.alpine]);
+  planAsk.prefer, planAsk.mountains, planAsk.across, planAsk.wade, planAsk.fords, planAsk.ferries, planAsk.ice, planAsk.alpine]);
 // The part of the way found from one index of its line to another, as a leg to be kept: its line, its steps (cut where
 // it is cut), the junctions along it, and what it is from.
 function keptOf(a, b, L) {
@@ -113,6 +113,7 @@ function keptOf(a, b, L) {
              metres: lo === st.at[0] && hi === st.at[1] ? st.metres : metresOf(plan.coords.slice(lo, hi + 1)) };
   });
   return { coords, steps, joints: plan.joints.filter(j => j >= a && j <= b).map(j => j - a), origins: L.origins || [],
+           crossings: (plan.crossings || []).filter(c => c.at >= a && c.at <= b).map(c => ({ ...c, at: c.at - a })),
            unfound: a === L.at[0] && b === L.at[1] ? L.unfound : null, roundabout: a === L.at[0] && b === L.at[1] && L.roundabout };
 }
 // The line taken hold of at index i of its line (on leg `leg`) and let go of at `at`. Only the part between the
@@ -189,7 +190,7 @@ function placeField(which, label, point, name, coords) {
 }
 // What is asked of the server: the points and how to go.
 const planBody = () => ({ points: planAsk.points, modes: planAsk.modes, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains,
-                          across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine,
+                          across: planAsk.across, wade: planAsk.wade, fords: planAsk.fords, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine,
                           kept: planAsk.modes.map((_, k) => planLegCache.get(legKey(k)) || null) });
 // Something was changed: how long the way would take to find is asked for at once (a millisecond), and the way itself
 // only when that is quick (and it is to be found by itself), or when "Find the way" is pressed. Until then the way
@@ -320,6 +321,18 @@ function profileOf(H) {
   add("text", { x: pad + 2, y: Ht - 6, "font-size": 10, fill: "#5f6b73" }).textContent = `${Math.round(lo)} m`;
   return svg;
 }
+// Where the way crosses a river, and how: by a bridge, by a ford on a path, or wading across country; at how far.
+const CROSSING = { bridge: "Bridge over", ford: "Ford over", wade: "Wades" };
+function planCrossings() {
+  const C = plan.crossings || [];
+  if (!C.length) return "";
+  const along = [0];
+  for (let k = 1; k < plan.coords.length; k++) along.push(along[k - 1] + metresOf([plan.coords[k - 1], plan.coords[k]]));
+  return el("div", { class: "plan-crossings" }, el("strong", {}, "Over rivers: "),
+    ...C.map((c, k) => el("span", { class: `crossing ${c.how}` }, `${k ? "; " : ""}${CROSSING[c.how]} ${c.river || (c.how === "bridge" ? "a river" : "a stream")}`,
+      el("span", { class: "sub" }, ` at ${km(along[c.at] / 1000)}`))),
+    C.some(c => c.how !== "bridge") ? el("div", { class: "sub" }, "Whether a ford or a river can be waded today, and whether a summer bridge is out, is not known here.") : "");
+}
 // The way between each two points of yours: its legs together (a dragged line cuts one into several).
 function planSegments() {
   const V = planVisible(), P = planAsk.points;
@@ -356,8 +369,12 @@ function renderPlanner() {
   const form = el("div", { class: "trip-ask" },
     el("label", { class: "plan-prefer" }, el("span", {}, "Shortest"), slider, el("span", {}, "Along DNT's routes")),
     el("label", { class: "plan-prefer" }, el("span", {}, "Valleys"), heights, el("span", {}, "Mountains")),
-    ...[["across", "Across country where there is no path (a sketch)"], ["ferries", "Ferries may be taken"], ["ice", "Over glaciers too"], ["alpine", "Demanding alpine paths and via ferratas too"]].map(([key, says]) =>
-      el("label", {}, el("input", { type: "checkbox", checked: planAsk[key] ? "" : false, onchange: e => { planAsk[key] = e.target.checked; replan(); } }), ` ${says}`)),
+    ...[["across", "Across country where there is no path (a sketch)"], ["wade", "Across country, wade rivers (each counts as 1 km more)"],
+        ["dry", "Go round fords on paths by a bridge, where there is one"], ["ferries", "Ferries may be taken"], ["ice", "Over glaciers too"],
+        ["alpine", "Demanding alpine paths and via ferratas too"]].map(([key, says]) =>
+      // (Going round fords is fords not taken as they come.)
+      el("label", {}, el("input", { type: "checkbox", checked: (key === "dry" ? !planAsk.fords : planAsk[key]) ? "" : false,
+        onchange: e => { if (key === "dry") planAsk.fords = !e.target.checked; else planAsk[key] = e.target.checked; replan(); } }), ` ${says}`)),
     el("label", {}, "A day is ", el("input", { type: "number", min: 3, max: 14, step: 0.5, value: planAsk.hours, style: "width:5em",
       onchange: e => { planAsk.hours = Math.min(14, Math.max(3, Number(e.target.value) || 7)); keepAsk(); if (plan) { planHeights = null; askHeights(planAsked); } } }), " hours of walking, with no rests"));
   const told = [];
@@ -382,6 +399,7 @@ function renderPlanner() {
       // A few metres from a click to the nearest way are said below, not as a kind of their own.
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
+      planCrossings(),
       ...plan.off.filter(o => !planAsk.hidden[o.point]).map(o => el("div", { class: "sub" }, `${letterOf(o.point)} is ${o.off_m.toLocaleString("en")} m from where the way passes: that bit is drawn straight.`)),
       // Each leg, between two points of yours: along paths and roads, across country alone (even where there are paths),
       // or straight. One with no way found is drawn straight and says why; one that goes far round says so. One the
@@ -434,6 +452,9 @@ function drawPlan() {
       map.addLayer({ id: "plan-casing", type: "line", source: "plan", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#fff", "line-width": 8 } });
       map.addLayer({ id: "plan", type: "line", source: "plan", filter: ["!", ["get", "dashed"]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "colour"], "line-width": 4.5 } });
       map.addLayer({ id: "plan-dashed", type: "line", source: "plan", filter: ["get", "dashed"], layout: { "line-join": "round" }, paint: { "line-color": ["get", "colour"], "line-width": 4, "line-dasharray": [1.2, 1.2] } });
+      map.addSource("plan-crossings", { type: "geojson", data: empty });
+      map.addLayer({ id: "plan-crossings", type: "circle", source: "plan-crossings",
+        paint: { "circle-radius": 6, "circle-color": ["case", ["==", ["get", "how"], "bridge"], "#fff", "#1f6fc5"], "circle-stroke-color": "#1f6fc5", "circle-stroke-width": 2 } });
       map.addLayer({ id: "plan-days", type: "circle", source: "plan-days", paint: { "circle-radius": 9, "circle-color": "#1f2a30", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
       map.addLayer({ id: "plan-day-numbers", type: "symbol", source: "plan-days", layout: { "text-field": ["get", "day"], "text-size": 11, "text-font": ["Open Sans Semibold"], "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
       // The line can be taken hold of and dragged to another path: where it is let go is a point it passes.
@@ -466,6 +487,8 @@ function drawPlan() {
     map.getSource("plan").setData({ type: "FeatureCollection", features: steps.map(s => ({ type: "Feature",
       properties: { colour: s.ice ? GLACIER : (PLAN_CLASSES[s.class] || PLAN_CLASSES.path)[1], dashed: s.class === "ferry" || s.class === "off" || s.class === "field" || s.ice, leg: legOf(s) },
       geometry: { type: "LineString", coordinates: plan.coords.slice(s.at[0], s.at[1] + 1) } })) });
+    map.getSource("plan-crossings").setData({ type: "FeatureCollection", features: (on && plan && !planStale ? plan.crossings || [] : []).map(c => ({ type: "Feature",
+      properties: { how: c.how }, geometry: { type: "Point", coordinates: plan.coords[c.at] } })) });
     const days = on && plan && planHeights ? planHeights.days.filter(d => !d.last) : [];
     map.getSource("plan-days").setData({ type: "FeatureCollection", features: days.map(d => ({ type: "Feature", properties: { day: String(d.day) },
       geometry: { type: "Point", coordinates: d.hut ? [d.hut.lon, d.hut.lat] : pointAlong(d.at_m) } })).filter(f => f.geometry.coordinates) });

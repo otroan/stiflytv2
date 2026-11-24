@@ -57,6 +57,7 @@ BARE_M = 25             # a point of a marked route with no stretch this near ha
 BARE_EVERY_M = 50       # a marked route is looked at this often along it
 TIE_M = 60              # the end of a marked route put in is joined to a junction this near
 DNT = r"^DNT|turistforening|turlag|utferdslag"      # who of Turrutebasen's maintainers is DNT
+FORDS = ("yes", "stepping_stones")                  # ford= that says the water is waded, or stepped over on stones
 
 
 def kind_of(get) -> tuple[str, bool, bool, bool] | None:
@@ -91,15 +92,16 @@ def _ways(pbf: Path):
         refs.extend(n.ref for n in w.nodes)
         starts.append(len(refs))
         meta.append((w.id, *what, tags.get("name") or tags.get("ref"), tags.get("sac_scale"),
-                     tags.get("trail_visibility")))
+                     tags.get("trail_visibility"), tags.get("ford") in FORDS, tags.get("bridge") not in (None, "no")))
     return meta, np.frombuffer(refs, dtype=np.int64), np.frombuffer(starts, dtype=np.int64)
 
 
-def _nodes(pbf: Path, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Where each of the nodes is (longitude, latitude), in the order of `ids`. NaN for one not found."""
+def _nodes(pbf: Path, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Where each of the nodes is (longitude, latitude), in the order of `ids`, NaN for one not found; and which
+    of them are fords."""
     import osmium
 
-    got, lon, lat = array("q"), array("d"), array("d")
+    got, lon, lat, fords = array("q"), array("d"), array("d"), array("q")
     nodes = osmium.FileProcessor(str(pbf), osmium.osm.NODE).with_filter(osmium.filter.IdFilter(int(i) for i in ids))
     for n in nodes:
         at = n.location
@@ -107,10 +109,14 @@ def _nodes(pbf: Path, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             got.append(n.id)
             lon.append(at.lon)
             lat.append(at.lat)
+            if n.tags.get("ford") in FORDS:
+                fords.append(n.id)
     x, y = np.full(len(ids), np.nan), np.full(len(ids), np.nan)
     where = np.searchsorted(ids, np.frombuffer(got, dtype=np.int64))
     x[where], y[where] = np.frombuffer(lon), np.frombuffer(lat)
-    return x, y
+    ford = np.zeros(len(ids), dtype=bool)
+    ford[np.searchsorted(ids, np.frombuffer(fords, dtype=np.int64))] = True
+    return x, y, ford
 
 
 def _line(x: np.ndarray, y: np.ndarray) -> str:
@@ -120,7 +126,7 @@ def _line(x: np.ndarray, y: np.ndarray) -> str:
 
 
 def stretches(meta: list[tuple], refs: np.ndarray, starts: np.ndarray, at: np.ndarray, uses: np.ndarray,
-               lon: np.ndarray, lat: np.ndarray):
+               lon: np.ndarray, lat: np.ndarray, ford: np.ndarray | None = None):
     """The ways cut where they meet: one row per stretch, as walk.edge is loaded.
 
     `at` is each of `refs` as the number of its node among the nodes there are, `uses` how often each node
@@ -142,17 +148,18 @@ def stretches(meta: list[tuple], refs: np.ndarray, starts: np.ndarray, at: np.nd
         if source == target or np.isnan(x).any():
             continue                            # a ring with nothing joined to it, or a node not in the extract
         n += 1
-        osm_id, kind, private, tunnel, shunned, name, sac, visibility = meta[way[i]]
-        yield (n, source, target, osm_id, kind, name, sac, visibility, private, tunnel, shunned, _line(x, y))
+        osm_id, kind, private, tunnel, shunned, name, sac, visibility, fords, bridge = meta[way[i]]
+        fords = fords or bool(ford is not None and ford[nodes].any())      # the way, or a node of it, says so
+        yield (n, source, target, osm_id, kind, name, sac, visibility, private, tunnel, shunned, fords, bridge, _line(x, y))
 
 
 LOAD = """CREATE UNLOGGED TABLE walk.edge_load (
     id bigint, source bigint, target bigint, osm_id bigint, kind text, name text, sac text, visibility text,
-    private boolean, tunnel boolean, discouraged boolean, g geometry(LineString, 4326))"""
+    private boolean, tunnel boolean, discouraged boolean, ford boolean, bridge boolean, g geometry(LineString, 4326))"""
 
 MADE = """INSERT INTO walk.edge_next (id, source, target, origin, osm_id, kind, name, sac, visibility, private, tunnel,
-                                  discouraged, length_m, geom, x1, y1, x2, y2)
-    SELECT id, source, target, 'osm', osm_id, kind, name, sac, visibility, private, tunnel, discouraged,
+                                  discouraged, ford, bridge, length_m, geom, x1, y1, x2, y2)
+    SELECT id, source, target, 'osm', osm_id, kind, name, sac, visibility, private, tunnel, discouraged, ford, bridge,
            ST_Length(g::geography), t, ST_X(ST_StartPoint(t)), ST_Y(ST_StartPoint(t)),
            ST_X(ST_EndPoint(t)), ST_Y(ST_EndPoint(t))
     FROM walk.edge_load, LATERAL ST_Transform(g, 25833) t"""
@@ -254,13 +261,19 @@ PIECES = """
 PIECES_AND_HEIGHTS = """
     CREATE TABLE walk.edge_done (LIKE walk.edge INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
     INSERT INTO walk.edge_done (id, source, target, origin, osm_id, kind, name, sac, visibility, private, tunnel,
-                                discouraged, trail, dnt, ice, length_m, geom, x1, y1, x2, y2, piece, piece_nodes, z, high)
+                                discouraged, trail, dnt, ice, length_m, geom, x1, y1, x2, y2, piece, piece_nodes, z, high,
+                                ford, bridge, river)
     SELECT e.id, e.source, e.target, e.origin, e.osm_id, e.kind, e.name, e.sac, e.visibility, e.private, e.tunnel,
-           e.discouraged, e.trail, e.dnt, e.ice, e.length_m, e.geom, e.x1, e.y1, e.x2, e.y2, c.component, s.n, h.z, h.high
+           e.discouraged, e.trail, e.dnt, e.ice, e.length_m, e.geom, e.x1, e.y1, e.x2, e.y2, c.component, s.n, h.z, h.high,
+           e.ford, e.bridge AND w.over IS NOT NULL, w.name
     FROM walk.edge_next e
     LEFT JOIN walk.piece_load c ON c.node = e.source
     LEFT JOIN (SELECT component, count(*)::int AS n FROM walk.piece_load GROUP BY 1) s USING (component)
-    LEFT JOIN walk.z_load h ON h.id = e.id;
+    LEFT JOIN walk.z_load h ON h.id = e.id
+    -- A ford, and a bridge that crosses a river (not a road or a railway): the river, by its name where it has one.
+    LEFT JOIN LATERAL (SELECT r.name, true AS over FROM walk.river_next r
+                       WHERE (e.ford OR e.bridge) AND ST_Intersects(r.geom, e.geom)
+                       ORDER BY r.name IS NULL LIMIT 1) w ON true;
     DROP TABLE walk.edge_next;
     ALTER TABLE walk.edge_done RENAME TO edge_next;
     CREATE INDEX ON walk.edge_next USING gist (geom);
@@ -317,7 +330,7 @@ def build(conn, pbf: Path, md5: str, made_at=None) -> dict:
     meta, refs, starts = _ways(pbf)
     said(f"{len(meta)} ways, {len(refs)} nodes along them")
     ids, at, uses = np.unique(refs, return_inverse=True, return_counts=True)
-    lon, lat = _nodes(pbf, ids)
+    lon, lat, ford = _nodes(pbf, ids)
     said(f"{int(np.isfinite(lon).sum())} of {len(ids)} nodes placed")
 
     for table in ("edge_load", "edge_next"):
@@ -325,7 +338,7 @@ def build(conn, pbf: Path, md5: str, made_at=None) -> dict:
     conn.execute(LOAD)
     conn.execute("CREATE TABLE walk.edge_next (LIKE walk.edge INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
     with conn.cursor() as cur, cur.copy("COPY walk.edge_load FROM STDIN") as copy:
-        for row in stretches(meta, refs, starts, at, uses, lon, lat):
+        for row in stretches(meta, refs, starts, at, uses, lon, lat, ford):
             copy.write_row(row)
     del meta, refs, starts, ids, at, uses, lon, lat
     conn.execute(MADE)
@@ -337,7 +350,8 @@ def build(conn, pbf: Path, md5: str, made_at=None) -> dict:
     return finish(conn, pbf, md5, made_at, began)
 
 
-WORK = ("area_load", "marked_load", "bare_load", "junction_load", "ice_load", "piece_load", "z_load", "field_load")
+WORK = ("area_load", "marked_load", "bare_load", "junction_load", "ice_load", "piece_load", "z_load", "field_load",
+        "river_load")
 
 # Across country (`walk.field`): a lattice over land, a point every LATTICE_M, each joined to its eight neighbours
 # where the ground between allows: not over water or a river, nor anywhere steeper than STEEPEST between two looks
@@ -363,14 +377,12 @@ def high_of(z, north):
     return np.clip((np.asarray(z) - tree_line(north) + 300) / 600, 0, 1)
 
 
-def _masks(pbf: Path, work: Path):
-    """Water, rivers, glaciers and bogs from the extract, on a grid of MASK_M over the height model's tiles: the
-    grid, and its west and north edge."""
+def _water(pbf: Path, work: Path) -> Path:
+    """Water, bogs, glaciers (as areas) and rivers (as lines, with their names) from the extract, in a file of
+    their own, in the network's coordinates."""
     import os
 
-    from PIL import Image
-
-    gpkg = work / "masks.gpkg"
+    gpkg = work / "water.gpkg"
     env = {**os.environ, "OSM_MAX_TMPFILE_SIZE": "1024"}
     for layer, where, name in (("multipolygons", "\"natural\" IN ('water', 'wetland', 'glacier')", "areas"),
                                ("lines", "waterway = 'river'", "rivers")):
@@ -378,6 +390,29 @@ def _masks(pbf: Path, work: Path):
                         "-where", where, "-nln", name, "-t_srs", "EPSG:25833", "-nlt", "PROMOTE_TO_MULTI",
                         "--config", "OSM_CONFIG_FILE", str(AREAS), "--config", "CPL_TMPDIR", str(work)],
                        check=True, capture_output=True, env=env)
+    return gpkg
+
+
+def _rivers(gpkg: Path, work: Path):
+    """The rivers in the water file: (name, GeoJSON in longitude and latitude)."""
+    import json
+
+    dest = work / "rivers.geojsons"
+    subprocess.run(["ogr2ogr", "-f", "GeoJSONSeq", str(dest), str(gpkg), "rivers", "-lco", "COORDINATE_PRECISION=7"],
+                   check=True, capture_output=True)
+    with dest.open() as f:
+        for row in f:
+            feature = json.loads(row.strip().lstrip("\x1e"))
+            if feature.get("geometry"):
+                yield feature["properties"].get("name"), json.dumps(feature["geometry"])
+    dest.unlink()
+
+
+def _masks(gpkg: Path, work: Path):
+    """Water, rivers, glaciers and bogs from the water file, on a grid of MASK_M over the height model's tiles:
+    the grid, and its west and north edge."""
+    from PIL import Image
+
     west, south, east, north = terrain.extent()
     tif = work / "mask.tif"
     # Burnt one over the other, what matters most last: a lake in a bog is a lake.
@@ -406,18 +441,18 @@ def _looks(x1, y1, x2, y2, mask, west, north):
 
 def _walkable(x1, y1, x2, y2, mask, west, north):
     """Which of the lines can be walked across country, and for those: metres, up, down, height, how high, bog,
-    glacier."""
+    glacier, and whether it wades a river (drawn as a line: one drawn as an area is too wide, and is not crossed)."""
     z, what = _looks(x1, y1, x2, y2, mask, west, north)
     length = np.hypot(x2 - x1, y2 - y1)
     dz = np.diff(z, axis=1)
     ok = (~np.isnan(z).any(axis=1) & (np.nan_to_num(z, nan=0.0) > SEA_M).all(axis=1)
-          & ~np.isin(what, (WATER, RIVER)).any(axis=1)
+          & ~(what == WATER).any(axis=1)
           & (np.abs(np.nan_to_num(dz)) <= STEEPEST * np.maximum(length, 1)[:, None] / LOOKS).all(axis=1))
     up = np.clip(np.nan_to_num(dz), 0, None).sum(axis=1)
     down = np.clip(-np.nan_to_num(dz), 0, None).sum(axis=1)
     mean = np.where(np.isnan(z), 0, z).sum(axis=1) / np.maximum((~np.isnan(z)).sum(axis=1), 1)
     return ok, length, up, down, mean, high_of(mean, (y1 + y2) / 2), (what == BOG).mean(axis=1) >= 0.5, \
-        (what == GLACIER).mean(axis=1) > 0.5
+        (what == GLACIER).mean(axis=1) > 0.5, (what == RIVER).any(axis=1)
 
 
 def _field(copy, mask, west, north, vertices, said) -> int:
@@ -439,11 +474,11 @@ def _field(copy, mask, west, north, vertices, said) -> int:
 
     def put(src, dst, x1, y1, x2, y2, kind):
         nonlocal made
-        ok, length, up, down, mean, high, wet, ice = _walkable(x1, y1, x2, y2, mask, west, north)
+        ok, length, up, down, mean, high, wet, ice, wade = _walkable(x1, y1, x2, y2, mask, west, north)
         for k in np.flatnonzero(ok):
             made += 1
             copy.write_row((FIELD_ID + made, int(src[k]), int(dst[k]), kind, float(length[k]), float(up[k]),
-                            float(down[k]), float(mean[k]), float(high[k]), bool(wet[k]), bool(ice[k]),
+                            float(down[k]), float(mean[k]), float(high[k]), bool(wet[k]), bool(ice[k]), bool(wade[k]),
                             float(x1[k]), float(y1[k]), float(x2[k]), float(y2[k])))
 
     band = terrain.TILE_M // LATTICE_M          # a row of tiles at a time: the height model's tiles stay read
@@ -509,11 +544,16 @@ def _heights_and_vertices(conn, said):
     return vid, np.concatenate(xs)[at], np.concatenate(ys)[at]
 
 
+# A stretch across country the grid says is by a river wades it where it crosses the river's line, and is said to,
+# by the river's name.
 FIELD_IN = """
-    INSERT INTO walk.field_next (id, source, target, kind, length_m, up_m, down_m, z, high, wet, ice, geom, x1, y1, x2, y2)
-    SELECT id, source, target, kind, length_m, up_m, down_m, z, high, wet, ice,
-           ST_SetSRID(ST_MakeLine(ST_MakePoint(x1, y1), ST_MakePoint(x2, y2)), 25833), x1, y1, x2, y2
-    FROM walk.field_load"""
+    INSERT INTO walk.field_next (id, source, target, kind, length_m, up_m, down_m, z, high, wet, ice, wade, river,
+                                 geom, x1, y1, x2, y2)
+    SELECT f.id, f.source, f.target, f.kind, f.length_m, f.up_m, f.down_m, f.z, f.high, f.wet, f.ice,
+           coalesce(w.over, false), w.name, g, f.x1, f.y1, f.x2, f.y2
+    FROM walk.field_load f, LATERAL ST_SetSRID(ST_MakeLine(ST_MakePoint(f.x1, f.y1), ST_MakePoint(f.x2, f.y2)), 25833) g
+    LEFT JOIN LATERAL (SELECT r.name, true AS over FROM walk.river_next r WHERE f.wade AND ST_Intersects(r.geom, g)
+                       ORDER BY r.name IS NULL LIMIT 1) w ON true"""
 
 
 def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) -> dict:
@@ -523,10 +563,11 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     def said(what: str) -> None:
         log.info("%s (%.0f s)", what, time.monotonic() - began)
 
-    for table in (*WORK, "hut_next", "field_next", "edge_done"):
+    for table in (*WORK, "hut_next", "field_next", "edge_done", "river_next"):
         conn.execute(f"DROP TABLE IF EXISTS walk.{table}")
     conn.execute("CREATE TABLE walk.hut_next (LIKE walk.hut INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
     conn.execute("CREATE TABLE walk.field_next (LIKE walk.field INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
+    conn.execute("CREATE TABLE walk.river_next (LIKE walk.river INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
 
     conn.execute("""CREATE UNLOGGED TABLE walk.area_load (osm_id text, name text, "natural" text, tourism text,
                                                        operator text, gj text)""")
@@ -552,12 +593,24 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     conn.execute(PIECES)
     said("the pieces of the network")
     conn.execute("""CREATE UNLOGGED TABLE walk.field_load (id bigint, source bigint, target bigint, kind text,
-        length_m real, up_m real, down_m real, z real, high real, wet boolean, ice boolean,
+        length_m real, up_m real, down_m real, z real, high real, wet boolean, ice boolean, wade boolean,
         x1 float8, y1 float8, x2 float8, y2 float8)""")
-    if terrain.ready():
+    conn.execute("CREATE UNLOGGED TABLE walk.river_load (name text, gj text)")
+    with tempfile.TemporaryDirectory(dir=pbf.parent) as work:
+        gpkg = _water(pbf, Path(work))
+        with conn.cursor() as cur, cur.copy("COPY walk.river_load (name, gj) FROM STDIN") as copy:
+            for row in _rivers(gpkg, Path(work)):
+                copy.write_row(row)
+        conn.execute("""INSERT INTO walk.river_next (id, name, geom)
+                        SELECT row_number() OVER (), name, ST_Multi(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(gj), 4326), 25833))
+                        FROM walk.river_load""")
+        conn.execute("CREATE INDEX ON walk.river_next USING gist (geom)")
+        conn.execute("ANALYZE walk.river_next")
+        said("rivers read")
+        mask = _masks(gpkg, Path(work)) if terrain.ready() else None
+    if mask is not None:
+        mask, west, north = mask
         vertices = _heights_and_vertices(conn, said)
-        with tempfile.TemporaryDirectory(dir=pbf.parent) as work:
-            mask, west, north = _masks(pbf, Path(work))
         said("water, rivers, bogs and glaciers on a grid")
         with conn.cursor() as cur, cur.copy("COPY walk.field_load FROM STDIN") as copy:
             _field(copy, mask, west, north, vertices, said)
@@ -587,7 +640,9 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
             'in_the_greatest', (SELECT max(piece_nodes) FROM walk.edge_next),
             'with_heights', count(*) FILTER (WHERE z IS NOT NULL),
             'across_country', (SELECT count(*) FROM walk.field_next WHERE kind = 'field'),
-            'ties', (SELECT count(*) FROM walk.field_next WHERE kind = 'tie'))
+            'ties', (SELECT count(*) FROM walk.field_next WHERE kind = 'tie'),
+            'fords', count(*) FILTER (WHERE ford), 'bridges_over_rivers', count(*) FILTER (WHERE bridge),
+            'wades', (SELECT count(*) FROM walk.field_next WHERE wade), 'rivers', (SELECT count(*) FROM walk.river_next))
         FROM walk.edge_next""").fetchone()[0]
     conn.execute("ALTER TABLE walk.edge_next ADD PRIMARY KEY (id)")
     conn.execute("ALTER TABLE walk.hut_next ADD PRIMARY KEY (osm_id)")
@@ -595,8 +650,9 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     conn.execute("ANALYZE walk.hut_next")
     took = time.monotonic() - began
     # In place of the ones in use, in one go.
-    conn.execute("DROP TABLE walk.edge, walk.hut, walk.field")
+    conn.execute("DROP TABLE walk.edge, walk.hut, walk.field, walk.river")
     conn.execute("ALTER TABLE walk.field_next RENAME TO field")
+    conn.execute("ALTER TABLE walk.river_next RENAME TO river")
     conn.execute("ALTER TABLE walk.edge_next RENAME TO edge")
     conn.execute("ALTER TABLE walk.hut_next RENAME TO hut")
     for table in WORK:
@@ -606,7 +662,7 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
                     ON CONFLICT (one) DO UPDATE SET extract_md5 = EXCLUDED.extract_md5, extract_at = EXCLUDED.extract_at,
                         built_at = EXCLUDED.built_at, took_s = EXCLUDED.took_s, counts = EXCLUDED.counts""",
                  (md5, made_at, took, Jsonb(counts)))
-    conn.execute("GRANT SELECT ON walk.edge, walk.hut, walk.field TO stiflyt2_api")
+    conn.execute("GRANT SELECT ON walk.edge, walk.hut, walk.field, walk.river TO stiflyt2_api")
     conn.commit()
     return counts | {"took_s": round(took)}
 

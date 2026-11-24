@@ -159,6 +159,8 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .plan-bar.unknown span { width: 30% !important; animation: plan-sweep 1.2s ease-in-out infinite alternate; }
 @keyframes plan-sweep { from { margin-left: 0; } to { margin-left: 70%; } }
 .stale { color: #8a5a00; }
+.plan-crossings { font-size: 13px; margin: 4px 0; }
+.plan-crossings .crossing.ford::before, .plan-crossings .crossing.wade::before { content: ""; }
 .plan-profile { display: block; width: 100%; max-width: 420px; height: auto; margin: 6px 0; }
 #present { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 #undo { padding: 6px 16px; border-top: 1px solid var(--line); font-size: 13px; }

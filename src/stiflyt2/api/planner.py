@@ -29,9 +29,14 @@ class How(BaseModel):
                              "valleys (-1), by how high the ground lies against the tree line; 0 neither")
     across: bool = Field(False, description="Across country where there is no path: over open ground, not over "
                          "water or rivers nor where it is steeper than 35 degrees (a sketch)")
+    wade: bool = Field(False, description="Across country, rivers drawn as a line may be waded (each counts as 1 km "
+                       "more); rivers drawn as an area, too wide, never are")
+    fords: bool = Field(True, description="Fords on paths are taken as they come; false: gone round by a bridge "
+                        "where there is one")
 
     def options(self) -> planner.Options:
-        return planner.Options(self.prefer, self.ferries, self.ice, self.alpine, self.mountains, self.across)
+        return planner.Options(self.prefer, self.ferries, self.ice, self.alpine, self.mountains, self.across,
+                               self.wade, self.fords)
 
 
 class KeptStep(BaseModel):
@@ -43,12 +48,19 @@ class KeptStep(BaseModel):
     at: list[int] = Field(min_length=2, max_length=2)
 
 
+class Crossing(BaseModel):
+    at: int = Field(ge=0)
+    how: Literal["ford", "bridge", "wade"]
+    river: str | None = Field(None, max_length=300)
+
+
 class Kept(BaseModel):
     """A leg as it was found before, to be taken again as it is."""
     coords: list[Point] = Field(min_length=2, max_length=200_000)
     steps: list[KeptStep] = Field(min_length=1, max_length=20_000)
     joints: list[int] = Field(default_factory=list, max_length=200_000)
     origins: list[str] = Field(default_factory=list, max_length=5)
+    crossings: list[Crossing] = Field(default_factory=list, max_length=10_000)
     unfound: str | None = Field(None, max_length=500)
     roundabout: bool = False
 
@@ -140,6 +152,8 @@ def plan_walk(c: mcp.Call, a: PlanWalk) -> dict:
     marked routes and ours, preferring DNT's marked routes as much as `prefer` says (0: the shortest way). Says
     the way in steps (along which route, path, road or ferry, how far), the length of each kind, and with
     `with_heights` the climb, the time by Naismith's rule with no rests, and days that end at huts near the way.
+    `crossings` says where it crosses a river: by a bridge, by a ford (on a path), or wading across country, with
+    the river's name where it has one; whether a river can be waded today is not known, say so.
     Glaciers, demanding alpine paths and via ferratas are left out unless asked for. A leg may be drawn straight
     where nothing is mapped (`straight`): it is a sketch over ground you do not see, say so; `legs` says of each
     leg how long it is against the crow's flight, and why one was drawn straight when no way was found. The line itself is not
@@ -154,6 +168,6 @@ def plan_walk(c: mcp.Call, a: PlanWalk) -> dict:
         told["heights"] = got
         told["credits"] += got.pop("credits")
     told.pop("coords")
-    for step in told["steps"] + told["legs"]:
+    for step in told["steps"] + told["legs"] + told["crossings"]:
         step.pop("at")
     return told

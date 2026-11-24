@@ -273,6 +273,12 @@ if (await js(`(me.features || []).includes("planner")`)) {
   await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Ferries may be taken/.test(l.textContent)).querySelector("input")`);
   await clickOn(`document.querySelector(".plan-auto input")`);
   await until(`planAsk.auto === true && !planBusy && !planStale`, 60);
+  // Fords gone round by a bridge: asked for in the form.
+  await until(`!planBusy && !heightsBusy && !planStale`, 60);
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Go round fords/.test(l.textContent)).querySelector("input")`);
+  check("fords on paths can be gone round by a bridge", await until(`planAsk.fords === false && Boolean(plan) && !planBusy && !planStale && plan.options.fords === false && Array.isArray(plan.crossings)`, 60), await text("#panel .error"));
+  await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Go round fords/.test(l.textContent)).querySelector("input")`);
+  await until(`planAsk.fords === true && !planBusy && !planStale`, 60);
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));

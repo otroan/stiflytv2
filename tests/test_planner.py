@@ -1,6 +1,7 @@
 """The route planner: a network of every way one may walk, cut where ways meet, and a way over it that prefers
 DNT's routes as much as is asked for. Built here from a small made-up extract beside Turrutebasen's fixture."""
 import json
+import math
 from xml.sax.saxutils import quoteattr
 
 import httpx
@@ -25,16 +26,21 @@ LONELY = (7.37, 61.68)          # a path that joins nothing, a kilometre from th
 
 def extract(path, ways, points=()):
     """An extract as OpenStreetMap XML, which pyosmium and GDAL read as they read PBF. Ways that share a point
-    share its node."""
+    share its node; a point given tags where a way has a node is that node."""
     nodes = {}
     for _, line in ways:
         for p in line:
             nodes.setdefault(p, len(nodes) + 1)
+    on_ways = {tuple(p): tags for p, tags in points if tuple(p) in nodes}
+
+    def tagged(tags):
+        return "".join(f"<tag k={quoteattr(k)} v={quoteattr(v)}/>" for k, v in tags.items())
+
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="test">']
-    out += [f'  <node id="{n}" lon="{lon}" lat="{lat}" version="1"/>' for (lon, lat), n in nodes.items()]
-    for i, ((lon, lat), tags) in enumerate(points, 1):
-        out.append(f'  <node id="{900_000 + i}" lon="{lon}" lat="{lat}" version="1">'
-                   + "".join(f"<tag k={quoteattr(k)} v={quoteattr(v)}/>" for k, v in tags.items()) + "</node>")
+    out += [f'  <node id="{n}" lon="{lon}" lat="{lat}" version="1">{tagged(on_ways.get((lon, lat), {}))}</node>'
+            for (lon, lat), n in nodes.items()]
+    for i, ((lon, lat), tags) in enumerate(p for p in points if tuple(p[0]) not in nodes):
+        out.append(f'  <node id="{900_000 + i + 1}" lon="{lon}" lat="{lat}" version="1">{tagged(tags)}</node>')
     for i, (tags, line) in enumerate(ways, 1):
         out.append(f'  <way id="{i}" version="1">' + "".join(f'<nd ref="{nodes[p]}"/>' for p in line)
                    + "".join(f"<tag k={quoteattr(k)} v={quoteattr(v)}/>" for k, v in tags.items()) + "</way>")
@@ -367,6 +373,10 @@ P, Q = (7.20, 61.72), (7.29, 61.72)                 # far from every path, with 
 LAKE = [(7.225, 61.712), (7.235, 61.712), (7.235, 61.728), (7.225, 61.728), (7.225, 61.712)]
 RIVER = [(7.255, 61.705), (7.255, 61.735)]
 WALL = (7.32, 61.70, 61.74)                         # a cliff 500 m high, north to south at this longitude
+# West of P a second river, Vadelva: a path fords it (a node says so), and another crosses on a bridge further north;
+# the two are joined on either bank.
+FORD_W, FORD_E, BRIDGE_W, BRIDGE_E = (7.14, 61.70), (7.16, 61.70), (7.14, 61.71), (7.16, 61.71)
+VADELVA = [(7.15, 61.69), (7.15, 61.72)]
 
 
 @pytest.fixture
@@ -400,8 +410,12 @@ def field_network(loaded, tmp_path, monkeypatch):
              ).save(terrain.folder() / f"{code}.tif")
         aside = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.003)
         ways = [({"highway": "path", "name": "Langs ruta"}, along), ({"highway": "path", "name": "Snarveien"}, [a, aside, b]),
-                ({"natural": "water", "name": "Testvatnet"}, LAKE), ({"waterway": "river", "name": "Testelva"}, RIVER)]
-        counts = walknet.build(owner, extract(tmp_path / "test-latest.osm", ways), "field1")
+                ({"natural": "water", "name": "Testvatnet"}, LAKE), ({"waterway": "river", "name": "Testelva"}, RIVER),
+                ({"waterway": "river", "name": "Vadelva"}, VADELVA),
+                ({"highway": "path", "name": "Vadstien"}, [FORD_W, (7.15, 61.70), FORD_E]),
+                ({"highway": "path", "name": "Brua", "bridge": "yes"}, [BRIDGE_W, BRIDGE_E]),
+                ({"highway": "path"}, [FORD_W, BRIDGE_W]), ({"highway": "path"}, [FORD_E, BRIDGE_E])]
+        counts = walknet.build(owner, extract(tmp_path / "test-latest.osm", ways, [((7.15, 61.70), {"ford": "yes"})]), "field1")
         yield {"a": a, "b": b, "counts": counts, "wall": (wall_x, wall_s + 100, wall_n - 100)}     # in the grid
     terrain._kept.clear()
 
@@ -442,16 +456,17 @@ def test_the_mountains_or_the_valleys_are_preferred_as_asked(field_network, fiel
 
 def test_across_country_it_goes_round_water_rivers_and_cliffs(field_network, field_conn):
     conn = field_conn
-    # No path within 10 km of either end: without the lattice the leg is drawn straight, over the lake and the river.
+    # Without the lattice, nothing across country.
     kept = planner.plan(conn, [P, Q])
-    assert kept["legs"][0]["unfound"] and set(kept["total"]["by"]) == {"off"}
+    assert "field" not in kept["total"]["by"]
     told = planner.plan(conn, [P, Q], planner.Options(across=True))
     assert told["legs"][0]["unfound"] is None
     assert set(told["total"]["by"]) <= {"field", "off"} and told["total"]["by"]["field"] > 4000
     across = [s for s in told["steps"] if s["class"] == "field"]
     assert across[0]["says"] == "Across country, with no path" and planner.CREDITS["terrain"] in told["credits"]
     assert told["total"]["by"].get("off", 0) < 2 * 360            # to the lattice and from it, at each end
-    assert kept["total"]["metres"] < told["total"]["metres"] < 2 * kept["total"]["metres"]       # round the water
+    crow = told["legs"][0]["crow_m"]
+    assert crow < told["total"]["metres"] < 2 * crow       # round the water
     line = psycopg.types.json.Json({"type": "LineString", "coordinates": told["coords"]})
     for what in (LAKE, RIVER):
         shape = {"type": "Polygon", "coordinates": [what]} if what is LAKE else {"type": "LineString", "coordinates": what}
@@ -463,7 +478,7 @@ def test_across_country_it_goes_round_water_rivers_and_cliffs(field_network, fie
                         "ST_SetSRID(ST_MakeLine(ST_MakePoint(%s, %s), ST_MakePoint(%s, %s)), 25833))",
                         (x, south, x, north)).fetchone()[0] == 0
     for shape in ({"type": "LineString", "coordinates": RIVER}, {"type": "Polygon", "coordinates": [LAKE]}):
-        assert conn.execute("SELECT count(*) FROM walk.field WHERE kind = 'field' AND ST_Intersects(geom, "
+        assert conn.execute("SELECT count(*) FROM walk.field WHERE kind = 'field' AND NOT wade AND ST_Intersects(geom, "
                             "ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 25833))",
                             (psycopg.types.json.Json(shape),)).fetchone()[0] == 0, shape
     # Timed as ground with no path.
@@ -526,3 +541,54 @@ def test_a_leg_may_go_across_country_even_where_there_is_a_path(field_network, f
         planner.plan(conn, [a, b], modes=["flying"])
     said = planner.estimate(conn, [a, b, P], modes=["across", "straight"])
     assert said["legs"][1] == 0 and said["legs"][0] >= planner.LEG_S
+
+
+def test_fords_and_bridges_are_told_and_a_ford_can_be_gone_round(field_network, field_conn):
+    conn = field_conn
+    counts = field_network["counts"]
+    assert counts["fords"] >= 1 and counts["bridges_over_rivers"] >= 1 and counts["rivers"] == 2 and counts["wades"] > 0
+    assert conn.execute("SELECT ford, bridge, river FROM walk.edge WHERE name = 'Vadstien'").fetchone() == (True, False, "Vadelva")
+    assert conn.execute("SELECT ford, bridge, river FROM walk.edge WHERE name = 'Brua'").fetchone() == (False, True, "Vadelva")
+    # Over the ford as it comes; told where, and over what.
+    over = planner.plan(conn, [FORD_W, FORD_E])
+    assert [(c["how"], c["river"]) for c in over["crossings"]] == [("ford", "Vadelva")]
+    assert over["coords"][over["crossings"][0]["at"]] == pytest.approx([7.15, 61.70], abs=0.006)
+    # Fords gone round: by the bridge, though it is further.
+    dry = planner.plan(conn, [FORD_W, FORD_E], planner.Options(fords=False))
+    assert [(c["how"], c["river"]) for c in dry["crossings"]] == [("bridge", "Vadelva")]
+    assert dry["total"]["metres"] > over["total"]["metres"] + 1500 and dry["options"]["fords"] is False
+
+
+def test_a_river_is_waded_across_country_only_when_asked(field_network, field_conn):
+    conn = field_conn
+    dry = planner.plan(conn, [P, Q], planner.Options(across=True))
+    wet = planner.plan(conn, [P, Q], planner.Options(across=True, wade=True))
+    assert not any(c["how"] == "wade" for c in dry["crossings"])
+    assert [(c["how"], c["river"]) for c in wet["crossings"]] == [("wade", "Testelva")]
+    assert wet["total"]["metres"] < dry["total"]["metres"]
+    # The leg kept as it was found keeps where it crossed.
+    leg = wet["legs"][0]
+    kept = {"coords": wet["coords"], "joints": wet["joints"], "origins": leg["origins"], "crossings": wet["crossings"],
+            "steps": [{k: st[k] for k in ("class", "name", "ice", "metres", "at")} for st in wet["steps"]]}
+    again = planner.plan(conn, [P, Q], planner.Options(across=True, wade=True), kept=[kept])
+    assert again["crossings"] == wet["crossings"]
+
+
+def test_a_line_across_country_has_no_spikes():
+    """Out to a point and straight back is cut off; a bend, however sharp short of that, is kept."""
+    a, b, c, d = [7.0, 61.0], [7.02, 61.0], [7.001, 61.0002], [7.001, 61.01]
+    assert planner._despike([a, b, c, d]) == [a, c, d]
+    bend = [[7.0, 61.0], [7.01, 61.0], [7.0, 61.004]]           # back at some 50 degrees: kept
+    assert planner._despike(bend) == bend
+    assert planner._despike([a, a, b]) == [a, b]
+
+
+def test_the_way_across_country_turns_back_nowhere(field_network, field_conn):
+    told = planner.plan(field_conn, [P, Q], planner.Options(across=True))
+    C = told["coords"]
+    for k in range(1, len(C) - 1):
+        f = math.cos(math.radians(C[k][1]))
+        u = ((C[k][0] - C[k - 1][0]) * f, C[k][1] - C[k - 1][1])
+        v = ((C[k + 1][0] - C[k][0]) * f, C[k + 1][1] - C[k][1])
+        nu, nv = math.hypot(*u), math.hypot(*v)
+        assert nu == 0 or nv == 0 or (u[0] * v[0] + u[1] * v[1]) / (nu * nv) >= -planner.SPIKE, k

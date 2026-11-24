@@ -86,19 +86,23 @@ FIELD = 2.0                 # a metre across country counts as two on a path
 BOG = 1.4                   # and over a bog as more again
 FIELD_CLIMB = 4.0           # a metre climbed or gone down across country, as many metres walked
 FIELD_NEAR_M = 250          # across country, a point is put on a path this near rather than on the lattice
+FORD_M = 200                # a ford counts as this far walked: it takes a while, and wet feet
+AVOID_FORD_M = 10_000       # and this, when fords are to be gone round by a bridge where there is one
+WADE_M = 1000               # a river waded across country, where that is let be, counts as this far walked
 
 
 class Options:
     """What the person said about how to go."""
 
     def __init__(self, prefer: float = PREFER, ferries: bool = True, ice: bool = False, alpine: bool = False,
-                 mountains: float = 0.0, across: bool = False):
+                 mountains: float = 0.0, across: bool = False, wade: bool = False, fords: bool = True):
         if not 0 <= prefer <= 1:
             raise Invalid("how much DNT's routes are preferred is from 0 to 1")
         if not -1 <= mountains <= 1:
             raise Invalid("how much the mountains (1) or the valleys (-1) are preferred is from -1 to 1")
         self.prefer, self.ferries, self.ice, self.alpine = float(prefer), ferries, ice, alpine
         self.mountains, self.across = float(mountains), across
+        self.wade, self.fords = wade, fords
 
     def height(self) -> str:
         """What a metre counts more or less for how high it lies, as SQL: up in the mountains less when they are
@@ -111,7 +115,13 @@ class Options:
         """What a stretch across country counts, as SQL: twice a path, more over bog and glacier, and what it
         climbs and goes down."""
         return f"""((length_m * {FIELD} * (CASE WHEN wet THEN {BOG} ELSE 1 END) * (CASE WHEN ice THEN 1.5 ELSE 1 END)
-                     + (up_m + down_m) * {FIELD_CLIMB}) * {self.height()})"""
+                     + (up_m + down_m) * {FIELD_CLIMB}) * {self.height()} + (CASE WHEN wade THEN {WADE_M} ELSE 0 END))"""
+
+    def field_allowed(self, ties: bool = False, on: str = "") -> str:
+        """Which stretches across country may be walked, as SQL (of the table as `on`): the ties to the paths too,
+        when the paths are walked as well."""
+        return " AND ".join([*([] if ties else [f"{on}kind = 'field'"]), *([] if self.ice else [f"NOT {on}ice"]),
+                             *([] if self.wade else [f"NOT {on}wade"])]) or "true"
 
     def allowed(self) -> str:
         """Which stretches may be walked, as SQL."""
@@ -138,7 +148,8 @@ class Options:
                      * (CASE WHEN visibility IN ('bad', 'horrible', 'no') THEN 1.4 ELSE 1 END)
                      * (CASE WHEN private THEN 1.3 ELSE 1 END) * (CASE WHEN tunnel THEN 3 ELSE 1 END)
                      * (CASE WHEN discouraged THEN 2 ELSE 1 END) * (CASE WHEN ice THEN 1.5 ELSE 1 END)
-                     * {self.height()} END)"""
+                     * {self.height()} END
+                   + (CASE WHEN ford THEN {FORD_M if self.fords else AVOID_FORD_M} ELSE 0 END))"""
 
     def least(self) -> float:
         """The least a metre can count: what A*'s guess of the way left is scaled by, a little less for the map's
@@ -220,7 +231,7 @@ def _snap_field(conn, lon: float, lat: float, o: Options) -> dict | None:
                    'field' AS kind, false AS dnt, false AS trail, e.ice, NULL AS name, 'field' AS origin,
                    NULL::bigint AS piece, {GREAT} AS piece_nodes
             FROM walk.field e, (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS p) q
-            WHERE e.kind = 'field' {"" if o.ice else "AND NOT e.ice"}
+            WHERE {o.field_allowed(on="e.")}
             ORDER BY e.geom <-> p LIMIT 1""", (lon, lat)).fetchone()
 
 
@@ -251,23 +262,26 @@ def _leg(conn, a: dict, b: dict, o: Options, ground: bool = False) -> list[dict]
         box = _box(conn, a, b, margin)
         if ground:
             edges = (f"SELECT id, source, target, {o.field()} AS cost, x1, y1, x2, y2 FROM walk.field "
-                     f"WHERE kind = 'field' AND geom && {box}" + ("" if o.ice else " AND NOT ice")
-                     + f" UNION ALL {_ends(a, b)}")
+                     f"WHERE {o.field_allowed()} AND geom && {box} UNION ALL {_ends(a, b)}")
         else:
             edges = (f"SELECT id, source, target, {o.cost()} AS cost, x1, y1, x2, y2 FROM walk.edge "
                      f"WHERE geom && {box} AND {o.allowed()} UNION ALL {_ends(a, b)}")
         if o.across and not ground:
             edges += (f" UNION ALL SELECT id, source, target, {o.field()} AS cost, x1, y1, x2, y2 FROM walk.field "
-                      f"WHERE geom && {box}" + ("" if o.ice else " AND NOT ice"))
+                      f"WHERE geom && {box} AND {o.field_allowed(ties=True)}")
         with conn.cursor(row_factory=dict_row) as cur:
             walked = cur.execute("""
                 SELECT r.path_seq, r.node, r.edge, e.kind, e.name, e.trail, e.dnt, e.ice, e.origin, e.sac, e.length_m,
+                       e.crossing, e.river,
                        ST_AsGeoJSON(ST_Transform(CASE WHEN r.node = e.source THEN e.geom ELSE ST_Reverse(e.geom) END,
                                                  4326), 6)::json -> 'coordinates' AS coords
                 FROM pgr_aStar(%s, %s::bigint, %s::bigint, directed => false, heuristic => 4, factor => %s) r
-                LEFT JOIN (SELECT id, source, kind, name, trail, dnt, ice, origin, sac, length_m, geom FROM walk.edge
+                LEFT JOIN (SELECT id, source, kind, name, trail, dnt, ice, origin, sac, length_m, geom,
+                                  CASE WHEN ford THEN 'ford' WHEN bridge THEN 'bridge' END AS crossing, river
+                           FROM walk.edge
                            UNION ALL
-                           SELECT id, source, 'field', NULL, false, false, ice, 'field', NULL, length_m, geom
+                           SELECT id, source, 'field', NULL, false, false, ice, 'field', NULL, length_m, geom,
+                                  CASE WHEN wade THEN 'wade' END, river
                            FROM walk.field) e ON e.id = r.edge
                 WHERE r.edge <> -1 ORDER BY r.path_seq""", (edges, START, END, FIELD if ground else o.least())).fetchall()
         if walked:
@@ -356,6 +370,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
         raise Invalid("say for each leg between two points, and only for them, whether it is kept as it was found")
     moved: dict[int, list] = {}
     joints: set[int] = set()
+    crossings: list[dict] = []
     if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM walk.built)").fetchone()[0]:
         raise NotFound("the planner's network has not been built yet (`stiflyt2 planner build`)")
     conn.execute(f"SET LOCAL statement_timeout = '{SLOW_S}s'")         # a long way is a big search
@@ -425,6 +440,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             for st in k["steps"]:
                 add(st["class"], st.get("name"), bool(st.get("ice")), k["coords"][st["at"][0]:st["at"][1] + 1], st["metres"])
             joints.update(begun + j for j in k.get("joints", []) if 0 <= j < len(k["coords"]))
+            crossings.extend({**c, "at": begun + c["at"]} for c in k.get("crossings", []) if 0 <= c["at"] < len(k["coords"]))
             mine = set(k.get("origins", [])) & set(CREDITS)
             origins.update(mine)
             metres = walked[0] - before
@@ -453,9 +469,12 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             elif a["off_m"] > OFF_M:
                 add("off", None, False, [p, a["at"]], a["off_m"])
                 off[n] = round(a["off_m"])
-            for w in way:
+            for w in _runs(way):
                 mine.add({"turrutebasen": "turrutebasen", "ours": "turrutebasen", "field": "terrain"}.get(w["origin"], "osm"))
+                start = len(coords) - 1 if coords else 0
                 add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
+                if w.get("crossing"):            # a ford, a bridge over a river, or a river waded across country
+                    crossings.append({"at": (start + len(coords) - 1) // 2, "how": w["crossing"], "river": w.get("river")})
             if snap[n + 1]:
                 moved[n + 1] = b["at"]
             elif b["off_m"] > OFF_M:
@@ -481,9 +500,69 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             "off": [{"point": i, "off_m": m} for i, m in sorted(off.items())],
             "snapped": {str(i): at for i, at in sorted(moved.items())},
             "joints": sorted(j for j in joints if j < len(coords)),
+            "crossings": _crossings(crossings),
             "credits": [CREDITS[k] for k in ("osm", "turrutebasen", "terrain") if k in origins],
             "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine,
-                        "mountains": o.mountains, "across": o.across}}
+                        "mountains": o.mountains, "across": o.across, "wade": o.wade, "fords": o.fords}}
+
+
+SPIKE = math.cos(math.radians(30))     # a turn back sharper than this (within 30 degrees of straight back) is a spike
+
+
+def _runs(way: list[dict]) -> list[dict]:
+    """The stretches of a leg, with the lattice's steps across country taken together as one, and where they go
+    out and straight back (to a point of the lattice, from the junction it is tied to) that cut off."""
+    out: list[dict] = []
+    run: list[dict] = []
+
+    def done() -> None:
+        if run:
+            line = _despike(run[0]["coords"] + [c for w in run[1:] for c in w["coords"][1:]])
+            out.append({**run[0], "coords": line, "length_m": _metres(line), "crossing": None})
+            run.clear()
+    for w in way:
+        if w["kind"] == "field" and not w.get("crossing"):
+            if run and bool(run[-1]["ice"]) != bool(w["ice"]):
+                done()
+            run.append(w)
+        else:
+            done()
+            out.append(w)
+    done()
+    return out
+
+
+def _despike(line: list) -> list:
+    """A line across country with its spikes cut off: where it goes out to a point and straight back (from a
+    junction to the point of the lattice it is tied to, and on the other way), it goes on from where it turned
+    out. What is cut lies inside the narrow wedge of the spike, so nothing new is crossed."""
+    pts = [c for k, c in enumerate(line) if k == 0 or c != line[k - 1]]
+    changed = True
+    while changed and len(pts) > 2:
+        changed = False
+        out = [pts[0]]
+        for k in range(1, len(pts) - 1):
+            (ax, ay), (bx, by), (cx, cy) = out[-1], pts[k], pts[k + 1]
+            f = math.cos(math.radians(by))
+            ux, uy, vx, vy = (bx - ax) * f, by - ay, (cx - bx) * f, cy - by
+            nu, nv = math.hypot(ux, uy), math.hypot(vx, vy)
+            if nu == 0 or nv == 0 or (ux * vx + uy * vy) / (nu * nv) < -SPIKE:
+                changed = True
+                continue
+            out.append(pts[k])
+        out.append(pts[-1])
+        pts = out
+    return pts
+
+
+def _crossings(found: list[dict]) -> list[dict]:
+    """Where the way crosses a river, in order: one crossing once, though it is two stretches of a bridge."""
+    out: list[dict] = []
+    for c in sorted(found, key=lambda c: c["at"]):
+        if out and out[-1]["how"] == c["how"] and out[-1]["river"] == c["river"] and c["at"] - out[-1]["at"] <= 10:
+            continue
+        out.append({"at": c["at"], "how": c["how"], "river": c["river"]})
+    return out
 
 
 # How long a search takes, as measured: a little for each leg, and then for every stretch in its box. A walk the
