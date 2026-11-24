@@ -249,14 +249,22 @@ PIECES = """
     CREATE UNLOGGED TABLE walk.piece_load AS
         SELECT node, component FROM pgr_connectedComponents('SELECT id, source, target, 1::float8 AS cost FROM walk.edge_next');
     CREATE INDEX ON walk.piece_load (node);"""
-# The pieces, and how high each stretch lies (where the height model is here), in one go.
+# The pieces, and how high each stretch lies (where the height model is here): the stretches written anew with
+# them, rather than every row updated (which would leave the table twice its size).
 PIECES_AND_HEIGHTS = """
-    UPDATE walk.edge_next e SET piece = x.component, piece_nodes = x.n, z = x.z, high = x.high
-    FROM (SELECT e.id, c.component, s.n, h.z, h.high
-          FROM walk.edge_next e JOIN walk.piece_load c ON c.node = e.source
-          JOIN (SELECT component, count(*)::int AS n FROM walk.piece_load GROUP BY 1) s USING (component)
-          LEFT JOIN walk.z_load h ON h.id = e.id) x
-    WHERE x.id = e.id"""
+    CREATE TABLE walk.edge_done (LIKE walk.edge INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
+    INSERT INTO walk.edge_done (id, source, target, origin, osm_id, kind, name, sac, visibility, private, tunnel,
+                                discouraged, trail, dnt, ice, length_m, geom, x1, y1, x2, y2, piece, piece_nodes, z, high)
+    SELECT e.id, e.source, e.target, e.origin, e.osm_id, e.kind, e.name, e.sac, e.visibility, e.private, e.tunnel,
+           e.discouraged, e.trail, e.dnt, e.ice, e.length_m, e.geom, e.x1, e.y1, e.x2, e.y2, c.component, s.n, h.z, h.high
+    FROM walk.edge_next e
+    LEFT JOIN walk.piece_load c ON c.node = e.source
+    LEFT JOIN (SELECT component, count(*)::int AS n FROM walk.piece_load GROUP BY 1) s USING (component)
+    LEFT JOIN walk.z_load h ON h.id = e.id;
+    DROP TABLE walk.edge_next;
+    ALTER TABLE walk.edge_done RENAME TO edge_next;
+    CREATE INDEX ON walk.edge_next USING gist (geom);
+    ANALYZE walk.edge_next"""
 
 AREAS = Path(__file__).with_name("osmconf-areas.ini")
 HUT = "tourism IN ('alpine_hut', 'wilderness_hut')"
@@ -515,7 +523,7 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     def said(what: str) -> None:
         log.info("%s (%.0f s)", what, time.monotonic() - began)
 
-    for table in (*WORK, "hut_next", "field_next"):
+    for table in (*WORK, "hut_next", "field_next", "edge_done"):
         conn.execute(f"DROP TABLE IF EXISTS walk.{table}")
     conn.execute("CREATE TABLE walk.hut_next (LIKE walk.hut INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
     conn.execute("CREATE TABLE walk.field_next (LIKE walk.field INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
