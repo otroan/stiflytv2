@@ -186,10 +186,23 @@ def _snap(conn, lon: float, lat: float, o: Options, great: bool = False) -> dict
     if found is None or found["off_m"] > reach:
         raise NotFound(f"no path or road {'that leads anywhere ' if great else ''}within {reach / 1000:.0f} km "
                        f"of {lat:.5f} N {lon:.5f} E")
+    return _whole(found)
+
+
+def _whole(found: dict) -> dict:
     for part in ("before", "after"):         # at an end of the stretch, a part of it is a point
         if not isinstance(found[part][0], list):
             found[part] = [found[part], found[part]]
     return found
+
+
+def _snap_ground(conn, lon: float, lat: float, o: Options) -> dict:
+    """For a leg across country: the stretch of the lattice nearest to a point, as `_snap` gives a stretch."""
+    found = _snap_field(conn, lon, lat, o)
+    if found is None or found["off_m"] > SNAP_M:
+        raise NotFound(f"no open ground to cross within {SNAP_M / 1000:.0f} km of {lat:.5f} N {lon:.5f} E "
+                       "(the lattice across country is built with the height model)")
+    return _whole(found)
 
 
 def _snap_field(conn, lon: float, lat: float, o: Options) -> dict | None:
@@ -230,14 +243,20 @@ def _ends(a: dict, b: dict) -> str:
     return f"SELECT * FROM (VALUES {values}) v(id, source, target, cost, x1, y1, x2, y2)"
 
 
-def _leg(conn, a: dict, b: dict, o: Options) -> list[dict]:
-    """The way from one snapped point to the next: the stretches walked, in order, each the way it is walked."""
+def _leg(conn, a: dict, b: dict, o: Options, ground: bool = False) -> list[dict]:
+    """The way from one snapped point to the next: the stretches walked, in order, each the way it is walked.
+    With `ground`, across country alone, even where there are paths."""
     far = math.hypot(b["x"] - a["x"], b["y"] - a["y"])
     for margin in (max(5000, 0.3 * far), max(25_000, 1.0 * far)):
         box = _box(conn, a, b, margin)
-        edges = (f"SELECT id, source, target, {o.cost()} AS cost, x1, y1, x2, y2 FROM walk.edge "
-                 f"WHERE geom && {box} AND {o.allowed()} UNION ALL {_ends(a, b)}")
-        if o.across:
+        if ground:
+            edges = (f"SELECT id, source, target, {o.field()} AS cost, x1, y1, x2, y2 FROM walk.field "
+                     f"WHERE kind = 'field' AND geom && {box}" + ("" if o.ice else " AND NOT ice")
+                     + f" UNION ALL {_ends(a, b)}")
+        else:
+            edges = (f"SELECT id, source, target, {o.cost()} AS cost, x1, y1, x2, y2 FROM walk.edge "
+                     f"WHERE geom && {box} AND {o.allowed()} UNION ALL {_ends(a, b)}")
+        if o.across and not ground:
             edges += (f" UNION ALL SELECT id, source, target, {o.field()} AS cost, x1, y1, x2, y2 FROM walk.field "
                       f"WHERE geom && {box}" + ("" if o.ice else " AND NOT ice"))
         with conn.cursor(row_factory=dict_row) as cur:
@@ -250,10 +269,13 @@ def _leg(conn, a: dict, b: dict, o: Options) -> list[dict]:
                            UNION ALL
                            SELECT id, source, 'field', NULL, false, false, ice, 'field', NULL, length_m, geom
                            FROM walk.field) e ON e.id = r.edge
-                WHERE r.edge <> -1 ORDER BY r.path_seq""", (edges, START, END, o.least())).fetchall()
+                WHERE r.edge <> -1 ORDER BY r.path_seq""", (edges, START, END, FIELD if ground else o.least())).fetchall()
         if walked:
             break
     else:
+        if ground:
+            raise NotFound("no way across country was found between two of the points: water, a river or cliffs in "
+                           "between, or a glacier that is left out")
         raise NotFound("no way on foot was found between two of the points: a fjord or a border in between, "
                        "or the way leads over a glacier or along alpine paths that are left out")
     out = []
@@ -298,12 +320,16 @@ def _metres(coords: list) -> float:
     return out
 
 
+MODES = ("paths", "across", "straight")
+
+
 def plan(conn, points: list, o: Options | None = None, straight: list[bool] | None = None,
-         snap: list[bool] | None = None, kept: list[dict | None] | None = None) -> dict:
+         snap: list[bool] | None = None, kept: list[dict | None] | None = None, modes: list[str] | None = None) -> dict:
     """A way on foot through the points, in order: the line, told in steps, and what it adds up to.
 
-    A leg between two points goes along paths and roads, or straight over the ground where `straight` says so
-    (one for each leg): a sketch, where nothing is mapped. A leg no way on foot is found for is drawn straight
+    A leg between two points goes along paths and roads (`paths`), across country alone even where there are
+    paths (`across`: over the lattice, round water and rivers, not up cliffs), or straight over the ground
+    (`straight`: a sketch), as `modes` says, one for each leg; `straight` says the last of them, as before. A leg no way on foot is found for is drawn straight
     too, and says why (`legs`). A point `snap` says of (one for each point; the line dragged to another path)
     is where the way passes on the nearest stretch, not the spot itself: it is not walked out to and back,
     and where it was moved to is in `snapped`.
@@ -316,9 +342,12 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     o = o or Options()
     if not 2 <= len(points) <= MOST_POINTS:
         raise Invalid(f"a way goes through 2 to {MOST_POINTS} points")
-    straight = list(straight) if straight is not None else [False] * (len(points) - 1)
-    if len(straight) != len(points) - 1:
-        raise Invalid("say for each leg between two points, and only for them, whether it is drawn straight")
+    if modes is None:
+        modes = ["straight" if s else "paths" for s in (straight if straight is not None else [False] * (len(points) - 1))]
+    modes = list(modes)
+    if len(modes) != len(points) - 1 or any(m not in MODES for m in modes):
+        raise Invalid(f"say for each leg between two points, and only for them, how it goes: {', '.join(MODES)}")
+    straight = [m == "straight" for m in modes]
     snap = list(snap) if snap is not None else [False] * len(points)
     if len(snap) != len(points):
         raise Invalid("say for each point, and only for them, whether it is moved onto the nearest stretch")
@@ -330,7 +359,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
     if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM walk.built)").fetchone()[0]:
         raise NotFound("the planner's network has not been built yet (`stiflyt2 planner build`)")
     conn.execute(f"SET LOCAL statement_timeout = '{SLOW_S}s'")         # a long way is a big search
-    snapped: dict[tuple[int, bool], dict | str] = {}
+    snapped: dict[tuple, dict | str] = {}
     coords: list = []
     steps: list[dict] = []
     off: dict[int, int] = {}
@@ -345,6 +374,15 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             except NotFound as e:
                 snapped[i, great] = str(e)
         return snapped[i, great]
+
+    def ground(i: int) -> dict | str:
+        """The stretch of the lattice nearest to a point, for a leg across country, or why there is none."""
+        if (i, "ground") not in snapped:
+            try:
+                snapped[i, "ground"] = _snap_ground(conn, *points[i], o)
+            except NotFound as e:
+                snapped[i, "ground"] = str(e)
+        return snapped[i, "ground"]
 
     def ends(n: int) -> tuple:
         """Where a leg begins and ends on the network: on the nearest stretches, unless one of them is on a small
@@ -390,18 +428,21 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
             mine = set(k.get("origins", [])) & set(CREDITS)
             origins.update(mine)
             metres = walked[0] - before
-            legs.append({"from": n, "to": n + 1, "straight": straight[n], "unfound": k.get("unfound"),
+            legs.append({"from": n, "to": n + 1, "straight": straight[n], "mode": modes[n], "unfound": k.get("unfound"),
                          "metres": round(metres), "crow_m": round(crow), "at": [begun, len(coords) - 1],
                          "roundabout": bool(k.get("roundabout")), "origins": sorted(mine), "kept": True})
             if n + 2 < len(points) and steps:
                 steps[-1]["via"] = n + 1
             continue
-        if not straight[n]:
+        if modes[n] == "paths":
             a, b = ends(n)
+        elif modes[n] == "across":
+            a, b = ground(n), ground(n + 1)
+        if not straight[n]:
             why = a if isinstance(a, str) else b if isinstance(b, str) else None
             if why is None:
                 try:
-                    way = _leg(conn, a, b, o)
+                    way = _leg(conn, a, b, o, ground=modes[n] == "across")
                 except NotFound as e:
                     why = str(e)
         if way is None:
@@ -422,7 +463,7 @@ def plan(conn, points: list, o: Options | None = None, straight: list[bool] | No
                 off[n + 1] = round(b["off_m"])
         origins.update(mine)
         metres = walked[0] - before
-        legs.append({"from": n, "to": n + 1, "straight": straight[n], "unfound": why, "metres": round(metres),
+        legs.append({"from": n, "to": n + 1, "straight": straight[n], "mode": modes[n], "unfound": why, "metres": round(metres),
                      "crow_m": round(crow), "at": [begun, len(coords) - 1], "origins": sorted(mine), "kept": False,
                      "roundabout": way is not None and metres > ROUNDABOUT * crow and metres - crow > ROUNDABOUT_M})
         if n + 2 < len(points) and steps:
@@ -464,13 +505,14 @@ def _share(conn, table: str, box: str) -> float:
 
 
 def estimate(conn, points: list, o: Options | None = None, straight: list[bool] | None = None,
-             kept: list[bool] | None = None) -> dict:
+             kept: list[bool] | None = None, modes: list[str] | None = None) -> dict:
     """About how long a plan would take, before it is asked for: from how many stretches lie in the box each leg is
     searched in, as the database's statistics have it. Takes a millisecond."""
     o = o or Options()
     if not 2 <= len(points) <= MOST_POINTS:
         raise Invalid(f"a way goes through 2 to {MOST_POINTS} points")
-    straight = list(straight) if straight is not None else [False] * (len(points) - 1)
+    if modes is None:
+        modes = ["straight" if s else "paths" for s in (straight if straight is not None else [False] * (len(points) - 1))]
     tuples = dict(conn.execute("""SELECT relname, greatest(reltuples, 0) FROM pg_class
                                   WHERE relnamespace = 'walk'::regnamespace AND relname IN ('edge', 'field')""").fetchall())
     xy = conn.execute("""SELECT ST_X(p), ST_Y(p) FROM unnest(%s::float8[], %s::float8[]) WITH ORDINALITY u(x, y, i),
@@ -480,13 +522,14 @@ def estimate(conn, points: list, o: Options | None = None, straight: list[bool] 
     for n, ((x1, y1), (x2, y2)) in enumerate(itertools.pairwise(xy)):
         far = math.hypot(x2 - x1, y2 - y1)
         crow += far
-        if (n < len(straight) and straight[n]) or (kept and n < len(kept) and kept[n]):
+        mode = modes[n] if n < len(modes) else "paths"
+        if mode == "straight" or (kept and n < len(kept) and kept[n]):
             legs.append(0.0)                # drawn straight, or kept as it was found: nothing to look for
             continue
         m = max(5000, 0.3 * far)
         box = f"ST_MakeEnvelope({min(x1, x2) - m}, {min(y1, y2) - m}, {max(x1, x2) + m}, {max(y1, y2) + m}, 25833)"
-        edges = _share(conn, "edge", box) if tuples.get("edge") else 0.0
-        fields = _share(conn, "field", box) if o.across and tuples.get("field") else 0.0
+        edges = _share(conn, "edge", box) if tuples.get("edge") and mode == "paths" else 0.0
+        fields = _share(conn, "field", box) if (o.across or mode == "across") and tuples.get("field") else 0.0
         legs.append(LEG_S + edges * tuples.get("edge", 0) * EDGE_S + fields * tuples.get("field", 0) * FIELD_S)
     return {"seconds": round(sum(legs), 1), "legs": [round(s, 1) for s in legs],
             "heights_seconds": round(HEIGHTS_S + crow * WALKED_PER_CROW / 1000 * HEIGHTS_S_PER_KM, 1)}

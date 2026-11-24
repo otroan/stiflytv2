@@ -7,11 +7,11 @@ const PLAN_CLASSES = { dnt: ["DNT's routes", "#c8161d"], marked: ["Other marked 
 const PLAN_KEY = "stiflyt2.plan";
 // The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
 // point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
-// two points, whether it is drawn straight over the ground, with no path.
+// two points, how it goes: along paths and roads, across country alone (even where there are paths), or straight.
 // A point dragged onto another path (`snap`) is where the way passes on it, not a spot walked out to. A point that is
 // `hidden` is not one of yours: it holds the way where it was on either side of where the line was dragged, so that
 // only the part between is found anew. It has no letter, and goes when the point it was made for goes.
-const planAsk = Object.assign({ points: [], names: [], snap: [], hidden: [], lone: null, straight: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
+const planAsk = Object.assign({ points: [], names: [], snap: [], hidden: [], lone: null, modes: [], prefer: 0.6, mountains: 0, across: false, ferries: true, ice: false, alpine: false, hours: 7, auto: true },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 function pointsFit() {       // a name, a snap and a hidden for each point, whatever was done to them
   for (const k of ["names", "snap", "hidden"]) {
@@ -23,9 +23,12 @@ function pointsFit() {       // a name, a snap and a hidden for each point, what
 pointsFit();
 const planVisible = () => planAsk.points.map((_, i) => i).filter(i => !planAsk.hidden[i]);
 const letterOf = i => { const v = planVisible().indexOf(i); return v < 0 ? "" : planAsk.lone === "end" ? "B" : letter(v); };
+// A walk kept from before each leg was straight or not: it is so still.
+if (!planAsk.modes.length && Array.isArray(planAsk.straight)) planAsk.modes = planAsk.straight.map(s => s ? "straight" : "paths");
+delete planAsk.straight;
 function legsFit() {         // one for each leg, whatever was done to the points
-  const S = planAsk.straight, n = Math.max(0, planAsk.points.length - 1);
-  while (S.length < n) S.push(false);
+  const S = planAsk.modes, n = Math.max(0, planAsk.points.length - 1);
+  while (S.length < n) S.push("paths");
   S.length = n;
 }
 legsFit();
@@ -49,42 +52,42 @@ function keepAsk() { localStorage.setItem(PLAN_KEY, JSON.stringify(planAsk)); }
 function planAt(at) {
   if (planAsk.points.length >= PLAN_MOST) { planProblem = `A walk goes through ${PLAN_MOST} points at the most.`; render(); return; }
   const p = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))];
-  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
-  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.straight.push(false); }
+  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.modes.unshift("paths"); planAsk.lone = null; }      // where it begins
+  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.modes.push("paths"); }
   replan();
 }
 // A place found by its name, as where the walk begins or where it ends.
 function planFrom(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.straight.unshift(false); planAsk.lone = null; }
+  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.snap.unshift(false); planAsk.hidden.unshift(false); planAsk.modes.unshift("paths"); planAsk.lone = null; }
   else { P[0] = p; N[0] = name; planAsk.snap[0] = false; }
   replan();
 }
 function planTo(p, name) {
   const P = planAsk.points, N = planAsk.names;
   if (!P.length) { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.lone = "end"; }
-  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.straight.push(false); }
+  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.snap.push(false); planAsk.hidden.push(false); planAsk.modes.push("paths"); }
   else { P[P.length - 1] = p; N[N.length - 1] = name; planAsk.snap[P.length - 1] = false; }
   replan();
 }
 // A point of yours taken away, and the hidden ones that held the way on either side of it: the legs about it become one.
 function planRemove(i) {
-  const P = planAsk.points, H = planAsk.hidden, S = planAsk.straight;
+  const P = planAsk.points, H = planAsk.hidden, S = planAsk.modes;
   if (planVisible().length === 1) { planStartAgain(); return; }
   let lo = i, hi = i;
   while (lo > 0 && H[lo - 1]) lo--;
   while (hi < P.length - 1 && H[hi + 1]) hi++;
   if (lo === 0) S.splice(0, hi + 1);
   else if (hi === P.length - 1) S.splice(lo - 1, hi - lo + 1);
-  else S.splice(lo - 1, hi - lo + 2, S.slice(lo - 1, hi + 1).every(Boolean));        // the legs about it become one
+  else { const about = S.slice(lo - 1, hi + 1); S.splice(lo - 1, hi - lo + 2, about.every(m => m === about[0]) ? about[0] : "paths"); }   // the legs about it become one
   for (const k of ["points", "names", "snap", "hidden"]) planAsk[k].splice(lo, hi - lo + 1);
   if (P.length === 1 && lo === 0) planAsk.lone = "end";        // what is left is where it ends
   replan();
 }
-function planStartAgain() { for (const k of ["points", "names", "snap", "hidden", "straight"]) planAsk[k].length = 0; planAsk.lone = null; replan(); }
-// Between two points of yours, straight or along paths: as one leg, the hidden points between taken away.
-function planSegmentStraight(a, b, straight) {
-  planAsk.straight.splice(a, b - a, straight);
+function planStartAgain() { for (const k of ["points", "names", "snap", "hidden", "modes"]) planAsk[k].length = 0; planAsk.lone = null; replan(); }
+// Between two points of yours, along paths, across country or straight: as one leg, the hidden points between taken away.
+function planSegmentMode(a, b, mode) {
+  planAsk.modes.splice(a, b - a, mode);
   for (const k of ["points", "names", "snap", "hidden"]) planAsk[k].splice(a + 1, b - a - 1);
   replan();
 }
@@ -98,7 +101,7 @@ function metresOf(C) {
   return m;
 }
 // What leg k is found for: its two points, how it is to be drawn, and how to go. The same again is the same leg.
-const legKey = k => JSON.stringify([planAsk.points[k], planAsk.points[k + 1], planAsk.straight[k], planAsk.snap[k], planAsk.snap[k + 1],
+const legKey = k => JSON.stringify([planAsk.points[k], planAsk.points[k + 1], planAsk.modes[k], planAsk.snap[k], planAsk.snap[k + 1],
   planAsk.prefer, planAsk.mountains, planAsk.across, planAsk.ferries, planAsk.ice, planAsk.alpine]);
 // The part of the way found from one index of its line to another, as a leg to be kept: its line, its steps (cut where
 // it is cut), the junctions along it, and what it is from.
@@ -113,29 +116,39 @@ function keptOf(a, b, L) {
            unfound: a === L.at[0] && b === L.at[1] ? L.unfound : null, roundabout: a === L.at[0] && b === L.at[1] && L.roundabout };
 }
 // The line taken hold of at index i of its line (on leg `leg`) and let go of at `at`. Only the part between the
-// junctions on either side of where it was taken is found anew: the way is held there by hidden points. Let go of
-// near a path or road, the way goes along it; on open ground, or where the line went across country or straight,
-// it goes exactly where it was let go of, straight from the points on either side.
+// junctions on either side of where it was taken is found anew, and no more than PLAN_AROUND_M to either side:
+// the way is held there by hidden points. Let go of near a path or road, the way goes along it; on open ground, or
+// where the line went across country, the point stays exactly where it was let go of and the way goes to it across
+// country, over the ground (straight, where the line was straight).
+const PLAN_AROUND_M = 1500;
+const PLAN_MODES = { paths: ["Along paths", "along paths and roads"], across: ["Across country", "across country, over the ground"],
+                     straight: ["Straight", "straight, with no path"] };
 async function planDragTo(i, leg, at) {
-  const L = plan.legs[leg], J = plan.joints;
+  const L = plan.legs[leg], J = plan.joints, C = plan.coords;
   if (!L) return;
-  const j0 = Math.max(L.at[0], ...J.filter(j => j <= i && j >= L.at[0]));
-  const j1 = Math.min(L.at[1], ...J.filter(j => j > i && j <= L.at[1]));
+  // How far along the leg each index is, to hold the way no further than PLAN_AROUND_M off.
+  const along = [0];
+  for (let k = L.at[0] + 1; k <= L.at[1]; k++) along.push(along[along.length - 1] + metresOf([C[k - 1], C[k]]));
+  const from = k => along[k - L.at[0]], here = from(i);
+  let j0 = Math.max(L.at[0], ...J.filter(j => j <= i && j >= L.at[0]));
+  let j1 = Math.min(L.at[1], ...J.filter(j => j > i && j <= L.at[1]));
+  while (j0 < i && here - from(j0) > PLAN_AROUND_M) j0++;
+  while (j1 > i + 1 && from(j1) - from(i + 1) > PLAN_AROUND_M) j1--;
   const step = plan.steps.find(st => st.at[0] <= i && i < Math.max(st.at[1], st.at[0] + 1));
   const p = [round6(at.lng), round6(at.lat)];
-  let ground = Boolean(step && (step.class === "field" || step.class === "off"));
-  if (!ground) {
-    try { const n = await get("planner/near", { lon: p[0], lat: p[1] }); ground = n.off_m === null || n.off_m > PLAN_SNAP_M; } catch { /* along paths, then */ }
+  let mode = !step ? "paths" : step.class === "off" ? "straight" : step.class === "field" ? "across" : "paths";
+  if (mode === "paths") {
+    try { const n = await get("planner/near", { lon: p[0], lat: p[1] }); if (n.off_m === null || n.off_m > PLAN_SNAP_M) mode = "across"; } catch { /* along paths, then */ }
   }
-  const s = planAsk.straight[leg], add = [], legs = [];
+  const was = planAsk.modes[leg], add = [], legs = [];
   const before = j0 > L.at[0] ? keptOf(L.at[0], j0, L) : null, after = j1 < L.at[1] ? keptOf(j1, L.at[1], L) : null;
-  if (before) { add.push({ p: plan.coords[j0], hidden: true, snap: true }); legs.push({ straight: s, kept: before }); }
-  add.push({ p, hidden: false, snap: !ground }); legs.push({ straight: ground, kept: null });
-  if (after) { add.push({ p: plan.coords[j1], hidden: true, snap: true }); legs.push({ straight: ground, kept: null }); }
-  legs.push({ straight: after ? s : ground, kept: after });
+  if (before) { add.push({ p: C[j0], hidden: true, snap: true }); legs.push({ mode: was, kept: before }); }
+  add.push({ p, hidden: false, snap: mode === "paths" }); legs.push({ mode, kept: null });
+  if (after) { add.push({ p: C[j1], hidden: true, snap: true }); legs.push({ mode, kept: null }); }
+  legs.push({ mode: after ? was : mode, kept: after });
   planAsk.points.splice(leg + 1, 0, ...add.map(x => x.p)); planAsk.names.splice(leg + 1, 0, ...add.map(() => null));
   planAsk.snap.splice(leg + 1, 0, ...add.map(x => x.snap)); planAsk.hidden.splice(leg + 1, 0, ...add.map(x => x.hidden));
-  planAsk.straight.splice(leg, 1, ...legs.map(x => x.straight));
+  planAsk.modes.splice(leg, 1, ...legs.map(x => x.mode));
   legs.forEach((x, k) => { if (x.kept) planLegCache.set(legKey(leg + k), x.kept); });
   replan();
 }
@@ -175,9 +188,9 @@ function placeField(which, label, point, name, coords) {
   return field;
 }
 // What is asked of the server: the points and how to go.
-const planBody = () => ({ points: planAsk.points, straight: planAsk.straight, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains,
+const planBody = () => ({ points: planAsk.points, modes: planAsk.modes, snap: planAsk.snap, prefer: planAsk.prefer, mountains: planAsk.mountains,
                           across: planAsk.across, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine,
-                          kept: planAsk.straight.map((_, k) => planLegCache.get(legKey(k)) || null) });
+                          kept: planAsk.modes.map((_, k) => planLegCache.get(legKey(k)) || null) });
 // Something was changed: how long the way would take to find is asked for at once (a millisecond), and the way itself
 // only when that is quick (and it is to be found by itself), or when "Find the way" is pressed. Until then the way
 // found before stays, faded, and says it is from before.
@@ -312,7 +325,7 @@ function planSegments() {
   const V = planVisible(), P = planAsk.points;
   return V.slice(0, -1).map((a, n) => {
     const b = V[n + 1], legs = plan.legs.slice(a, b), metres = legs.reduce((m, l) => m + l.metres, 0), crow = metresOf([P[a], P[b]]);
-    return { a, b, metres, crow_m: crow, straight: legs.every(l => l.straight), manual: legs.length > 1,
+    return { a, b, metres, crow_m: crow, mode: legs.length === 1 ? legs[0].mode || (legs[0].straight ? "straight" : "paths") : null, manual: legs.length > 1,
              unfound: (legs.find(l => l.unfound) || {}).unfound || null,
              roundabout: legs.length === 1 && legs[0].roundabout };
   });
@@ -370,18 +383,18 @@ function renderPlanner() {
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
       ...plan.off.filter(o => !planAsk.hidden[o.point]).map(o => el("div", { class: "sub" }, `${letterOf(o.point)} is ${o.off_m.toLocaleString("en")} m from where the way passes: that bit is drawn straight.`)),
-      // Each leg: along paths, or straight over the ground where nothing is mapped. One with no way found is drawn
-      // straight and says why; one that goes far round says so, for it to be drawn straight if that is better.
-      // Between two points of yours, however many legs the hidden points cut it into.
+      // Each leg, between two points of yours: along paths and roads, across country alone (even where there are paths),
+      // or straight. One with no way found is drawn straight and says why; one that goes far round says so. One the
+      // line was dragged on is as you laid it, until it is given one of the three again.
       planStale ? "" : el("ol", { class: "plan-legs" }, ...planSegments().map(l => el("li", { class: l.unfound ? "unfound" : l.roundabout ? "roundabout" : "" },
         el("div", { class: "grow" },
           el("div", {}, `${letterOf(l.a)} → ${letterOf(l.b)}: ${km(l.metres / 1000)} `, el("span", { class: "sub" },
-            l.straight ? "straight, with no path" : l.unfound ? "drawn straight" : l.manual ? "as you have laid it" : "along paths and roads")),
+            l.manual ? "as you have laid it" : l.unfound ? "drawn straight" : PLAN_MODES[l.mode][1])),
           l.unfound ? el("div", { class: "sub" }, `No way on foot was found: ${l.unfound}. It is drawn straight over whatever lies there: add points to go round, or allow ferries or glaciers.`) : "",
-          l.roundabout ? el("div", { class: "sub" }, `${km(l.metres / 1000)} for ${km(l.crow_m / 1000)} as the crow flies: if the ground allows, it may be better straight.`) : ""),
-        el("button", { class: "link", type: "button", title: l.manual ? "As one leg again, found anew" : "",
-                       onclick: () => planSegmentStraight(l.a, l.b, l.manual ? false : !l.straight) },
-          l.manual ? "Find it anew" : l.straight ? "Along paths" : l.unfound ? "Keep it straight" : "Straight instead")))));
+          l.roundabout ? el("div", { class: "sub" }, `${km(l.metres / 1000)} for ${km(l.crow_m / 1000)} as the crow flies: if the ground allows, it may be better across country, or straight.`) : "",
+          el("div", { class: "plan-modes", role: "group", "aria-label": `How ${letterOf(l.a)} → ${letterOf(l.b)} goes` },
+            ...Object.entries(PLAN_MODES).map(([mode, [says]]) => el("button", { class: "link", type: "button", "aria-pressed": String(!l.manual && l.mode === mode),
+              title: l.manual ? "As one leg again, found anew this way" : "", onclick: () => planSegmentMode(l.a, l.b, mode) }, says))))))));
     if (H && H.days.length > 1) told.push(el("ol", { class: "trip-days" }, ...H.days.map(d => el("li", { class: planDay === d.day ? "hit current" : "hit" },
       el("span", { class: "swatch", style: "background:#1f2a30" }, String(d.day)),
       el("div", { class: "grow" },
@@ -404,7 +417,7 @@ function renderPlanner() {
       : "Search for where the walk begins and ends, anywhere in Norway, or click the map. Click again to go on further; drag a point to move it."),
     ends,
     P.length ? el("div", { class: "actions" },
-      P.length > 1 ? el("button", { class: "btn", onclick: () => { for (const k of ["points", "names", "snap", "hidden", "straight"]) planAsk[k].reverse(); replan(); } }, "The other way") : "",
+      P.length > 1 ? el("button", { class: "btn", onclick: () => { for (const k of ["points", "names", "snap", "hidden", "modes"]) planAsk[k].reverse(); replan(); } }, "The other way") : "",
       el("button", { class: "btn", onclick: planStartAgain }, "Start again")) : "",
     form, ...told);
   if (typing) { const field = panel.querySelector(`[data-plan-field="${typing}"]`); if (field) { field.focus(); field.setSelectionRange(caret, caret); } }

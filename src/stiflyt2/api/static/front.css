@@ -149,6 +149,8 @@ li.hit.area .code { font-size: 16px; text-transform: uppercase; letter-spacing: 
 .plan-legs li.unfound .sub { color: var(--band); }
 .plan-legs li.roundabout .sub:last-child { color: #8a5a00; }
 .plan-legs button { flex: none; }
+.plan-modes { display: flex; gap: 10px; margin-top: 2px; font-size: 13px; }
+.plan-modes button[aria-pressed="true"] { color: var(--ink); font-weight: 600; text-decoration: none; cursor: default; }
 .plan-find { align-items: center; flex-wrap: wrap; }
 .plan-auto { font-size: 13px; color: var(--muted); }
 .plan-progress { margin: 6px 0 8px; }

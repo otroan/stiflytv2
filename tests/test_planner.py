@@ -509,3 +509,20 @@ def test_a_leg_kept_as_it_was_found_is_not_looked_for_again(network, conn):
         planner.plan(conn, [a, b], kept=[None, None])
     # How far a spot is from the nearest path, for the line dragged there.
     assert planner.near(conn, *a)["off_m"] < 1 and planner.near(conn, 10.0, 60.0)["off_m"] is None
+
+
+def test_a_leg_may_go_across_country_even_where_there_is_a_path(field_network, field_conn):
+    """Asked for, a leg goes over the lattice alone, though a path runs between its ends; the others as before."""
+    conn = field_conn
+    a, b = field_network["a"], field_network["b"]
+    along = planner.plan(conn, [a, b], modes=["paths"])
+    across = planner.plan(conn, [a, b], modes=["across"])
+    assert "field" not in along["total"]["by"] and across["legs"][0]["mode"] == "across" and across["legs"][0]["unfound"] is None
+    assert set(across["total"]["by"]) <= {"field", "off"} and across["total"]["by"]["field"] > 1000
+    assert planner.CREDITS["terrain"] in across["credits"]
+    mixed = planner.plan(conn, [a, b, P], modes=["paths", "straight"])
+    assert [leg["mode"] for leg in mixed["legs"]] == ["paths", "straight"] and mixed["steps"][-1]["class"] == "off"
+    with pytest.raises(Invalid, match="how it goes"):
+        planner.plan(conn, [a, b], modes=["flying"])
+    said = planner.estimate(conn, [a, b, P], modes=["across", "straight"])
+    assert said["legs"][1] == 0 and said["legs"][0] >= planner.LEG_S

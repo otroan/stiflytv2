@@ -1319,11 +1319,18 @@ what each adds up to.
 
 **Drag the line** to change one part of the way and leave the rest as it is:
 only the part between the junctions on either side of where it was taken hold
-of is found anew, and the way is held where it was by hidden points there. Let
-go of within 150 m of a path or road, the point goes onto it and is passed
-there; on open ground, or where the line went across country or straight, it
-stays exactly where it was let go of, straight from the points on either side
-("as you have laid it"; "Find it anew" makes it one leg again). The same holds
+of is found anew, and no more than 1.5 km to either side; the way is held where
+it was by hidden points there. Let go of within 150 m of a path or road, the
+point goes onto it and is passed there; on open ground, or where the line went
+across country, it stays exactly where it was let go of, and the way goes to it
+and on across country, over the ground (straight, where the line was straight).
+The leg is then "as you have laid it" until it is given a way again.
+
+**Each leg** between two points of yours goes one of three ways, chosen under
+it: **along paths** and roads (and across country where there are none, when
+that is ticked), **across country** alone, over the lattice even where there
+are paths (round water and rivers, not up cliffs: over the mountain rather than
+round it on the path), or **straight**, a sketch. The same holds
 for every change: the legs found before are sent back as they were (`kept`)
 and only those that changed are looked for, so moving a point, adding one or
 taking one away finds only the legs about it. A second slider says whether it keeps **down in the
@@ -1397,7 +1404,8 @@ the page and in the GPX file.
 
 Over the API: `POST /api/v1/planner/plan` with `points` ([lon, lat], 2 to 12),
 `prefer` (0 to 1), `mountains` (-1 to 1), `across`, `ferries`, `ice`, `alpine`,
-`straight` and `kept` (one for each leg: a leg as it was found, to be taken as it is) and `snap` (one for each
+`modes` (`paths`, `across` or `straight`; or `straight` as true or false) and `kept` (one for each leg: a leg
+as it was found, to be taken as it is) and `snap` (one for each
 point); the plan says where its stretches meet (`joints`). `GET /api/v1/planner/near` says how far a spot is
 from the nearest path or road; `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
 with `coords`, `ferry`, `rough`, `ice`) and `hours`. An assistant has `plan_walk`,

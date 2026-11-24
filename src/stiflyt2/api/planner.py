@@ -4,7 +4,7 @@ Everything here asks for the feature. It reads the walk network and keeps nothin
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from psycopg_pool import ConnectionPool
@@ -61,6 +61,9 @@ class Ask(How):
                                                     "with no path (a sketch), or along paths and roads")
     snap: list[bool] | None = Field(None, max_length=planner.MOST_POINTS,
                                     description="For each point: passed on the nearest stretch, not walked out to")
+    modes: list[Literal["paths", "across", "straight"]] | None = Field(
+        None, max_length=planner.MOST_POINTS - 1, description="For each leg: along paths and roads (across country "
+        "where there are none, when `across`), across country alone even where there are paths, or straight")
     kept: list[Kept | None] | None = Field(None, max_length=planner.MOST_POINTS - 1,
                                            description="For each leg, as it was found before (to keep it), or none")
 
@@ -89,14 +92,14 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
     def plan(body: Ask, who: May) -> dict:
         """A way on foot through the points, along DNT's routes as much as asked for."""
         with read.connection() as conn:
-            return planner.plan(conn, body.points, body.options(), body.straight, body.snap, body.kept_legs())
+            return planner.plan(conn, body.points, body.options(), body.straight, body.snap, body.kept_legs(), body.modes)
 
     @app.post(f"{V1}/estimate")
     def estimate(body: Ask, who: May) -> dict:
         """About how long a plan would take, before it is asked for."""
         with read.connection() as conn:
             return planner.estimate(conn, body.points, body.options(), body.straight,
-                                    None if body.kept is None else [k is not None for k in body.kept])
+                                    None if body.kept is None else [k is not None for k in body.kept], body.modes)
 
     @app.get(f"{V1}/near")
     def near(lon: Annotated[float, Query(ge=-180, le=180)], lat: Annotated[float, Query(ge=-90, le=90)], who: May) -> dict:
@@ -117,6 +120,10 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
 
 
 class PlanWalk(mcp.Args, How):
+    modes: list[Literal["paths", "across", "straight"]] | None = Field(
+        None, max_length=planner.MOST_POINTS - 1, description="For each leg: paths (along paths and roads), across "
+        "(across country alone, even where there are paths: a sketch over the ground the height model shows) or "
+        "straight. Overrides `straight`")
     points: list[Point] = Field(min_length=2, max_length=planner.MOST_POINTS,
                                 description="[lon, lat] of where it begins, of each place to pass, and of where it ends")
     straight: list[bool] | None = Field(None, max_length=planner.MOST_POINTS - 1,
@@ -138,7 +145,7 @@ def plan_walk(c: mcp.Call, a: PlanWalk) -> dict:
     leg how long it is against the crow's flight, and why one was drawn straight when no way was found. The line itself is not
     given. Name `credits` wherever the plan is passed on (OpenStreetMap's data is under ODbL). Whether a hut is
     open, a bridge is up or a ferry runs is not known here: say so."""
-    told = planner.plan(c.conn, a.points, a.options(), a.straight)
+    told = planner.plan(c.conn, a.points, a.options(), a.straight, modes=a.modes)
     if a.with_heights:
         parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1], "ferry": s["class"] == "ferry",
                   "rough": s["class"] in ("off", "field"), "ice": s["ice"]} for s in told["steps"]]

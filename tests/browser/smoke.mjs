@@ -217,13 +217,20 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("the heights are asked for: the climb and the time, or why not", await until(`!heightsBusy && (Boolean(planHeights) && /of walking by Naismith/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
   // A leg straight over the ground, where nothing is mapped: a sketch, dashed, and timed as such; and back again.
   await until(`!planBusy && !heightsBusy && !planStale`, 60);
-  await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Straight instead")`);
-  check("a leg can be drawn straight, with no path: dashed, and said so", await until(`planAsk.straight[0] === true && Boolean(plan) && plan.legs[0].straight
+  await clickOn(`[...document.querySelectorAll(".plan-modes button")].find(b => b.textContent === "Straight")`);
+  check("a leg can be drawn straight, with no path: dashed, and said so", await until(`planAsk.modes[0] === "straight" && Boolean(plan) && !planStale && plan.legs[0].straight
     && plan.steps.every(s => s.class === "off") && map.getSource("plan").serialize().data.features.every(f => f.properties.dashed)
     && /straight, with no path/.test(document.querySelector(".plan-legs").textContent)`, 30), await text(".plan-legs"));
   check("and timed as ground with no path", await until(`!heightsBusy && (Boolean(planHeights) && planHeights.rough_m > 0 && /with no path, timed half as slow again/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
-  await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Along paths")`);
-  check("and back along paths", await until(`planAsk.straight[0] === false && Boolean(plan) && !plan.legs[0].straight && plan.steps.some(s => s.class !== "off")`, 30), await text(".plan-legs"));
+  // Across country alone, even where there are paths: over the lattice where it is built, else drawn straight and said why.
+  await until(`!planBusy && !heightsBusy && !planStale`, 60);
+  await clickOn(`[...document.querySelectorAll(".plan-modes button")].find(b => b.textContent === "Across country")`);
+  check("a leg can go across country even where there are paths", await until(`planAsk.modes[0] === "across" && Boolean(plan) && !planBusy && !planStale && plan.legs[0].mode === "across"
+    && (plan.steps.some(s => s.class === "field") || Boolean(plan.legs[0].unfound))
+    && document.querySelector(".plan-modes button[aria-pressed=true]").textContent === "Across country"`, 30), await text(".plan-legs"));
+  await until(`!planBusy && !heightsBusy && !planStale`, 60);
+  await clickOn(`[...document.querySelectorAll(".plan-modes button")].find(b => b.textContent === "Along paths")`);
+  check("and back along paths", await until(`planAsk.modes[0] === "paths" && Boolean(plan) && !planStale && !plan.legs[0].straight && plan.steps.some(s => s.class !== "off")`, 30), await text(".plan-legs"));
   // The line taken hold of and dragged aside: a point it passes, put on the nearest path, and the way found anew.
   await until(`!planBusy && !heightsBusy`, 60);
   await js(`showPlan()`);
@@ -236,10 +243,10 @@ if (await js(`(me.features || []).includes("planner")`)) {
   // straight to it: either way only the part between the junctions on either side is found anew.
   check("the line dragged aside makes a point of yours it passes, and only the part about it is found anew",
     await until(`planVisible().length === 3 && Boolean(plan) && !planBusy && !planStale && plan.legs.length === planAsk.points.length - 1
-      && (() => { const v = planVisible()[1]; return planAsk.snap[v] ? !plan.off.some(o => o.point === v) : planAsk.straight[v - 1] && planAsk.straight[v]
+      && (() => { const v = planVisible()[1]; return planAsk.snap[v] ? !plan.off.some(o => o.point === v) : planAsk.modes[v - 1] !== "paths" && planAsk.modes[v] !== "paths"
                                                                           && plan.coords.some(c => c[0] === planAsk.points[v][0] && c[1] === planAsk.points[v][1]); })()
       && (planAsk.points.length === 3 || plan.legs.some(l => l.kept))`, 30),
-    `${await js("JSON.stringify({ n: planAsk.points.length, h: planAsk.hidden, snap: planAsk.snap, st: planAsk.straight, stale: planStale, busy: planBusy, prob: planProblem, legs: plan && plan.legs.map(l => [l.kept, l.straight]), off: plan && plan.off })")} ${await text("#panel .error")}`);
+    `${await js("JSON.stringify({ n: planAsk.points.length, h: planAsk.hidden, snap: planAsk.snap, modes: planAsk.modes, stale: planStale, busy: planBusy, prob: planProblem, legs: plan && plan.legs.map(l => [l.kept, l.straight]), off: plan && plan.off })")} ${await text("#panel .error")}`);
   await clickOn(`[...document.querySelectorAll(".plan-field button")].find(b => /Take point B away/.test(b.getAttribute("aria-label") || ""))`);
   check("taken away, it goes with the hidden points that held the way about it", await until(`planAsk.points.length === 2 && !planAsk.hidden.some(Boolean) && Boolean(plan) && !planBusy && plan.legs.length === 1`, 30),
     await js("JSON.stringify(planAsk.hidden)"));
