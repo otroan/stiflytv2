@@ -1312,13 +1312,28 @@ way. Drag a letter to move it. A slider says how much DNT's marked routes are
 preferred, from the shortest way to "along DNT's routes" (a route of DNT's
 then counts half its length, another marked route 70 %); ferries may be left
 out, and glaciers, demanding alpine paths and via ferratas are left out unless
-ticked. The way is drawn in the colours of what it goes along (DNT's routes,
-other marked routes, paths, roads, ferries), with what each adds up to.
-Kartverket's height service is then asked about it, every 50 m: the climb, the
-time by Naismith's rule with no rests, a profile, and days that end at a hut
-within 400 m of the way (as far as a day of the hours you say goes, or up to an
-hour over to reach one; else where the hours run out). It can be taken out as a
-GPX file. Whether a hut is open, a bridge is up or a ferry runs is not known.
+ticked. **From** and **To** can also be searched for by name (Stedsnavn, the
+whole country, nearest the map first). The way is drawn in the colours of what
+it goes along (DNT's routes, other marked routes, paths, roads, ferries), with
+what each adds up to.
+
+Each leg between two points goes along paths and roads, or **straight over the
+ground** where nothing is mapped ("Straight instead"): a sketch, dashed, that
+knows nothing of the terrain but its heights, and is timed half as slow again
+as a path. A leg no way on foot is found for (across a fjord with no ferry, a
+point more than 10 km from any path) is drawn straight too, and says why; a
+leg more than 2.5 times as long as the crow flies, and 5 km more, says that,
+so that it may be drawn straight instead.
+
+Then the heights: from Kartverket's national height model kept here at 50 m
+(`stiflyt2 terrain fetch`, 76 tiles, some 400 MB, CC BY 4.0; until then from
+the height service, less often on a long way), every 50 m: the climb, the time
+by Naismith's rule with no rests, a profile, and days that end at a hut within
+400 m of the way (as far as a day of the hours you say goes, or up to an hour
+over to reach one; else where the hours run out). On Finse–Haukeliseter the
+model says 3,516 m up where the service says 3,490, in 0.3 s instead of 9. It
+can be taken out as a GPX file. Whether a hut is open, a bridge is up or a
+ferry runs is not known.
 
 It walks on a network of its own, in the schema `walk` (import migration
 `0025`), built from OpenStreetMap's extract of Norway, the one fetched weekly
@@ -1341,16 +1356,21 @@ extract too. The nightly job rebuilds it when a new extract has come.
 The search is pgRouting's A* (the extension `pgrouting`, which `db/bootstrap.sql`
 asks for) over the stretches in a box round each leg, widened once if no way
 is found in it. Each stretch costs its length times what it is: a path as it
-is, a road more the bigger it is (a trunk road 3.5 times), a ferry its length
-and 5 km more. Finse to Haukeliseter (120 km) takes a tenth of a second;
-Oslo to Trondheim (510–570 km) about eight. A point clicked off the network begins at the
+is, a road more the bigger it is (a trunk road 3.5 times), a ferry three times
+its length and 5 km more: a ferry is taken to cross a fjord, not to travel.
+Finse to Haukeliseter (120 km) takes a tenth of a second; Oslo to Trondheim
+(510–570 km) about eight. Lindesnes to Kibergneset: 3,030 km in 13 s, round
+Tysfjorden through Sweden on Nordkalottruta and Padjelanta (Turrutebasen has
+the Swedish trails, OpenStreetMap's extract stops at the border), 79,000 m up,
+128 days with heights in 4 s. A point clicked off the network begins at the
 nearest stretch within 3 km, and says how far off it was. Nothing is kept;
 what of OpenStreetMap is in a plan is a produced work under ODbL, credited in
 the page and in the GPX file.
 
 Over the API: `POST /api/v1/planner/plan` with `points` ([lon, lat], 2 to 12),
-`prefer` (0 to 1), `ferries`, `ice`, `alpine`; `POST /api/v1/planner/heights`
-with the plan's steps as `parts` and `hours`. An assistant has `plan_walk`,
+`prefer` (0 to 1), `ferries`, `ice`, `alpine`, and `straight` (one for each
+leg); `POST /api/v1/planner/heights` with the plan's steps as `parts` (each
+with `coords`, `ferry`, `rough`, `ice`) and `hours`. An assistant has `plan_walk`,
 which it is told of only when the person has the feature.
 
 ## Who else is at work now: a feature of its own

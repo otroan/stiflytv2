@@ -10,16 +10,17 @@ from conftest import HTTP_CLIENT, TEST_DB, role_dsn
 from fastapi.testclient import TestClient
 from test_mcp import call, rpc
 
-from stiflyt2 import access, height
+from stiflyt2 import access, height, terrain
 from stiflyt2.api.app import create_app
 from stiflyt2.config import settings
-from stiflyt2.domain.places import Invalid, NotFound
+from stiflyt2.domain.places import Invalid
 from stiflyt2.ops import planner, walknet
 
 V1 = "/api/v1"
 TRAIL = "ce4908aa-d039-413e-996d-96b4440a1dd0"        # bre20, 2.1 km, along which a path is mapped
 BARE = "6ce2c484-2173-4fa7-8978-24f9e42946f0"         # bre18, 14 km, with nothing mapped along it
 C, D, E, F = (7.45, 61.6668), (7.47, 61.68), (7.49, 61.69), (7.47, 61.70)
+LONELY = (7.37, 61.68)          # a path that joins nothing, a kilometre from the rest
 
 
 def extract(path, ways, points=()):
@@ -80,7 +81,8 @@ def network(loaded, tmp_path):
                 ({"route": "ferry", "name": "Testferja"}, [C, D]),
                 ({"highway": "path"}, [D, E]),
                 ({"highway": "path", "name": "Rundt breen"}, [D, F, E]),
-                ({"natural": "glacier", "name": "Testbreen"}, ice)]
+                ({"natural": "glacier", "name": "Testbreen"}, ice),
+                ({"highway": "path", "name": "Ensom sti"}, [LONELY, (LONELY[0] - 0.002, LONELY[1] + 0.001)])]
         huts = [((C[0] - 0.002, C[1] + 0.001), {"tourism": "alpine_hut", "name": "Testhytta", "operator": "DNT Oslo og Omegn"}),
                 (tuple(mid), {"tourism": "wilderness_hut", "name": "Midtbu"})]
         pbf = extract(tmp_path / "test-latest.osm", ways, huts)
@@ -104,7 +106,7 @@ def test_the_ways_are_cut_where_they_meet_and_what_may_not_be_walked_is_left_out
     assert "motorway" not in kinds and kinds["ferry"] == 1 and kinds["tertiary"] == 1
     # No path closed on foot: two paths between A and B, each one stretch, from the same node to the same node.
     paths = conn.execute("SELECT name, source, target, trail, dnt FROM walk.edge WHERE kind = 'path' AND name IS NOT NULL "
-                         "AND name <> 'Rundt breen' ORDER BY name").fetchall()
+                         "AND name NOT IN ('Rundt breen', 'Ensom sti') ORDER BY name").fetchall()
     assert [(n, t, d) for n, _, _, t, d in paths] == [("Langs ruta", True, True), ("Snarveien", False, False)]
     assert {paths[0][1], paths[0][2]} == {paths[1][1], paths[1][2]}
     # bre18 has nothing mapped along it: its own line is put in, and DNT looks after it.
@@ -144,8 +146,10 @@ def test_dnts_routes_are_preferred_as_much_as_asked(network, conn):
 
 def test_a_ferry_a_glacier_and_a_point_off_the_way(network, conn):
     a = network["a"]
-    with pytest.raises(NotFound, match="no way on foot was found"):
-        planner.plan(conn, [a, E], planner.Options(ice=True, ferries=False))
+    # Without the ferry, E cannot be reached on foot: the leg is drawn straight, and says why.
+    cut = planner.plan(conn, [a, E], planner.Options(ice=True, ferries=False))
+    assert [s["class"] for s in cut["steps"]] == ["off"] and "no way on foot was found" in cut["legs"][0]["unfound"]
+    assert cut["legs"][0]["metres"] == cut["legs"][0]["crow_m"] and not cut["legs"][0]["straight"]
     told = planner.plan(conn, [a, C, E], planner.Options(ice=True))
     classes = [s["class"] for s in told["steps"]]
     assert "ferry" in classes and "road" in classes and told["steps"][-1]["ice"]
@@ -161,8 +165,22 @@ def test_a_ferry_a_glacier_and_a_point_off_the_way(network, conn):
     for wrong in ([a], [a] * 13):
         with pytest.raises(Invalid):
             planner.plan(conn, wrong)
-    with pytest.raises(NotFound, match="no path or road within 3 km"):
-        planner.plan(conn, [a, (10.0, 60.0)])
+    far = planner.plan(conn, [a, (10.0, 60.0)])
+    assert "no path or road within 10 km" in far["legs"][0]["unfound"] and far["steps"][0]["class"] == "off"
+    with pytest.raises(Invalid, match="for each leg"):
+        planner.plan(conn, [a, network["b"]], straight=[True, False])
+
+
+def test_a_leg_is_drawn_straight_where_the_person_says_so(network, conn):
+    """Where nothing is mapped: a sketch over the ground, between the two points as clicked."""
+    a, b = network["a"], network["b"]
+    told = planner.plan(conn, [a, b, C], straight=[True, False])
+    assert [s["class"] for s in told["steps"]][:1] == ["off"] and told["steps"][0]["says"] == "Straight, with no path (a sketch)"
+    assert told["steps"][0].get("via") == 1 and told["coords"][0] == list(a) and told["coords"][1] == list(b)
+    first, second = told["legs"]
+    assert first["straight"] and first["unfound"] is None and first["metres"] == first["crow_m"]
+    assert not second["straight"] and second["metres"] >= second["crow_m"] and not second["roundabout"]
+    assert told["coords"][second["at"][0]] == list(b) and second["at"][1] == len(told["coords"]) - 1
 
 
 class Heights:
@@ -196,6 +214,10 @@ def test_the_climb_the_time_and_days_that_end_at_huts(network, conn):
     assert got["days"][0]["hut"]["kind"] == "wilderness_hut"
     assert sum(d["metres"] for d in got["days"]) == pytest.approx(got["walked_m"], abs=2)
     assert len(got["profile"]["z"]) == len(got["profile"]["at_m"]) > 100
+    # The same with no path: half as slow again on the flat, and said.
+    rough = planner.heights(conn, [{**p, "rough": True} for p in parts], hours=3, http=service.client())
+    assert rough["rough_m"] == got["walked_m"] and got["rough_m"] == 0 and rough["up_m"] == got["up_m"]
+    assert rough["minutes"] - got["minutes"] == pytest.approx(0.5 * got["walked_m"] / 1000 / height.KM_PER_HOUR * 60, abs=2)
 
 
 def test_the_planner_is_a_feature_of_its_own(network, monkeypatch):
@@ -220,6 +242,92 @@ def test_the_planner_is_a_feature_of_its_own(network, monkeypatch):
             assert said["heights"]["minutes"] > 0 and planner.CREDITS["height"] in said["credits"]
             assert client.post(f"{V1}/planner/plan", json={"points": [network["a"]]}).status_code == 422
             assert client.post(f"{V1}/planner/plan", json={**ask, "prefer": 2}).status_code == 422
-            assert client.post(f"{V1}/planner/plan", json={"points": [network["a"], [10.0, 60.0]]}).status_code == 404
+            nowhere = client.post(f"{V1}/planner/plan", json={"points": [network["a"], [10.0, 60.0]]}).json()
+            assert nowhere["legs"][0]["unfound"] and nowhere["steps"][0]["class"] == "off"
+            assert client.post(f"{V1}/planner/plan", json={**ask, "straight": [True]}).json()["steps"][0]["class"] == "off"
         finally:
             owner.execute("DELETE FROM access.feature WHERE key = 'planner'")
+
+
+def tile(z_of):
+    """A made-up tile of the height model, as Pillow writes it: 2000 by 2000 heights, row 0 at the north."""
+    import numpy as np
+    from PIL import Image
+
+    rows, cols = np.mgrid[0:terrain.SIDE, 0:terrain.SIDE]
+    return Image.fromarray(z_of(rows, cols).astype("float32"), mode="F")
+
+
+def test_the_height_model_is_read_between_its_four_nearest_heights(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(terrain, "TILES", ["6801"])
+    terrain._kept.clear()
+    assert terrain.code_of(150_000, 6_850_000) == "6801" and terrain.code_of(-50_000, 6_450_000) == "64m1"
+    assert terrain.corner("64m1") == (-100_000, 6_400_000) and not terrain.ready()
+    terrain.folder().mkdir(parents=True)
+    tile(lambda r, c: 1000 + c - 2 * r).save(terrain.folder() / "6801.tif")
+    assert terrain.ready()
+    # The middle of the cell in row 10, column 20; half way to the next column; a point in no tile.
+    x, y = 100_000 + 20 * 50 + 25, 6_900_000 - 10 * 50 - 25
+    assert terrain.heights([(x, y), (x + 25, y), (x, y - 25), (5e5, 7.5e6)]) == [
+        pytest.approx(1000), pytest.approx(1000.5), pytest.approx(999), None]
+    terrain._kept.clear()
+
+
+def test_the_height_model_is_fetched_tile_by_tile_and_kept(tmp_path, monkeypatch):
+    import io
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(terrain, "TILES", ["6801", "64m1"])
+    monkeypatch.setattr(terrain.time, "sleep", lambda s: None)
+    body = io.BytesIO()
+    tile(lambda r, c: r * 0 + 500).save(body, format="TIFF")
+    asked = []
+
+    def wcs(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["bbox"])
+        if request.url.params["bbox"].startswith("-100000"):
+            return httpx.Response(200, text="<ServiceExceptionReport/>", headers={"content-type": "application/vnd.ogc.se_xml"})
+        return httpx.Response(200, content=body.getvalue(), headers={"content-type": "image/tiff"})
+
+    client = HTTP_CLIENT(transport=httpx.MockTransport(wcs))
+    with pytest.raises(terrain.Unavailable, match="did not give tile 64m1"):
+        terrain.fetch(client=client)
+    assert asked[0] == "100000,6800000,200000,6900000" and (terrain.folder() / "6801.tif").is_file()
+    monkeypatch.setattr(terrain, "TILES", ["6801"])
+    assert terrain.fetch(client=client)["fetched"] == 0              # what is here is not fetched again
+    terrain._kept.clear()
+    assert terrain.heights([(150_000, 6_850_000)]) == [pytest.approx(500)]
+    terrain._kept.clear()
+
+
+def test_the_heights_of_a_walk_are_read_from_the_height_model_when_it_is_here(network, conn, tmp_path, monkeypatch):
+    code = terrain.code_of(*conn.execute("SELECT ST_X(p), ST_Y(p) FROM ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) p",
+                                         network["a"]).fetchone())
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(terrain, "TILES", [code])
+    terrain._kept.clear()
+    terrain.folder().mkdir(parents=True)
+    tile(lambda r, c: 2000 - r).save(terrain.folder() / f"{code}.tif")        # rising 1 m for every 50 m north
+    told = planner.plan(conn, [network["a"], network["b"]], planner.Options(prefer=1))
+    parts = [{"coords": told["coords"][s["at"][0]:s["at"][1] + 1]} for s in told["steps"]]
+    got = planner.heights(conn, parts)
+    assert got["credits"] == [terrain.CREDIT] and got["every_m"] == planner.STEP_M
+    north = conn.execute("SELECT max(ST_Y(p)) - min(ST_Y(p)) FROM unnest(%s::float8[], %s::float8[]) u(x, y), "
+                         "LATERAL ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 4326), 25833) p",
+                         ([c[0] for c in told["coords"]], [c[1] for c in told["coords"]])).fetchone()[0]
+    assert got["highest_m"] - got["lowest_m"] == pytest.approx(north / 50, abs=1.5)
+    terrain._kept.clear()
+
+
+def test_a_point_by_a_path_that_joins_nothing_is_joined_to_the_network(network, conn, monkeypatch):
+    """The nearest path to the point is on a piece of its own: the leg begins on the great piece instead."""
+    pieces = dict(conn.execute("SELECT name, piece_nodes FROM walk.edge WHERE name IN ('Ensom sti', 'Langs ruta')").fetchall())
+    assert pieces["Ensom sti"] == 2 and pieces["Langs ruta"] > 10
+    monkeypatch.setattr(planner, "GREAT", 10)
+    told = planner.plan(conn, [LONELY, network["b"]], planner.Options(prefer=1))
+    assert told["legs"][0]["unfound"] is None and told["steps"][0]["class"] == "off" and told["off"][0]["off_m"] > 400
+    assert "Ensom sti" not in [s["name"] for s in told["steps"]]
+    # Both ends on the lonely path: it is walked.
+    on = planner.plan(conn, [LONELY, (LONELY[0] - 0.002, LONELY[1] + 0.001)])
+    assert [s["name"] for s in on["steps"]] == ["Ensom sti"]

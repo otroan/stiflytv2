@@ -3,13 +3,20 @@
 // days that end at huts. The tab is only there for one who has the feature; the server refuses the rest.
 // What a stretch is, is told by its colour: on the map, and in the list of what the way adds up to, which is the legend.
 const PLAN_CLASSES = { dnt: ["DNT's routes", "#c8161d"], marked: ["Other marked routes", "#e8741c"], path: ["Paths", "#8a5a2b"],
-                       road: ["Roads", "#5f6b73"], ferry: ["Ferries", "#1f6fc5"], off: ["No path or road", "#1f2a30"] };
+                       road: ["Roads", "#5f6b73"], ferry: ["Ferries", "#1f6fc5"], off: ["No path, straight", "#1f2a30"] };
 const PLAN_KEY = "stiflyt2.plan";
 // The points in order, the name of each that was found by its name (null for one clicked), and whether a lone
-// point is where the walk ends (it was given as "To" before anything was given as "From").
-const planAsk = Object.assign({ points: [], names: [], lone: null, prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
+// point is where the walk ends (it was given as "To" before anything was given as "From"); and for each leg between
+// two points, whether it is drawn straight over the ground, with no path.
+const planAsk = Object.assign({ points: [], names: [], lone: null, straight: [], prefer: 0.6, ferries: true, ice: false, alpine: false, hours: 7 },
   (() => { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || {}; } catch { return {}; } })());
 if (planAsk.names.length !== planAsk.points.length) planAsk.names = planAsk.points.map(() => null);
+function legsFit() {         // one for each leg, whatever was done to the points
+  const S = planAsk.straight, n = Math.max(0, planAsk.points.length - 1);
+  while (S.length < n) S.push(false);
+  S.length = n;
+}
+legsFit();
 let plan = null, planProblem = null, planBusy = false, planHeights = null, heightsProblem = null, heightsBusy = false;
 let planAsked = 0, planMarkers = [], planDay = null;
 const hasPlanner = () => (me.features || []).includes("planner");
@@ -22,32 +29,35 @@ function keepAsk() { localStorage.setItem(PLAN_KEY, JSON.stringify(planAsk)); }
 function planAt(at) {
   if (planAsk.points.length >= 12) { planProblem = "A walk goes through 12 points at the most."; render(); return; }
   const p = [Number(at.lng.toFixed(6)), Number(at.lat.toFixed(6))];
-  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.lone = null; }      // where it begins
-  else { planAsk.points.push(p); planAsk.names.push(null); }
+  if (planAsk.lone === "end") { planAsk.points.unshift(p); planAsk.names.unshift(null); planAsk.straight.unshift(false); planAsk.lone = null; }      // where it begins
+  else { planAsk.points.push(p); planAsk.names.push(null); planAsk.straight.push(false); }
   replan();
 }
 // A place found by its name, as where the walk begins or where it ends.
 function planFrom(p, name) {
   const P = planAsk.points, N = planAsk.names;
-  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.lone = null; }
+  if (!P.length || planAsk.lone === "end") { P.unshift(p); N.unshift(name); planAsk.straight.unshift(false); planAsk.lone = null; }
   else { P[0] = p; N[0] = name; }
   replan();
 }
 function planTo(p, name) {
   const P = planAsk.points, N = planAsk.names;
   if (!P.length) { P.push(p); N.push(name); planAsk.lone = "end"; }
-  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); }
+  else if (P.length === 1 && planAsk.lone !== "end") { P.push(p); N.push(name); planAsk.straight.push(false); }
   else { P[P.length - 1] = p; N[N.length - 1] = name; }
   replan();
 }
 function planRemove(i) {
   const P = planAsk.points;
   if (P.length === 1) { planStartAgain(); return; }
+  const S = planAsk.straight;
+  if (i === 0) S.shift(); else if (i === P.length - 1) S.pop(); else S.splice(i - 1, 2, S[i - 1] && S[i]);    // two legs become one
   P.splice(i, 1); planAsk.names.splice(i, 1);
   if (P.length === 1 && i === 0) planAsk.lone = "end";        // what is left is where it ends
   replan();
 }
-function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.lone = null; replan(); }
+function planStartAgain() { planAsk.points.length = 0; planAsk.names.length = 0; planAsk.straight.length = 0; planAsk.lone = null; replan(); }
+function planStraight(leg, straight) { planAsk.straight[leg] = straight; replan(); }
 // What is typed in the From and To fields, and what was found for it.
 const planSeek = { from: { text: null, found: [] }, to: { text: null, found: [] } };
 const typeOf = t => (t || "").replace(/([A-ZÆØÅ])/g, " $1").toLowerCase();
@@ -84,6 +94,7 @@ function placeField(which, label, point, name, coords) {
   return field;
 }
 function replan() {
+  legsFit();
   keepAsk();
   plan = planHeights = null; planProblem = heightsProblem = null; planDay = null;
   if (planAsk.points.length < 2) { render(); return; }
@@ -95,7 +106,7 @@ async function askPlan() {
   const asked = ++planAsked;
   planBusy = true; render();
   try {
-    const got = await send("POST", "planner/plan", { points: planAsk.points, prefer: planAsk.prefer, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
+    const got = await send("POST", "planner/plan", { points: planAsk.points, straight: planAsk.straight, prefer: planAsk.prefer, ferries: planAsk.ferries, ice: planAsk.ice, alpine: planAsk.alpine });
     if (asked !== planAsked) return;
     plan = got;
   } catch (err) { if (asked === planAsked) planProblem = err.message; }
@@ -106,7 +117,7 @@ async function askPlan() {
 async function askHeights(asked) {
   heightsBusy = true; render();
   try {
-    const parts = plan.steps.map(s => ({ coords: plan.coords.slice(s.at[0], s.at[1] + 1), ferry: s.class === "ferry" }));
+    const parts = plan.steps.map(s => ({ coords: plan.coords.slice(s.at[0], s.at[1] + 1), ferry: s.class === "ferry", rough: s.class === "off", ice: s.ice }));
     const got = await send("POST", "planner/heights", { parts, hours: planAsk.hours });
     if (asked !== planAsked) return;
     planHeights = got;
@@ -153,7 +164,7 @@ function profileOf(H) {
   const add = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); svg.append(e); return e; };
   add("polygon", { points: `${X(0)},${Ht - pad} ${pts} ${X(far)},${Ht - pad}`, fill: "#e9e4dc" });
   add("polyline", { points: pts, fill: "none", stroke: "#5f6b73", "stroke-width": 1.5 });
-  for (const d of H.days.slice(0, -1)) add("line", { x1: X(d.at_m), x2: X(d.at_m), y1: pad, y2: Ht - pad, stroke: "#c8161d", "stroke-dasharray": "3 3" });
+  if (H.days.length <= 30) for (const d of H.days.slice(0, -1)) add("line", { x1: X(d.at_m), x2: X(d.at_m), y1: pad, y2: Ht - pad, stroke: "#c8161d", "stroke-dasharray": "3 3" });
   add("text", { x: pad + 2, y: 12, "font-size": 10, fill: "#5f6b73" }).textContent = `${Math.round(hi)} m`;
   add("text", { x: pad + 2, y: Ht - 6, "font-size": 10, fill: "#5f6b73" }).textContent = `${Math.round(lo)} m`;
   return svg;
@@ -188,13 +199,24 @@ function renderPlanner() {
     const T = plan.total, H = planHeights;
     told.push(el("h2", { class: "next" }, `${km(T.metres / 1000)}` + (H ? `, ${H.days.length} ${H.days.length === 1 ? "day" : "days"}` : "")),
       el("div", { class: "sub" }, H ? `${hoursAndMinutes(H.minutes)} of walking by Naismith's rule, with no rests; ${H.up_m.toLocaleString("en")} m up and ${H.down_m.toLocaleString("en")} m down, `
-          + `from ${H.lowest_m} to ${H.highest_m} m above the sea.` + (H.ferries.length ? ` Ferries besides: about ${hoursAndMinutes(H.ferries.reduce((t, f) => t + f.minutes, 0))} on board.` : "")
+          + `from ${H.lowest_m} to ${H.highest_m} m above the sea.` + (H.rough_m >= 100 ? ` ${km(H.rough_m / 1000)} of it with no path, timed half as slow again.` : "")
+          + (H.ferries.length ? ` Ferries besides: about ${hoursAndMinutes(H.ferries.reduce((t, f) => t + f.minutes, 0))} on board.` : "")
         : heightsBusy ? "Asking Kartverket how high it goes…" : heightsProblem ? `The heights could not be had: ${heightsProblem}` : ""),
       H ? profileOf(H) : "",
       // A few metres from a click to the nearest way are said below, not as a kind of their own.
       el("ul", { class: "plan-by" }, ...Object.entries(PLAN_CLASSES).filter(([k]) => T.by[k] >= (k === "off" ? 100 : 1)).map(([k, [says, colour]]) =>
         el("li", {}, el("span", { class: "plan-swatch", style: `background:${colour}` }), `${says}: ${km(T.by[k] / 1000)}`))),
-      ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from the nearest path or road: that bit is drawn straight.`)));
+      ...plan.off.map(o => el("div", { class: "sub" }, `${letter(o.point)} is ${o.off_m.toLocaleString("en")} m from the nearest path or road: that bit is drawn straight.`)),
+      // Each leg: along paths, or straight over the ground where nothing is mapped. One with no way found is drawn
+      // straight and says why; one that goes far round says so, for it to be drawn straight if that is better.
+      el("ol", { class: "plan-legs" }, ...plan.legs.map(l => el("li", { class: l.unfound ? "unfound" : l.roundabout ? "roundabout" : "" },
+        el("div", { class: "grow" },
+          el("div", {}, `${letter(l.from)} → ${letter(l.to)}: ${km(l.metres / 1000)} `, el("span", { class: "sub" },
+            l.straight ? "straight, with no path" : l.unfound ? "drawn straight" : "along paths and roads")),
+          l.unfound ? el("div", { class: "sub" }, `No way on foot was found: ${l.unfound}. It is drawn straight over whatever lies there: add points to go round, or allow ferries or glaciers.`) : "",
+          l.roundabout ? el("div", { class: "sub" }, `${km(l.metres / 1000)} for ${km(l.crow_m / 1000)} as the crow flies: if the ground allows, it may be better straight.`) : ""),
+        el("button", { class: "link", type: "button", onclick: () => planStraight(l.from, !l.straight) },
+          l.straight ? "Along paths" : l.unfound ? "Keep it straight" : "Straight instead")))));
     if (H && H.days.length > 1) told.push(el("ol", { class: "trip-days" }, ...H.days.map(d => el("li", { class: planDay === d.day ? "hit current" : "hit" },
       el("span", { class: "swatch", style: "background:#1f2a30" }, String(d.day)),
       el("div", { class: "grow" },
@@ -217,7 +239,7 @@ function renderPlanner() {
       : "Search for where the walk begins and ends, anywhere in Norway, or click the map. Click again to go on further; drag a point to move it."),
     ends,
     P.length ? el("div", { class: "actions" },
-      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); replan(); } }, "The other way") : "",
+      P.length > 1 ? el("button", { class: "btn", onclick: () => { P.reverse(); planAsk.names.reverse(); planAsk.straight.reverse(); replan(); } }, "The other way") : "",
       el("button", { class: "btn", onclick: planStartAgain }, "Start again")) : "",
     form, ...told);
   if (typing) { const field = panel.querySelector(`[data-plan-field="${typing}"]`); if (field) { field.focus(); field.setSelectionRange(caret, caret); } }

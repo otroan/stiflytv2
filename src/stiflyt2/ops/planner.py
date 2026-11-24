@@ -17,19 +17,26 @@ The search is pgRouting's A*, over the stretches in a box round each leg; a
 box too narrow to find a way in is widened. Where a point is clicked off the
 network, the way begins at the nearest stretch, and says how far off it was.
 
+Where nothing is mapped, a leg may be drawn straight over the ground, as the
+person says: a sketch, which knows nothing of the terrain but its heights,
+and is timed as half as slow again as a path. A leg no way on foot is found
+for is drawn so too, and says so; a leg much longer than the crow flies says
+that, so that the person may draw it straight instead.
+
 Heights, the time it takes and the days it is cut into are worked out
-afterwards (`heights`), as they mean asking Kartverket's height service
-about the whole line.
+afterwards (`heights`), from the height model kept here (`terrain`), every
+50 m, also across the country.
 """
 from __future__ import annotations
 
+import bisect
 import itertools
 import json
 import math
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import features, height
+from stiflyt2 import features, height, terrain
 from stiflyt2.domain.places import Invalid, NotFound
 
 features.feature("planner", "plan a walk from anywhere to anywhere in Norway",
@@ -42,14 +49,14 @@ KIND = {"path": 1.0, "footway": 1.0, "track": 1.0, "bridleway": 1.0, "steps": 1.
         "service": 1.3, "unclassified": 1.3, "road": 1.3, "tertiary": 1.6, "tertiary_link": 1.6,
         "secondary": 2.0, "secondary_link": 2.0, "primary": 2.5, "primary_link": 2.5,
         "trunk": 3.5, "trunk_link": 3.5}
-FERRY = 1.0                 # a metre on a ferry counts as much as one walked: it is taken to cross, not to travel
+FERRY = 3.0                 # a metre on a ferry counts three walked: it is taken to cross a fjord, not to travel
 FERRY_WAIT_M = 5000         # and getting on one as much as this far walked
 FERRY_MOST_M = 30_000       # a longer crossing is a voyage (Hurtigruten, to Denmark), not a way to walk on
 DNT_LESS = 0.5              # at the most a route of DNT's counts this much less than its length
 MARKED_LESS = 0.3           # and another marked route this much
 PREFER = 0.6                # how much DNT's routes are preferred when nothing is said
 ALPINE = ("demanding_alpine_hiking", "difficult_alpine_hiking")
-SNAP_M = 3000               # a point clicked further than this from any way has none near it
+SNAP_M = 10_000             # a point clicked further than this from any way has none near it: the leg is drawn straight
 OFF_M = 5                   # nearer than this to a way is on it
 MOST_POINTS = 12
 FERRY_KMH = 20              # how fast a ferry goes, for the time a plan takes
@@ -66,6 +73,10 @@ STEP_M = 50                 # heights are asked for this often along the way
 MOST_HEIGHTS = 4000         # and no more often than this many points for the whole way
 DAY_OVER = 60               # a day may run this many minutes over to end at a hut
 SLOW_S = 60                 # a search may take this long: across the country it is a big one
+ROUGH = 1.5                 # with no path, the flat takes this much longer than on a path
+ROUNDABOUT, ROUNDABOUT_M = 2.5, 5000    # a leg this many times as long as the crow flies, and this much more, is said
+PROFILE_POINTS = 1500       # the profile is drawn with no more points than this
+GREAT = 1000                # a piece of the network with as many junctions as this is joined to more than itself
 
 
 class Options:
@@ -121,8 +132,9 @@ def _class(e: dict) -> str:
     return "path" if e["kind"] in PATHS or e["kind"] == "link" else "road"
 
 
-def _snap(conn, lon: float, lat: float, o: Options) -> dict:
-    """The stretch nearest to a point that may be walked, and where on it the point is."""
+def _snap(conn, lon: float, lat: float, o: Options, great: bool = False) -> dict:
+    """The stretch nearest to a point that may be walked, and where on it the point is; with `great`, the nearest
+    in a great piece of the network, not one of the small pieces that join nothing."""
     with conn.cursor(row_factory=dict_row) as cur:
         found = cur.execute(f"""
             SELECT e.id, e.source, e.target, e.length_m, {o.cost()} / greatest(e.length_m, 0.01) AS per_m,
@@ -133,9 +145,9 @@ def _snap(conn, lon: float, lat: float, o: Options) -> dict:
                    ST_AsGeoJSON(ST_Transform(ST_LineSubstring(e.geom, ST_LineLocatePoint(e.geom, p), 1), 4326), 6)::json
                        -> 'coordinates' AS after,
                    ST_AsGeoJSON(ST_Transform(ST_ClosestPoint(e.geom, p), 4326), 6)::json -> 'coordinates' AS at,
-                   e.kind, e.dnt, e.trail, e.ice, e.name, e.origin
+                   e.kind, e.dnt, e.trail, e.ice, e.name, e.origin, e.piece, coalesce(e.piece_nodes, 0) AS piece_nodes
             FROM walk.edge e, (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS p) q
-            WHERE {o.allowed()} AND e.kind <> 'ferry'
+            WHERE {o.allowed()} AND e.kind <> 'ferry' {f"AND e.piece_nodes >= {GREAT}" if great else ""}
             ORDER BY e.geom <-> p LIMIT 1""", (lon, lat)).fetchone()
     if found is None or found["off_m"] > SNAP_M:
         raise NotFound(f"no path or road within {SNAP_M / 1000:.0f} km of {lat:.5f} N {lon:.5f} E")
@@ -225,24 +237,54 @@ def _metres(coords: list) -> float:
     return out
 
 
-def plan(conn, points: list, o: Options | None = None) -> dict:
-    """A way on foot through the points, in order: the line, told in steps, and what it adds up to."""
+def plan(conn, points: list, o: Options | None = None, straight: list[bool] | None = None) -> dict:
+    """A way on foot through the points, in order: the line, told in steps, and what it adds up to.
+
+    A leg between two points goes along paths and roads, or straight over the ground where `straight` says so
+    (one for each leg): a sketch, where nothing is mapped. A leg no way on foot is found for is drawn straight
+    too, and says why (`legs`).
+    """
     o = o or Options()
     if not 2 <= len(points) <= MOST_POINTS:
         raise Invalid(f"a way goes through 2 to {MOST_POINTS} points")
+    straight = list(straight) if straight is not None else [False] * (len(points) - 1)
+    if len(straight) != len(points) - 1:
+        raise Invalid("say for each leg between two points, and only for them, whether it is drawn straight")
     if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM walk.built)").fetchone()[0]:
         raise NotFound("the planner's network has not been built yet (`stiflyt2 planner build`)")
     conn.execute(f"SET LOCAL statement_timeout = '{SLOW_S}s'")         # a long way is a big search
-    snapped = [_snap(conn, lon, lat, o) for lon, lat in points]
+    snapped: dict[tuple[int, bool], dict | str] = {}
     coords: list = []
     steps: list[dict] = []
-    off: list[dict] = []
+    off: dict[int, int] = {}
     origins: set[str] = set()
+    walked = [0.0]
+
+    def snap(i: int, great: bool = False) -> dict | str:
+        """The stretch nearest to a point, or why there is none."""
+        if (i, great) not in snapped:
+            try:
+                snapped[i, great] = _snap(conn, *points[i], o, great)
+            except NotFound as e:
+                snapped[i, great] = str(e)
+        return snapped[i, great]
+
+    def ends(n: int) -> tuple:
+        """Where a leg begins and ends on the network: on the nearest stretches, unless one of them is on a small
+        piece the other is not on (a path that joins nothing): then on the nearest of the great piece."""
+        a, b = snap(n), snap(n + 1)
+        if isinstance(a, dict) and isinstance(b, dict) and a["piece"] != b["piece"]:
+            if a["piece_nodes"] < GREAT and isinstance(snap(n, True), dict):
+                a = snap(n, True)
+            if b["piece_nodes"] < GREAT and isinstance(snap(n + 1, True), dict):
+                b = snap(n + 1, True)
+        return a, b
 
     def add(cls: str, name, ice: bool, line: list, metres: float) -> None:
         line = [c for k, c in enumerate(line) if k == 0 or c != line[k - 1]]      # a point where a stretch is cut is in both
         if len(line) < 2 or metres < 0.5:
             return
+        walked[0] += metres
         start = len(coords) - 1 if coords else 0
         coords.extend(line[1:] if coords else line)
         last = steps[-1] if steps else None
@@ -252,18 +294,36 @@ def plan(conn, points: list, o: Options | None = None) -> dict:
         else:
             steps.append({"class": cls, "name": name, "ice": ice, "metres": metres, "at": [start, len(coords) - 1]})
 
-    for n, (point, a, b) in enumerate(zip(points, snapped, snapped[1:], strict=False)):
-        if a["off_m"] > OFF_M:
-            add("off", None, False, [list(point), a["at"]], a["off_m"])
-            off.append({"point": n, "off_m": round(a["off_m"])})
-        for w in _leg(conn, a, b, o):
-            origins.add("turrutebasen" if w["origin"] in ("turrutebasen", "ours") else "osm")
-            add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
-        if b["off_m"] > OFF_M:
-            add("off", None, False, [b["at"], list(points[n + 1])], b["off_m"])
-            if n + 2 == len(points):
-                off.append({"point": n + 1, "off_m": round(b["off_m"])})
-        if n + 2 < len(points):
+    legs = []
+    for n in range(len(points) - 1):
+        p, q = [float(v) for v in points[n]], [float(v) for v in points[n + 1]]
+        begun, before, crow = len(coords) - 1 if coords else 0, walked[0], _metres([p, q])
+        why = way = None
+        if not straight[n]:
+            a, b = ends(n)
+            why = a if isinstance(a, str) else b if isinstance(b, str) else None
+            if why is None:
+                try:
+                    way = _leg(conn, a, b, o)
+                except NotFound as e:
+                    why = str(e)
+        if way is None:
+            add("off", None, False, [p, q], crow)
+        else:
+            if a["off_m"] > OFF_M:
+                add("off", None, False, [p, a["at"]], a["off_m"])
+                off[n] = round(a["off_m"])
+            for w in way:
+                origins.add("turrutebasen" if w["origin"] in ("turrutebasen", "ours") else "osm")
+                add(_class(w), w["name"] if w["kind"] != "link" else None, bool(w["ice"]), w["coords"], w["length_m"])
+            if b["off_m"] > OFF_M:
+                add("off", None, False, [b["at"], q], b["off_m"])
+                off[n + 1] = round(b["off_m"])
+        metres = walked[0] - before
+        legs.append({"from": n, "to": n + 1, "straight": straight[n], "unfound": why, "metres": round(metres),
+                     "crow_m": round(crow), "at": [begun, len(coords) - 1],
+                     "roundabout": way is not None and metres > ROUNDABOUT * crow and metres - crow > ROUNDABOUT_M})
+        if n + 2 < len(points) and steps:
             steps[-1]["via"] = n + 1                # a point passed on the way
     _named(conn, steps, coords)
     by = {}
@@ -271,11 +331,12 @@ def plan(conn, points: list, o: Options | None = None) -> dict:
         s["metres"] = round(s["metres"])
         by[s["class"]] = by.get(s["class"], 0) + s["metres"]
         s["says"] = _says(s)
-    walked = sum(m for c, m in by.items() if c != "ferry")
-    return {"coords": coords, "steps": steps,
-            "total": {"metres": round(sum(by.values())), "walked_m": walked, "by": by,
-                      "minutes": height.minutes(walked, 0), "ferry_minutes": round(by.get("ferry", 0) / FERRY_KMH * 0.06)},
-            "off": off, "credits": [CREDITS[k] for k in ("osm", "turrutebasen") if k in origins],
+    on_foot = sum(m for c, m in by.items() if c != "ferry")
+    return {"coords": coords, "steps": steps, "legs": legs,
+            "total": {"metres": round(sum(by.values())), "walked_m": on_foot, "by": by,
+                      "minutes": height.minutes(on_foot, 0), "ferry_minutes": round(by.get("ferry", 0) / FERRY_KMH * 0.06)},
+            "off": [{"point": i, "off_m": m} for i, m in sorted(off.items())],
+            "credits": [CREDITS[k] for k in ("osm", "turrutebasen") if k in origins],
             "options": {"prefer": o.prefer, "ferries": o.ferries, "ice": o.ice, "alpine": o.alpine}}
 
 
@@ -304,7 +365,7 @@ def _named(conn, steps: list[dict], coords: list) -> None:
 
 def _says(s: dict) -> str:
     what = {"dnt": "Along DNT's marked route", "marked": "Along a marked route", "path": "Path",
-            "road": "Road", "ferry": "Ferry", "off": "No path or road mapped"}[s["class"]]
+            "road": "Road", "ferry": "Ferry", "off": "Straight, with no path (a sketch)"}[s["class"]]
     if s.get("routes"):
         what += f" {s['routes']}"
     if s["name"] and (s["class"] in ("path", "road", "ferry") or not s.get("routes")):
@@ -317,17 +378,22 @@ def _says(s: dict) -> str:
 def heights(conn, parts: list[dict], hours: float = 7.0, http=None) -> dict:
     """How high the way goes, what it climbs, the time it takes, and days that end at huts.
 
-    `parts` are the way's steps in order, each {coords, ferry}: what is on a ferry is not walked.
+    `parts` are the way's steps in order, each {coords, ferry, rough, ice}: what is on a ferry is not walked,
+    what is rough has no path (and takes longer), what is on ice is said. The heights are read from the height
+    model kept here (`terrain`), every 50 m; until it has been fetched, or with `http`, Kartverket's height
+    service is asked, less often on a long way.
     """
-    lines = [p["coords"] for p in parts]
-    walked_m = sum(_metres(c) for p, c in zip(parts, lines, strict=True) if not p.get("ferry"))
-    step = max(STEP_M, walked_m / MOST_HEIGHTS)
+    local = http is None and terrain.ready()
+    walked_m = sum(_metres(p["coords"]) for p in parts if not p.get("ferry"))
+    step = STEP_M if local else max(STEP_M, walked_m / MOST_HEIGHTS)
     samples: list[tuple[float, float]] = []       # (east, north) of each point asked about
     at: list[float] = []                          # metres walked to it
+    rough: list[bool] = []                        # whether the way to it from the one before has no path
     ferry_at: list[tuple[float, float, float]] = []     # (metres walked before, metres on board, minutes)
-    so_far = 0.0
+    so_far = on_ice = 0.0
     with conn.cursor() as cur:
-        for p, coords in zip(parts, lines, strict=True):
+        for p in parts:
+            coords = p["coords"]
             if len(coords) < 2:
                 continue
             if p.get("ferry"):
@@ -345,35 +411,48 @@ def heights(conn, parts: list[dict], hours: float = 7.0, http=None) -> dict:
             # The first point, and then one each f of the way: as far along as that, on the ground.
             samples.append((x0, y0))
             at.append(so_far)
+            rough.append(False)
             for k, (x, y) in enumerate(pts, 1):
                 samples.append((x, y))
                 at.append(so_far + min(1.0, k * f) * ground_m)
+                rough.append(bool(p.get("rough")))
             so_far += ground_m
-    own = http is None
-    http = http or height.client()
-    try:
-        answers = height.ask(http, samples)
-    finally:
-        if own:
-            http.close()
-    z = [a[0] for a in answers]
+            on_ice += ground_m if p.get("ice") else 0.0
+    if local:
+        z = terrain.heights(samples)
+        credit = terrain.CREDIT
+    else:
+        own = http is None
+        http = http or height.client()
+        try:
+            z = [a[0] for a in height.ask(http, samples)]
+        finally:
+            if own:
+                http.close()
+        credit = CREDITS["height"]
     known = [h for h in z if h is not None]
     up, down = height.climb(known) if known else (0.0, 0.0)
     flat_pts = list(zip(at, [h if h is not None else (known[0] if known else 0) for h in z], strict=True))
     _, steep_down = height.steep(flat_pts) if len(flat_pts) > 1 else (0.0, 0.0)
-    # Minutes to each point, so that days can be cut: Naismith over each step, with what it climbs.
-    minutes = [0.0]
-    for (a0, z0), (a1, z1) in itertools.pairwise(flat_pts):
-        minutes.append(minutes[-1] + (a1 - a0) / 1000 / height.KM_PER_HOUR * 60 + max(0.0, z1 - z0) * height.MIN_PER_M_UP)
+    # Minutes to each point, so that days can be cut: Naismith over each step, with what it climbs, and slower
+    # where there is no path.
+    minutes, flat = [0.0], 0.0
+    for k in range(1, len(flat_pts)):
+        (a0, z0), (a1, z1) = flat_pts[k - 1], flat_pts[k]
+        going = (a1 - a0) / 1000 / height.KM_PER_HOUR * 60 * (ROUGH if rough[k] else 1.0)
+        flat += going
+        minutes.append(minutes[-1] + going + max(0.0, z1 - z0) * height.MIN_PER_M_UP)
     days = _days(conn, samples, at, minutes, hours)
-    ice = sum(1 for _, g, _ in answers if g == height.ICE)
-    return {"profile": {"at_m": [round(a) for a in at], "z": [None if h is None else round(h, 1) for h in z]},
+    shown = max(1, math.ceil(len(at) / PROFILE_POINTS))       # the profile as it is drawn: no more points than that
+    keep = list(range(0, len(at), shown)) + ([len(at) - 1] if at and (len(at) - 1) % shown else [])
+    return {"profile": {"at_m": [round(at[i]) for i in keep], "z": [None if z[i] is None else round(z[i], 1) for i in keep]},
             "up_m": round(up), "down_m": round(down), "highest_m": round(max(known)) if known else None,
-            "lowest_m": round(min(known)) if known else None, "on_ice_m": round(ice * step),
+            "lowest_m": round(min(known)) if known else None, "on_ice_m": round(on_ice),
             "walked_m": round(at[-1]) if at else 0,
-            "minutes": height.minutes(at[-1] if at else 0, up, steep_down),
+            "rough_m": round(sum(at[k] - at[k - 1] for k in range(1, len(at)) if rough[k])),
+            "minutes": round(flat + up * height.MIN_PER_M_UP + steep_down * height.MIN_PER_M_STEEP_DOWN),
             "ferries": [{"after_m": round(a), "metres": round(m), "minutes": round(t)} for a, m, t in ferry_at],
-            "days": days, "credits": [CREDITS["height"]]}
+            "days": days, "credits": [credit], "every_m": round(step)}
 
 
 def _days(conn, samples: list, at: list, minutes: list, hours: float) -> list[dict]:
@@ -391,8 +470,7 @@ def _days(conn, samples: list, at: list, minutes: list, hours: float) -> list[di
     total = at[-1]
     for h in huts:
         h["at_m"] = h["f"] * total
-        i = min(range(len(at)), key=lambda k: abs(at[k] - h["at_m"]))
-        h["minute"] = minutes[i]
+        h["minute"] = minutes[min(bisect.bisect_left(at, h["at_m"]), len(at) - 1)]
     days, begun, begun_m = [], 0.0, 0.0
     end = minutes[-1]
     while end - begun > hours * 60 + DAY_OVER:
@@ -404,7 +482,7 @@ def _days(conn, samples: list, at: list, minutes: list, hours: float) -> list[di
                          "minutes": round(hut["minute"] - begun), "metres": round(hut["at_m"] - begun_m)})
             begun, begun_m = hut["minute"], hut["at_m"]
         else:
-            i = next(k for k, m in enumerate(minutes) if m >= begun + hours * 60)
+            i = min(bisect.bisect_left(minutes, begun + hours * 60), len(minutes) - 1)
             days.append({"to": None, "hut": None, "at_m": round(at[i]), "minutes": round(minutes[i] - begun),
                          "metres": round(at[i] - begun_m)})
             begun, begun_m = minutes[i], at[i]

@@ -34,6 +34,8 @@ height_app = typer.Typer(help="How high the ground is along the routes, from Kar
 app.add_typer(height_app, name="height")
 planner_app = typer.Typer(help="The route planner's network: every way in Norway one may walk")
 app.add_typer(planner_app, name="planner")
+terrain_app = typer.Typer(help="How high the ground is anywhere in Norway, from Kartverket's height model at 50 m")
+app.add_typer(terrain_app, name="terrain")
 
 File = Annotated[Path | None, typer.Option(help="Use a local copy of the delivery")]
 
@@ -998,6 +1000,31 @@ def planner_build(
         made = datetime.fromtimestamp(extract.stat().st_mtime, UTC)
         counts = walknet.build(conn, extract, md5, made)
     typer.echo(json.dumps(counts))
+
+
+@terrain_app.callback(invoke_without_command=True)
+def terrain_state(ctx: typer.Context) -> None:
+    """How many of the height model's tiles are here."""
+    if ctx.invoked_subcommand:
+        return
+    from stiflyt2 import terrain
+
+    here = [p for p in terrain.folder().glob("*.tif") if p.stem in terrain.TILES] if terrain.folder().is_dir() else []
+    typer.echo(f"{len(here)} of {len(terrain.TILES)} tiles, {sum(p.stat().st_size for p in here) / 1e6:.0f} MB, in "
+               f"{terrain.folder()}" + ("" if terrain.ready() else ". `stiflyt2 terrain fetch` fetches the rest."))
+
+
+@terrain_app.command("fetch")
+def terrain_fetch(again: Annotated[bool, typer.Option("--again", help="Also the tiles that are here")] = False) -> None:
+    """Fetch the national height model at 50 m, in tiles of 100 km, from Kartverket (some 750 MB, a quarter of an
+    hour). Only the tiles not here yet; can be stopped and run again."""
+    from stiflyt2 import terrain
+
+    try:
+        typer.echo(json.dumps(terrain.fetch(again, said=typer.echo)))
+    except terrain.Unavailable as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

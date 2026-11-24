@@ -242,6 +242,15 @@ HUTS = f"""
     WHERE tourism IN ('alpine_hut', 'wilderness_hut')
     ORDER BY osm_id"""
 
+# Which piece of the network each stretch is in: pgRouting's connected components, by the junction it starts at.
+PIECES = """
+    CREATE UNLOGGED TABLE walk.piece_load AS
+        SELECT node, component FROM pgr_connectedComponents('SELECT id, source, target, 1::float8 AS cost FROM walk.edge_next');
+    CREATE INDEX ON walk.piece_load (node);
+    UPDATE walk.edge_next e SET piece = c.component, piece_nodes = s.n
+    FROM walk.piece_load c JOIN (SELECT component, count(*)::int AS n FROM walk.piece_load GROUP BY 1) s USING (component)
+    WHERE c.node = e.source"""
+
 AREAS = Path(__file__).with_name("osmconf-areas.ini")
 HUT = "tourism IN ('alpine_hut', 'wilderness_hut')"
 
@@ -313,7 +322,7 @@ def build(conn, pbf: Path, md5: str, made_at=None) -> dict:
     return finish(conn, pbf, md5, made_at, began)
 
 
-WORK = ("area_load", "marked_load", "bare_load", "junction_load", "ice_load")
+WORK = ("area_load", "marked_load", "bare_load", "junction_load", "ice_load", "piece_load")
 
 
 def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) -> dict:
@@ -348,6 +357,8 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     conn.execute(ICE)
     conn.execute(HUTS)
     said("glaciers and huts")
+    conn.execute(PIECES)
+    said("the pieces of the network")
 
     counts = conn.execute("""
         SELECT jsonb_build_object(
@@ -358,7 +369,9 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
             'links', count(*) FILTER (WHERE origin = 'link'),
             'ice_km', round(sum(length_m) FILTER (WHERE ice) / 1000),
             'ferry_km', round(sum(length_m) FILTER (WHERE kind = 'ferry') / 1000),
-            'huts', (SELECT count(*) FROM walk.hut_next))
+            'huts', (SELECT count(*) FROM walk.hut_next),
+            'pieces', (SELECT count(DISTINCT component) FROM walk.piece_load),
+            'in_the_greatest', (SELECT max(piece_nodes) FROM walk.edge_next))
         FROM walk.edge_next""").fetchone()[0]
     conn.execute("ALTER TABLE walk.edge_next ADD PRIMARY KEY (id)")
     conn.execute("ALTER TABLE walk.hut_next ADD PRIMARY KEY (osm_id)")

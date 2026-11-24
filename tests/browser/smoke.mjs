@@ -215,6 +215,14 @@ if (await js(`(me.features || []).includes("planner")`)) {
   check("chosen, it is where the walk ends, by its name, and the way is found anew", await until(`planAsk.names[planAsk.names.length - 1] === "Sprongdalshytta" && planAsk.points.length === 2
     && document.querySelector('[data-plan-field="to"]').value === "Sprongdalshytta" && !planBusy && (Boolean(plan) || Boolean(planProblem))`, 60), `${await text("#panel h2.next")} ${await text("#panel .error")}`);
   check("the heights are asked for: the climb and the time, or why not", await until(`!heightsBusy && (Boolean(planHeights) && /of walking by Naismith/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
+  // A leg straight over the ground, where nothing is mapped: a sketch, dashed, and timed as such; and back again.
+  await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Straight instead")`);
+  check("a leg can be drawn straight, with no path: dashed, and said so", await until(`planAsk.straight[0] === true && Boolean(plan) && plan.legs[0].straight
+    && plan.steps.every(s => s.class === "off") && map.getSource("plan").serialize().data.features.every(f => f.properties.dashed)
+    && /straight, with no path/.test(document.querySelector(".plan-legs").textContent)`, 30), await text(".plan-legs"));
+  check("and timed as ground with no path", await until(`!heightsBusy && (Boolean(planHeights) && planHeights.rough_m > 0 && /with no path, timed half as slow again/.test(document.getElementById("panel").textContent) || Boolean(heightsProblem))`, 60), await text("#panel .sub"));
+  await clickOn(`[...document.querySelectorAll(".plan-legs button")].find(b => b.textContent === "Along paths")`);
+  check("and back along paths", await until(`planAsk.straight[0] === false && Boolean(plan) && !plan.legs[0].straight && plan.steps.some(s => s.class !== "off")`, 30), await text(".plan-legs"));
   check("the address says the planner is open, so that it can be linked to", (await js("location.search")).includes("view=planner"));
   await clickOn(`[...document.querySelectorAll("#panel .actions .btn")].find(b => b.textContent === "Start again")`);
   check("it can be started again", await until(`planAsk.points.length === 0 && !plan && planMarkers.length === 0`, 10));
