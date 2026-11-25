@@ -297,6 +297,18 @@ if (await js(`(me.features || []).includes("planner")`)) {
   await clickOn(`[...document.querySelectorAll(".plan-field button")].find(b => /Take point B away/.test(b.getAttribute("aria-label") || ""))`);
   check("taken away, it goes with the hidden points that held the way about it", await until(`planAsk.points.length === 2 && !planAsk.hidden.some(Boolean) && Boolean(plan) && !planBusy && plan.legs.length === 1`, 30),
     await js("JSON.stringify(planAsk.hidden)"));
+  // A small drag, near the line: only the part about it is found anew, held on either side by hidden points.
+  await until(`!planBusy && !heightsBusy && !planStale`, 60);
+  const nudge = await onMap(`(() => { const l = plan.legs[0]; return plan.coords[Math.floor((l.at[0] + l.at[1]) / 2)]; })()`);
+  const metresPerPixel = await js(`(() => { const c = map.getCenter(), p = map.project(c), q = map.unproject([p.x + 100, p.y]); return metresOf([[c.lng, c.lat], [q.lng, q.lat]]) / 100; })()`);
+  const px = Math.max(3, Math.min(12, Math.floor(150 / metresPerPixel)));
+  await mouse("mouseMoved", nudge.x, nudge.y); await mouse("mousePressed", nudge.x, nudge.y, 1);
+  for (let k = 1; k <= 4; k++) { await mouse("mouseMoved", nudge.x + px * k / 4, nudge.y + px * k / 4, 1); await sleep(30); }
+  await mouse("mouseReleased", nudge.x + px, nudge.y + px);
+  check("a small drag finds only the part about it anew", await until(`planVisible().length === 3 && Boolean(plan) && !planBusy && !planStale
+    && (planAsk.points.length === 3 || plan.legs.some(l => l.kept))`, 30), `${px} px of ${Math.round(metresPerPixel)} m ${await js("JSON.stringify(planAsk.hidden)")}`);
+  await clickOn(`[...document.querySelectorAll(".plan-field button")].find(b => /Take point B away/.test(b.getAttribute("aria-label") || ""))`);
+  await until(`planAsk.points.length === 2 && Boolean(plan) && !planBusy`, 30);
   // Across country, and up in the mountains: asked for in the form, and the way found anew with them.
   await clickOn(`[...document.querySelectorAll(".trip-ask label")].find(l => /Across country/.test(l.textContent)).querySelector("input")`);
   check("across country can be asked for", await until(`planAsk.across === true && Boolean(plan) && !planBusy && plan.options.across === true`, 60), await text("#panel .error"));

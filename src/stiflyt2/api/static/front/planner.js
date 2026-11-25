@@ -116,17 +116,42 @@ function keptOf(a, b, L) {
            crossings: (plan.crossings || []).filter(c => c.at >= a && c.at <= b).map(c => ({ ...c, at: c.at - a })),
            unfound: a === L.at[0] && b === L.at[1] ? L.unfound : null, roundabout: a === L.at[0] && b === L.at[1] && L.roundabout };
 }
-// The line taken hold of at index i of its line (on leg `leg`) and let go of at `at`. Only the part between the
-// junctions on either side of where it was taken is found anew, and no more than PLAN_AROUND_M to either side:
+// The line taken hold of at index i of its line (on leg `leg`) and let go of at `at`, near where it was. Only the part
+// between the junctions on either side of where it was taken is found anew, and no more than PLAN_AROUND_M to either side:
 // the way is held there by hidden points. Let go of near a path or road, the way goes along it; on open ground, or
 // where the line went across country, the point stays exactly where it was let go of and the way goes to it across
 // country, over the ground (straight, where the line was straight).
 const PLAN_AROUND_M = 1500;
 const PLAN_MODES = { paths: ["Along paths", "along paths and roads"], across: ["Across country", "across country, over the ground"],
                      straight: ["Straight", "straight, with no path"] };
+// How far a spot is from the piece of the line from k to k + 1, in metres.
+function offLine(at, k) {
+  const C = plan.coords, f = Math.cos(at.lat * Math.PI / 180) * 111320, g = 110540;
+  const ax = (C[k][0] - at.lng) * f, ay = (C[k][1] - at.lat) * g, bx = (C[k + 1][0] - at.lng) * f, by = (C[k + 1][1] - at.lat) * g;
+  const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(ax + t * dx, ay + t * dy);
+}
+// The line dragged far from where it was (to another route, another valley): the way between the two points of yours
+// about it is found anew through the spot, as one leg each side, and any hidden points between them go: held where
+// it was close by, the way would only go out to the spot and back.
+const PLAN_LOCAL_M = 400;
+async function planDragFar(leg, at) {
+  const V = planVisible(), a = Math.max(...V.filter(v => v <= leg)), b = Math.min(...V.filter(v => v > leg));
+  const p = [round6(at.lng), round6(at.lat)], were = planAsk.modes.slice(a, b);
+  const was = were.every(m => m === were[0]) ? were[0] : "paths";
+  let near = true;
+  try { const n = await get("planner/near", { lon: p[0], lat: p[1] }); near = n.off_m !== null && n.off_m <= PLAN_SNAP_M; } catch { /* along paths, then */ }
+  const mode = was === "paths" && !near ? "across" : was;
+  for (const k of ["points", "names", "snap", "hidden"]) planAsk[k].splice(a + 1, b - a - 1);
+  planAsk.points.splice(a + 1, 0, p); planAsk.names.splice(a + 1, 0, null);
+  planAsk.snap.splice(a + 1, 0, mode === "paths"); planAsk.hidden.splice(a + 1, 0, false);
+  planAsk.modes.splice(a, b - a, mode, mode);
+  replan();
+}
 async function planDragTo(i, leg, at) {
   const L = plan.legs[leg], J = plan.joints, C = plan.coords;
   if (!L) return;
+  if (offLine(at, Math.min(i, C.length - 2)) > PLAN_LOCAL_M) return planDragFar(leg, at);
   // How far along the leg each index is, to hold the way no further than PLAN_AROUND_M off.
   const along = [0];
   for (let k = L.at[0] + 1; k <= L.at[1]; k++) along.push(along[along.length - 1] + metresOf([C[k - 1], C[k]]));

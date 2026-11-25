@@ -1335,10 +1335,13 @@ whole country, nearest the map first). The way is drawn in the colours of what
 it goes along (DNT's routes, other marked routes, paths, roads, ferries), with
 what each adds up to.
 
-**Drag the line** to change one part of the way and leave the rest as it is:
-only the part between the junctions on either side of where it was taken hold
-of is found anew, and no more than 1.5 km to either side; the way is held where
-it was by hidden points there. Let go of within 150 m of a path or road, the
+**Drag the line** a little (up to 400 m from where it was) to change one part
+of the way and leave the rest as it is: only the part between the junctions on
+either side of where it was taken hold of is found anew, and no more than 1.5 km
+to either side; the way is held where it was by hidden points there. Dragged
+further (to another route, another valley), the whole way between the two
+points of yours about it is found anew through the spot, without hidden
+points: held close by, it would only go out to the spot and back. Let go of within 150 m of a path or road, the
 point goes onto it and is passed there; on open ground, or where the line went
 across country, it stays exactly where it was let go of, and the way goes to it
 and on across country, over the ground (straight, where the line was straight).
