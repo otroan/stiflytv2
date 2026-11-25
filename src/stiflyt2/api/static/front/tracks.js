@@ -9,6 +9,8 @@ let trackBusy = null;              // files being added: { done, of }
 let trackReport = null;            // what the last files added came to: { added, again, failed }
 let trackUndo = null;              // your latest decision in operations, which an undo would take back
 let trackRenaming = false;
+let trackCompared = null;          // what the area's checked tracks come to together
+let trackChecking = false;
 const hasTracks = () => (me.features || []).includes("tracks");
 const mayAddTracks = () => hasTracks() && (me.features || []).some(f => f === "routes" || f === "signs");
 const lasting = s => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`; };
@@ -36,9 +38,9 @@ async function loadTracks() {
   if (!hasTracks() || !area) { tracksAll = trackLines = tracksFor = null; return; }
   const asked = area;
   try {
-    const [list, drawn] = await Promise.all([get("tracks", { area: asked }), get("tracks.geojson", { area: asked })]);
+    const [list, drawn, together] = await Promise.all([get("tracks", { area: asked }), get("tracks.geojson", { area: asked }), get("tracks/compared", { area: asked })]);
     if (asked !== area) return;
-    tracksAll = list; trackLines = drawn; tracksFor = asked;
+    tracksAll = list; trackLines = drawn; tracksFor = asked; trackCompared = together;
   } catch { /* the map is drawn without them */ }
   if (mayAddTracks()) { try { trackUndo = (await get("tracks/undo")).last; } catch { trackUndo = null; } }
   render();
@@ -107,9 +109,14 @@ function renderTracks() {
         el("button", { class: "btn main", type: "button", onclick: () => pick.click() }, "Choose GPX files")),
       el("div", { class: "sub" }, "Each is kept as it came, and cleaned: jumps and stops taken out. The same file is never kept twice. Up to 30 MB each."));
   }
+  const T = trackCompared, pct = r => `${Math.abs(Math.round((r - 1) * 100))} % ${r >= 1 ? "longer" : "shorter"}`;
   panel.replaceChildren(back,
     el("h2", { class: "area" }, `Tracks in ${area}`),
     el("div", { class: "sub", style: "margin-bottom:8px" }, "GPX tracks walked on the routes here, to compare a route with. Only those who are signed in see them."),
+    T && T.tracks ? el("div", { class: "said compared", style: "margin:6px 0 10px" },
+      `Over ${T.tracks === 1 ? "the one track" : `${T.tracks} tracks`} checked (${km(T.metres / 1000)}), walking took ${lasting(T.walking_min * 60)}: ${pct(T.against_rule)} than Naismith's rule says (${lasting(T.naismith_min * 60)})`
+        + (T.tracks > 1 ? `, from ${pct(T.against_rule_least)} to ${pct(T.against_rule_most)} track by track` : "") + ". "
+        + (T.device_against_model ? `The devices climbed ${Math.round(T.device_up_m).toLocaleString("en")} m where the height model says ${Math.round(T.model_up_m).toLocaleString("en")} m along the same ways.` : "")) : "",
     drop,
     R ? el("div", { class: R.failed.length ? "error" : "said", role: "status", style: "margin:8px 0" },
       [R.added && `${many(R.added, "track", "tracks")} added`, R.again && `${many(R.again, "was", "were")} here already`, R.failed.length && `${R.failed.length} not added`].filter(Boolean).join("; ") + ".",
@@ -146,6 +153,7 @@ function renderTrack() {
         el("div", { class: "sub" }, "By the device's own heights")) : []),
       ...fact("Added", `${whenSaid(t.made_at)} by ${t.made_by}`)),
     el("div", { class: "sub" }, cleaned.length ? `Cleaned: ${cleaned.join("; ")}. The track as it came is the dashed line.` : "Nothing was taken out in cleaning."),
+    ...checkedSaid(t, can),
     cuts.length ? el("h2", { class: "next" }, "Cut out by hand") : "",
     cuts.length ? el("ul", {}, ...cuts.map(x => el("li", { class: "cut" },
       el("span", { class: "grow" }, `From ${kmOf(x.from_m)} to ${kmOf(x.to_m)} km of the track as it came (${km((x.to_m - x.from_m) / 1000)})`),
@@ -157,6 +165,25 @@ function renderTrack() {
       el("a", { class: "btn", href: new URL(`tracks/${t.id}/gpx?cleaned=true`, API).href }, "Cleaned, as GPX"),
       can ? el("button", { class: "btn quiet", title: "Undo brings it back", onclick: () => { if (confirm("Take this track away? Undo brings it back.")) trackChange(async () => { await send("DELETE", `tracks/${t.id}`); visit({ track: null }); }); } }, "Take it away") : ""));
   if (trackRenaming) panel.querySelector("form.rename input").focus();
+}
+// The track against Kartverket's height model along the same way, and the time Naismith's rule gives against the
+// time walking: checked at night, or at once by a button.
+function checkedSaid(t, can) {
+  if (!t.has_time || !t.has_height) return [];
+  const c = t.checked, head = el("h2", { class: "next" }, "Against Naismith's rule and the height model");
+  if (!c) return [head, el("div", { class: "sub" }, trackChecking ? "Asking Kartverket's height service along the track…" : "Not checked yet: tracks are checked at night."),
+    can && !trackChecking ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: async () => {
+      trackChecking = true; render();
+      await trackChange(() => send("POST", `tracks/${t.id}/check`));
+      trackChecking = false; render();
+    } }, "Check it now")) : ""];
+  const r = c.against_rule, fact = (name, ...said) => [el("dt", {}, name), el("dd", {}, ...said)];
+  return [head, el("dl", { class: "facts" },
+    ...fact("Naismith", `${lasting(c.naismith_min * 60)} for this way; walking took ${lasting(c.walking_min * 60)}`,
+      r ? el("div", { class: "sub" }, `${Math.abs(Math.round((r - 1) * 100))} % ${r >= 1 ? "longer" : "shorter"} than the rule, which counts ${km(c.metres / 1000)}, ${c.model_up_m.toLocaleString("en")} m up by the height model${c.steep_down_m ? ` and ${c.steep_down_m} m down steeply` : ""}`) : ""),
+    ...fact("Climb", `${c.device_up_m.toLocaleString("en")} m by the device, ${c.model_up_m.toLocaleString("en")} m by the height model`,
+      el("div", { class: "sub" }, `The device's heights lie ${Math.abs(c.device_above_m)} m ${c.device_above_m >= 0 ? "above" : "below"} the model's on the whole, give or take ${c.device_spread_m} m`)),
+    ...(c.ice_points ? fact("Ice", `${c.ice_points * 10} m or so over snow and ice that lies all year`) : []))];
 }
 // A part to cut out: where it begins, then where it ends, clicked on the track.
 function cutTrack() {

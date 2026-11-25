@@ -22,6 +22,8 @@ if [ $status -gt 1 ]; then
 fi
 # The route planner's network, when a new extract of OpenStreetMap has come (weekly): some 11 minutes.
 .venv/bin/stiflyt2 planner build --if-new || .venv/bin/stiflyt2 feedback failed "the planner's network" "stiflyt2 planner build did not finish: see var/log/refresh.log"
+# GPX tracks added during the day, checked against Kartverket's height model and Naismith's rule.
+.venv/bin/stiflyt2 tracks check || .venv/bin/stiflyt2 feedback failed "the tracks' check" "stiflyt2 tracks check did not finish: see var/log/refresh.log"
 # Stretches that are new or were moved during the day get their heights. Asked once per line.
 .venv/bin/stiflyt2 height fill || .venv/bin/stiflyt2 feedback failed "nightly heights" "stiflyt2 height fill did not get every stretch: see var/log/refresh.log"
 exit $status

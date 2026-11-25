@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from stiflyt2 import height
 from stiflyt2.api import auth, mcp
 from stiflyt2.api.owned_routes import Seen
 from stiflyt2.api.places import Editor
@@ -76,6 +77,13 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return undo.kept_as_made(conn, author, lambda: tracks.add(conn, author, data, name=name, area=area,
                                                                       filename=filename))
 
+    @app.get(f"{V1}/compared")
+    def compared(_: May, area: Area = None) -> dict:
+        """What the checked tracks of an area (or all) come to: time walking against Naismith's rule, and the
+        device's climb against the height model's."""
+        with read.connection() as conn:
+            return tracks.compared(conn, area)
+
     @app.get(f"{V1}/undo")
     def would_undo(author: May) -> dict:
         """What an undo would take back: your own latest decision in operations."""
@@ -103,6 +111,18 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                                 headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_quoted(name)}"})
             where, name = tracks.file(conn, track)
         return FileResponse(where, media_type="application/gpx+xml", filename=name)
+
+    @app.post(f"{V1}/{{track}}/check")
+    def check(track: Id, _: Adder) -> dict:
+        """Check a track against Kartverket's height model and Naismith's rule (asks the height service)."""
+        with read.connection() as conn:
+            try:
+                told = tracks.check(conn, track)
+            except height.Unavailable as e:
+                raise HTTPException(502, str(e)) from e
+        with write.connection() as conn:
+            tracks.keep_check(conn, track, told)
+            return tracks.one(conn, track, drawn=True)
 
     @app.patch(f"{V1}/{{track}}")
     def change(track: Id, body: Change, author: Adder) -> dict:
@@ -160,12 +180,14 @@ class Tracks(mcp.Args):
 def route_tracks(c: mcp.Call, a: Tracks) -> dict:
     """The GPX tracks of an area, or those that come within 100 m of a route: who added each and when it was walked,
     its length, its time walking (without stops of two minutes or more) and in all, and the climb by the device's
-    heights, as cleaned (jumps and stops taken out, parts cut out by hand left out: `cleaned` says how many). Tracks
+    heights, as cleaned (jumps and stops taken out, parts cut out by hand left out: `cleaned` says how many). Where a
+    track has been checked (`checked`), the climb by Kartverket's height model along the same way and the time
+    Naismith's rule gives against the time walking; `compared` is that over the area's checked tracks. Tracks
     from v1 are lines alone, with no times or heights. A track is somebody's way that day: not the route, and not
     proof that a path is there."""
     rid = mcp._route_id(c.conn, a.route) if a.route else None
     told = tracks.listing(c.conn, a.area, rid)
-    return {"tracks": told, "count": len(told)}
+    return {"tracks": told, "count": len(told), "compared": tracks.compared(c.conn, a.area)}
 
 
 class LayOnTrack(mcp.Args):

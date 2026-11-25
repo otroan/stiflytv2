@@ -514,7 +514,7 @@ _SHOWN = """
     SELECT t.id::text, t.name, t.area, t.origin, t.made_at, t.made_by, t.updated_at, t.updated_by, t.cuts,
            r.has_time, r.has_height, r.points AS points_came, r.ext IS NOT NULL AS has_file,
            l.length_m, l.parts, l.points, l.started_at, l.ended_at, l.total_s, l.moving_s, l.up_m, l.down_m, l.low_m, l.high_m,
-           l.cleaned
+           l.cleaned, l.checked
     FROM ops.track t JOIN ops.track_raw r ON r.id = t.raw_id LEFT JOIN ops.track_line l ON l.track_id = t.id AND l.key = t.line_key"""
 
 
@@ -763,6 +763,95 @@ def piece(conn, track: str, a: tuple[float, float], b: tuple[float, float], near
     if sa > sb:
         line = line[::-1]
     return {"coords": [tuple(a), *map(tuple, line.tolist()), tuple(b)], "ends_m": [round(da), round(db)], "on_track_m": length}
+
+
+# --- against the height model and Naismith's rule ------------------------------------------------------------------
+
+def _resampled(p: np.ndarray, step: float) -> np.ndarray:
+    """A part every `step` metres along it (and its last point): x, y, the device's height, time, metres along."""
+    along = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p[:, :2], axis=0).T))]
+    at = np.r_[np.arange(0.0, along[-1], step), along[-1]]
+    return np.column_stack([np.interp(at, along, p[:, k]) for k in range(4)] + [at])
+
+
+def check(conn, track: str, http=None) -> dict:
+    """A track cleaned against Kartverket's height model along the same way, every 10 m (as the routes are): the
+    climb by the device and by the model, how far apart their heights are, and the time Naismith's rule gives
+    (with Langmuir's addition for steep descents, as for the routes) against the time walking. Asks the height
+    service; writes nothing."""
+    from stiflyt2 import height
+
+    t = one(conn, track)
+    if not (t["has_time"] and t["has_height"]):
+        raise Invalid("only a track with the device's times and heights can be checked against them")
+    got = conn.execute("""SELECT l.key, ST_AsEWKB(l.geom) FROM ops.track t JOIN ops.track_line l ON l.track_id = t.id
+                          AND l.key = t.line_key WHERE t.id = %s::uuid""", (track,)).fetchone()
+    if not got or not got[1]:
+        raise Invalid("nothing is left of the track to check")
+    own = http is None
+    http = http or height.client()
+    try:
+        up = down = dev_up = dev_down = steep_down = metres = 0.0
+        diffs, ice = [], 0
+        for p in _parts_of(got[1]):
+            r = _resampled(p, height.STEP_M)
+            said = height.ask(http, [(round(x, 2), round(y, 2)) for x, y in r[:, :2]])
+            model = np.array([math.nan if z is None else z for z, _, _ in said])
+            ice += sum(1 for _, ground, _ in said if ground == height.ICE)
+            known = ~np.isnan(model)
+            if known.sum() < 2:
+                continue
+            u, d = height.climb(model[known].tolist())
+            du, dd = height.climb(r[known, 2].tolist())
+            _, sd = height.steep(list(zip(r[known, 4].tolist(), model[known].tolist(), strict=True)))
+            up, down, dev_up, dev_down, steep_down = up + u, down + d, dev_up + du, dev_down + dd, steep_down + sd
+            metres += float(r[-1, 4])
+            diffs.append(r[known, 2] - model[known])
+    finally:
+        if own:
+            http.close()
+    if not diffs:
+        raise Invalid("the height model has no heights along this track")
+    gap = np.concatenate(diffs)
+    rule = height.minutes(metres, up, steep_down)
+    walking = (t["moving_s"] or 0) / 60
+    return {"key": got[0], "metres": round(metres), "model_up_m": round(up), "model_down_m": round(down),
+            "steep_down_m": round(steep_down), "device_up_m": round(dev_up), "device_down_m": round(dev_down),
+            "device_above_m": round(float(np.median(gap)), 1), "device_spread_m": round(float(np.std(gap)), 1),
+            "naismith_min": rule, "walking_min": round(walking), "all_min": round((t["total_s"] or 0) / 60),
+            "against_rule": round(walking / rule, 3) if rule else None, "ice_points": ice,
+            "checked_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")}
+
+
+def keep_check(conn, track: str, told: dict) -> None:
+    """Keep what a check found, with the line it was made of: a line cut anew is checked anew."""
+    conn.execute("UPDATE ops.track_line SET checked = %s WHERE track_id = %s::uuid AND key = %s",
+                 (Jsonb({k: v for k, v in told.items() if k != "key"}), track, told["key"]))
+
+
+def unchecked(conn) -> list[str]:
+    """The tracks with times and heights whose cleaned line has not been checked."""
+    return [r[0] for r in conn.execute("""
+        SELECT t.id::text FROM ops.track t JOIN ops.track_raw r ON r.id = t.raw_id
+        JOIN ops.track_line l ON l.track_id = t.id AND l.key = t.line_key
+        WHERE r.has_time AND r.has_height AND l.geom IS NOT NULL AND l.checked IS NULL ORDER BY t.made_at""").fetchall()]
+
+
+def compared(conn, area: str | None = None) -> dict:
+    """What the checked tracks of an area (or all of them) come to together: the time walking against Naismith's
+    rule, and the device's climb against the height model's, each over all of them and track by track."""
+    rows = [t for t in (listing(conn, area) if area else listing(conn)) if t.get("checked")]
+    if not rows:
+        return {"tracks": 0}
+    c = [t["checked"] for t in rows]
+    rule, walking = sum(x["naismith_min"] for x in c), sum(x["walking_min"] for x in c)
+    model, device = sum(x["model_up_m"] for x in c), sum(x["device_up_m"] for x in c)
+    ratios = sorted(x["against_rule"] for x in c if x["against_rule"])
+    return {"tracks": len(rows), "naismith_min": rule, "walking_min": walking,
+            "against_rule": round(walking / rule, 3) if rule else None,
+            "against_rule_least": ratios[0] if ratios else None, "against_rule_most": ratios[-1] if ratios else None,
+            "model_up_m": model, "device_up_m": device, "device_against_model": round(device / model, 3) if model else None,
+            "metres": sum(x["metres"] for x in c)}
 
 
 # --- files -----------------------------------------------------------------------------------------------------------

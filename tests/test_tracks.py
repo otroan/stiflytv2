@@ -396,3 +396,63 @@ def test_laying_a_stretch_on_a_track_needs_the_editor_and_the_feature(conn, monk
             assert done.status_code == 200 and done.json()["undo_rev"] >= 1
         finally:
             owner.execute("DELETE FROM access.feature WHERE key = 'tracks'")
+
+
+# --- against the height model and Naismith's rule ---------------------------------------------------------------------
+
+def test_a_track_is_checked_against_the_height_model_and_naismiths_rule(conn, monkeypatch):
+    from stiflyt2 import height
+
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    x0 = middle(conn, route)[0]
+    w = walk(1800)                                  # 2,249 m east in half an hour, a metre up every 20 m
+    t = act(conn, lambda: tracks.add(conn, AUTHOR, gpx([lonlat(conn, route, w)])))
+    assert tracks.unchecked(conn) == [t["id"]]
+    asked = []
+
+    def model(http, points, tries=4):               # the ground three metres above where the device said it was
+        asked.append(len(points))
+        return [(800 + (x - x0) / 20 + 3, "ÅpentOmråde", "dtm1") for x, y in points]
+
+    monkeypatch.setattr(height, "ask", model)
+    told = tracks.check(conn, t["id"], http=object())
+    assert sum(asked) == pytest.approx(2249 / height.STEP_M + 2, abs=2)          # every 10 m along it
+    assert told["model_up_m"] == pytest.approx(112, abs=2) and told["device_up_m"] == pytest.approx(112, abs=2)
+    assert told["device_above_m"] == pytest.approx(-3, abs=0.1) and told["device_spread_m"] < 0.5
+    assert told["naismith_min"] == height.minutes(told["metres"], told["model_up_m"]) == pytest.approx(39, abs=1)
+    assert told["walking_min"] == 30 and told["against_rule"] == pytest.approx(30 / 39, abs=0.02)
+    act(conn, lambda: tracks.keep_check(conn, t["id"], told))
+    assert tracks.one(conn, t["id"])["checked"]["naismith_min"] == told["naismith_min"] and tracks.unchecked(conn) == []
+    together = tracks.compared(conn, "bre")
+    assert (together["tracks"], together["against_rule"]) == (1, told["against_rule"]) and tracks.compared(conn, "jot") == {"tracks": 0}
+    # Cut anew, the line is another, and is checked anew.
+    act(conn, lambda: tracks.cut(conn, AUTHOR, t["id"], lonlat(conn, route, w[100:101])[0, :2].tolist(), lonlat(conn, route, w[200:201])[0, :2].tolist()))
+    assert tracks.one(conn, t["id"])["checked"] is None and tracks.unchecked(conn) == [t["id"]]
+    # A line alone, with no times or heights, is not checked.
+    line = act(conn, lambda: tracks.add_line(conn, AUTHOR, f"LINESTRING({x0} 6850000, {x0 + 500} 6850000)", name="v1", area="bre", origin="v1:1"))
+    with pytest.raises(Invalid, match="times and heights"):
+        tracks.check(conn, line["id"], http=object())
+
+
+def test_a_track_is_checked_from_the_page_by_one_who_may_change_it(conn, monkeypatch):
+    from stiflyt2 import height
+
+    monkeypatch.setattr(settings, "editor", "Test Editor")
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    t = act(conn, lambda: tracks.add(conn, AUTHOR, gpx([lonlat(conn, route, walk(400))])))
+    monkeypatch.setattr(height, "ask", lambda http, points, tries=4: [(850.0, "ÅpentOmråde", "dtm1") for _ in points])
+    with psycopg.connect(dbname=TEST_DB, autocommit=True) as owner, TestClient(create_app()) as client:
+        owner.execute("SET ROLE stiflyt2_owner")
+        try:
+            access.set_state(owner, "tracks", "all", "test")
+            assert client.post(f"{V1}/tracks/{t['id']}/check", headers={**PAGE, "X-Stiflyt-As": "reader"}).status_code == 403
+            done = client.post(f"{V1}/tracks/{t['id']}/check", headers=PAGE)
+            assert done.status_code == 200 and done.json()["checked"]["model_up_m"] == 0 and done.json()["line"]
+            assert client.get(f"{V1}/tracks/compared", params={"area": "bre"}).json()["tracks"] == 1
+
+            def down(http, points, tries=4):
+                raise height.Unavailable("Kartverket's height service: answered 503")
+            monkeypatch.setattr(height, "ask", down)
+            assert client.post(f"{V1}/tracks/{t['id']}/check", headers=PAGE).status_code == 502
+        finally:
+            owner.execute("DELETE FROM access.feature WHERE key = 'tracks'")

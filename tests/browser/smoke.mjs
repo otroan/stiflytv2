@@ -522,6 +522,8 @@ if (await js(`hasTracks()`)) {
     check("opened, it says what it comes to and what cleaning took out, and is drawn on the map with the track as it came",
       await until(`Boolean(trackShown && trackShown.line) && /Length/.test(document.querySelector("#panel dl.facts").textContent) && /1 point that jumped away was taken out/.test(document.getElementById("panel").textContent)
         && map.querySourceFeatures("track-open").length > 0 && map.querySourceFeatures("track-came").length > 0 && location.search.includes("track=")`, 20), await text("#panel"));
+    check("with its times and heights, it offers to be checked against Naismith's rule and the height model",
+      /Against Naismith's rule and the height model/.test(await text("#panel")) && await js(`[...document.querySelectorAll("#panel button")].some(b => b.textContent === "Check it now")`));
     await until(`!map.isMoving()`, 10);
     await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Cut out a part")`);
     const ends = await js(`JSON.stringify((() => { const c = trackShown.line.coordinates[0]; return [c[Math.floor(c.length / 5)], c[Math.floor(c.length * 2 / 5)]]; })())`);

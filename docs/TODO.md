@@ -74,9 +74,11 @@ step is still started on their word; the details of each are further down.
    of its table. Decided the same day: a route may be laid on a track, a
    stretch chosen at a time: built the same day ("Lay it on a GPX
    track…" in the route editor). Left: part of a stretch (divide it first,
-   for now); the tracks near a route in its panel; checking the height model and Naismith's rule against the tracks
-   that have times and heights (time walking against the rule, the device's
-   climb against the model's), and v1's factor of 1.05 for distances.
+   for now); the tracks near a route in its panel; v1's factor of 1.05 for
+   distances (a track's length against the route's where it follows one).
+   The check against the height model and Naismith's rule is built (the
+   same day): what it says waits for tracks with times and heights, and
+   then for a decision on whether the rule needs a factor.
 4. **The route card**: a page to print with what a work party needs, from
    all of the above: map cut-outs, profile, open work, signs, heritage
    sites.

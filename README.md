@@ -1698,6 +1698,19 @@ the API: `GET /api/v1/owned/stretches/{id}/tracks` and
 `POST /api/v1/owned/stretches/{id}/track` with `track` and `dry_run`; an
 assistant has `lay_on_track`.
 
+A track with the device's times and heights is checked against
+Kartverket's height model (the same point service and the same 10 m as the
+routes' heights) and Naismith's rule, at night (`stiflyt2 tracks check`, in
+the nightly refresh) or at once ("Check it now"): the climb by the device and
+by the model along the same way, how far apart their heights lie, and the
+time the rule gives (with Langmuir's addition for steep descents, as for the
+routes) against the time walking. The Tracks lens says what the area's
+checked tracks come to together: how much longer or shorter than the rule
+walking took, over all of them and from the least to the most, and the
+devices' climb against the model's. That is what says whether the rule, as
+the routes use it, needs a factor (`GET /api/v1/tracks/compared?area=`,
+`POST /api/v1/tracks/{id}/check`).
+
 What came is kept as it came, once, by its digest: every point with its
 height and time, in `ops.track_raw`, and the file on the server's disk
 (`settings.tracks_dir`, `var/tracks/`). Cleaning (`ops/tracks.py`) moves no

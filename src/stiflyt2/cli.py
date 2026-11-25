@@ -1078,6 +1078,28 @@ def tracks_take_in(
     typer.echo(json.dumps(told))
 
 
+@tracks_app.command("check")
+def tracks_check() -> None:
+    """Check the tracks with times and heights that have not been checked against Kartverket's height model and
+    Naismith's rule (asks the height service, some seconds a track). Prints counts only."""
+    from stiflyt2 import height
+    from stiflyt2.domain.places import Invalid
+    from stiflyt2.ops import tracks
+
+    told = {"checked": 0, "not": 0}
+    with psycopg.connect(settings.api_dsn) as conn, height.client() as http:
+        for track in tracks.unchecked(conn):
+            try:
+                found = tracks.check(conn, track, http)
+                with conn.transaction():
+                    tracks.keep_check(conn, track, found)
+                told["checked"] += 1
+            except (Invalid, height.Unavailable) as e:
+                told["not"] += 1
+                typer.echo(f"{track}: {e}", err=True)
+    typer.echo(json.dumps(told))
+
+
 @tracks_app.command("clean-again")
 def tracks_clean_again(every: Annotated[bool, typer.Option("--every", help="All of them, not only those whose "
                                                                            "cleaned line is missing")] = False) -> None:
