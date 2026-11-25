@@ -1684,6 +1684,20 @@ drive home begins and ends; each part cut out is listed, with "Put it back".
 "Rename", the file as it came, the track cleaned as GPX, and "Take it away".
 Every change can be undone (Undo, or Ctrl+Z), as among the issues.
 
+In the route editor the area's tracks are pink lines under your routes.
+With "Fix the line itself", a stretch offers "Lay it on a GPX track…": the
+tracks that pass both its ends within 60 m, unbroken, each with the length
+the stretch would have and how far its ends lie from the track; pointing at
+one draws the line it gives, and a click lays the stretch on it. The line
+becomes the track's way between the ends (cleaned, its corners kept to a
+metre); the ends stay where they are, and where a track passes an end more
+than once (out and back) the way nearest the stretch's length now is taken.
+It is a change to the stretch like any other: every route on it follows,
+Undo takes it back, and the stretch says which track it was laid on. Over
+the API: `GET /api/v1/owned/stretches/{id}/tracks` and
+`POST /api/v1/owned/stretches/{id}/track` with `track` and `dry_run`; an
+assistant has `lay_on_track`.
+
 What came is kept as it came, once, by its digest: every point with its
 height and time, in `ops.track_raw`, and the file on the server's disk
 (`settings.tracks_dir`, `var/tracks/`). Cleaning (`ops/tracks.py`) moves no

@@ -315,3 +315,84 @@ def test_the_device_climb_counts_a_rise_once_it_comes_to_four_metres():
     assert tracks._climb(z) == (0.0, 0.0)
     up, down = tracks._climb(np.r_[np.linspace(800, 900, 50), np.linspace(900, 850, 30)])
     assert (math.isclose(up, 100, abs_tol=4), math.isclose(down, 50, abs_tol=4)) == (True, True)
+
+
+# --- a stretch laid on a track ----------------------------------------------------------------------------------------
+
+def stretch_of(conn, route):
+    """The first stretch of a route: its id, and its line every 2 m (EPSG:25833)."""
+    edge = conn.execute("SELECT edge_id::text FROM core.route_leg WHERE route_id = %s ORDER BY seq LIMIT 1", (route,)).fetchone()[0]
+    pts = conn.execute("""SELECT ST_X(p.geom), ST_Y(p.geom) FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id,
+                          ST_DumpPoints(ST_Segmentize(r.geom, 2)) p WHERE e.id = %s ORDER BY p.path""", (edge,)).fetchall()
+    return edge, np.array(pts)
+
+
+def as_gpx(conn, xy, t0=START, every=1.6):
+    got = conn.execute("""SELECT ST_X(p), ST_Y(p) FROM (SELECT n, ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 25833), 4326) AS p
+                          FROM unnest(%s::float8[], %s::float8[]) WITH ORDINALITY u(x, y, n)) q ORDER BY n""",
+                       (xy[:, 0].tolist(), xy[:, 1].tolist())).fetchall()
+    n = len(got)
+    return gpx([np.column_stack([np.array(got), np.full(n, 900.0), t0 + np.arange(n) * every])])
+
+
+def test_a_stretch_is_laid_on_a_track_between_its_ends_and_undo_takes_it_back(conn):
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    edge, line = stretch_of(conn, route)
+    beside = line + [0, 6]                                  # walked six metres north of the line, all the way
+    t = act(conn, lambda: tracks.add(conn, AUTHOR, as_gpx(conn, beside)))
+    was = conn.execute("SELECT r.rev_no, ST_AsText(r.geom) FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id WHERE e.id = %s", (edge,)).fetchone()
+    found = routes.tracks_along(conn, edge)
+    assert [f["track"]["id"] for f in found] == [t["id"]] and found[0]["ends_m"] == [6, 6]
+    assert found[0]["length_m"] == pytest.approx(found[0]["was_m"], abs=15)
+    # Dry, nothing changes.
+    dry = routes.on_track(conn, edge, "Test Editor", t["id"], dry_run=True)
+    assert dry["geometry"]["type"] == "LineString" and conn.execute(
+        "SELECT r.rev_no FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id WHERE e.id = %s", (edge,)).fetchone()[0] == was[0]
+    done = act(conn, lambda: routes.on_track(conn, edge, "Test Editor", t["id"], dry_run=False))
+    assert done["undo_rev"] == was[0] and done["track"]["name"] == "Rondane"
+    now = conn.execute("""SELECT ST_HausdorffDistance(r.geom, ST_SetSRID(ST_GeomFromText(%s), 25833)), ST_Distance(ST_StartPoint(r.geom), ST_StartPoint(ST_GeomFromText(%s, 25833))) < 0.01,
+                                 ST_Distance(ST_EndPoint(r.geom), ST_EndPoint(ST_GeomFromText(%s, 25833))) < 0.01
+                          FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id WHERE e.id = %s""", (was[1], was[1], was[1], edge)).fetchone()
+    assert now[0] == pytest.approx(6, abs=1) and now[1] and now[2]           # six metres over, the ends where they were
+    assert conn.execute("SELECT detail->>'name' FROM core.source_reference WHERE subject_id = %s AND source_key = 'track'", (edge,)).fetchone()[0] == "Rondane"
+    assert routes_undo.last(conn)["what"] == "a stretch laid on a GPX track"
+    act(conn, lambda: routes_undo.undo(conn, "Test Editor"))
+    assert conn.execute("SELECT ST_AsText(r.geom) FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id WHERE e.id = %s", (edge,)).fetchone()[0] == was[1]
+
+
+def test_out_and_back_the_way_nearest_the_stretch_is_taken_and_a_track_that_misses_an_end_is_refused(conn):
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    edge, line = stretch_of(conn, route)
+    on = (line[-1] - line[-2]) / np.hypot(*(line[-1] - line[-2]))
+    beyond = line[-1] + np.outer(np.arange(1, 151) * 2, on)              # 300 m on past the end, and back
+    there = np.vstack([line, beyond, beyond[::-1], line[::-1]]) + [0, 4]
+    t = act(conn, lambda: tracks.add(conn, AUTHOR, as_gpx(conn, there)))
+    dry = routes.on_track(conn, edge, "Test Editor", t["id"])
+    assert dry["length_m"] == pytest.approx(dry["was_m"], abs=15)
+    half = act(conn, lambda: tracks.add(conn, AUTHOR, as_gpx(conn, line[: len(line) // 2] + [0, 4], t0=START + 86400)))
+    with pytest.raises(Invalid, match="does not pass both ends"):
+        routes.on_track(conn, edge, "Test Editor", half["id"])
+    assert [f["track"]["id"] for f in routes.tracks_along(conn, edge)] == [t["id"]]
+
+
+def test_laying_a_stretch_on_a_track_needs_the_editor_and_the_feature(conn, monkeypatch):
+    monkeypatch.setattr(settings, "editor", "Test Editor")
+    route = act(conn, lambda: routes.make(conn, candidate(conn, "bre18"), AUTHOR))
+    edge, line = stretch_of(conn, route)
+    t = act(conn, lambda: tracks.add(conn, AUTHOR, as_gpx(conn, line + [0, 5])))
+    with psycopg.connect(dbname=TEST_DB, autocommit=True) as owner, TestClient(create_app()) as client:
+        owner.execute("SET ROLE stiflyt2_owner")
+        try:
+            assert client.get(f"{V1}/owned/stretches/{edge}/tracks").status_code == 403
+            access.set_state(owner, "tracks", "all", "test")
+            assert [x["track"]["id"] for x in client.get(f"{V1}/owned/stretches/{edge}/tracks").json()] == [t["id"]]
+            dry = client.post(f"{V1}/owned/stretches/{edge}/track", json={"track": t["id"], "dry_run": True}, headers=PAGE)
+            assert dry.status_code == 200 and "undo_rev" not in dry.json()
+            no = client.post(f"{V1}/owned/stretches/{edge}/track", json={"track": t["id"]}, headers={**PAGE, "X-Stiflyt-As": "operations"})
+            assert no.status_code == 403
+            said, refused = call(client, "lay_on_track", stretch=edge)
+            assert not refused and said["tracks"][0]["track"]["id"] == t["id"]
+            done = client.post(f"{V1}/owned/stretches/{edge}/track", json={"track": t["id"]}, headers=PAGE)
+            assert done.status_code == 200 and done.json()["undo_rev"] >= 1
+        finally:
+            owner.execute("DELETE FROM access.feature WHERE key = 'tracks'")

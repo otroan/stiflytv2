@@ -994,6 +994,81 @@ def snap(conn, edge_id: str, author: str) -> dict:
     return {**{k: traced[k] for k in ("geometry", "length_m", "was_m")}, "undo_rev": before["rev_no"]}
 
 
+TRACK_SIMPLE_M = 1.0    # a line laid on a track keeps its corners to a metre: a device logs a point a second
+
+
+def _stretch_ends(conn, edge_id: str) -> dict:
+    found = _rows(conn, """
+        SELECT r.kind, ST_X(a.geom) AS ax, ST_Y(a.geom) AS ay, ST_X(b.geom) AS bx, ST_Y(b.geom) AS by,
+               ST_Length(r.geom) AS planar, round(ST_Length(ST_Transform(r.geom, 4326)::geography))::int AS length_m
+        FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
+        JOIN core.node a ON a.id = r.a_node JOIN core.node b ON b.id = r.b_node
+        WHERE e.id = %(id)s AND e.status = 'active'""", {"id": edge_id})
+    if not found:
+        raise NotFound("no such stretch")
+    return found[0]
+
+
+def on_track(conn, edge_id: str, author: str, track: str, *, dry_run: bool = True) -> dict:
+    """Lay a stretch on a GPX track (the feature `tracks`): its line becomes the track's way between the stretch's two
+    ends, where the track passes both, unbroken. The ends stay where they are; the track is cleaned already (no
+    jumps, no stops), and its corners are kept to a metre. Where the track passes an end more than once (out and
+    back), the way nearest the stretch's length now is taken. The stretch is shared, so the new line shows on every
+    route that uses it; the earlier line remains as the old revision."""
+    from stiflyt2.ops import tracks
+
+    edge = _stretch_ends(conn, edge_id)
+    if edge["kind"] in ("water", "glacier"):
+        raise Invalid("a crossing is not laid on a track")
+    a, b = (edge["ax"], edge["ay"]), (edge["bx"], edge["by"])
+    got = tracks.piece(conn, track, a, b, edge["planar"])
+    if not got:
+        raise Invalid(f"the track does not pass both ends of this stretch, within {tracks.REACH_M} m and unbroken")
+    wkt = "LINESTRING(" + ",".join(f"{x:.2f} {y:.2f}" for x, y in got["coords"]) + ")"
+    wkt, geometry, length, planar = conn.execute(
+        """SELECT ST_AsText(g), ST_AsGeoJSON(ST_Transform(g, 4326), 6)::json,
+                  round(ST_Length(ST_Transform(g, 4326)::geography))::int, ST_Length(g)
+           FROM (SELECT ST_Simplify(ST_SetSRID(ST_GeomFromText(%s), 25833), %s) AS g) x""",
+        (wkt, TRACK_SIMPLE_M)).fetchone()
+    if planar > 3 * edge["planar"] + 500:
+        raise Invalid(f"the track's way between the two ends is {round(planar)} m, against {round(edge['planar'])} m "
+                      "now, so it is probably not the same way")
+    named = conn.execute("""SELECT t.name, l.started_at FROM ops.track t
+                            LEFT JOIN ops.track_line l ON l.track_id = t.id AND l.key = t.line_key WHERE t.id = %s::uuid""",
+                         (track,)).fetchone()
+    told = {"geometry": geometry, "length_m": length, "was_m": edge["length_m"], "ends_m": got["ends_m"],
+            "track": {"id": track, "name": named[0], "walked": named[1].date().isoformat() if named[1] else None}}
+    if dry_run:
+        return told
+    before = _revise(conn, edge_id, author, origin="edited", wkt=wkt)
+    conn.execute("""INSERT INTO core.source_reference (subject_type, subject_id, source_key, external_id, ref_type, detail)
+                    VALUES ('edge', %s, 'track', %s, 'traced', %s)""",
+                 (edge_id, track, json.dumps({"name": named[0], "walked": told["track"]["walked"]})))
+    _event(conn, author, "edge.laid_on_track", edge_id,
+           {"from_m": edge["length_m"], "to_m": length, "track": track, "name": named[0]}, subject="edge")
+    return {**told, "undo_rev": before["rev_no"]}
+
+
+def tracks_along(conn, edge_id: str) -> list[dict]:
+    """The GPX tracks that pass both ends of a stretch, each with the line the stretch would have laid on it: the
+    one nearest its length now first."""
+    from stiflyt2.ops import tracks
+
+    edge = _stretch_ends(conn, edge_id)
+    found = conn.execute("""
+        SELECT t.id::text FROM ops.track t JOIN ops.track_line l ON l.track_id = t.id AND l.key = t.line_key,
+               (SELECT ST_SetSRID(ST_MakePoint(%(ax)s, %(ay)s), 25833) AS a, ST_SetSRID(ST_MakePoint(%(bx)s, %(by)s), 25833) AS b) e
+        WHERE ST_DWithin(l.geom, e.a, %(reach)s) AND ST_DWithin(l.geom, e.b, %(reach)s)""",
+        {**edge, "reach": tracks.REACH_M}).fetchall()
+    out = []
+    for (track,) in found:
+        try:
+            out.append(on_track(conn, edge_id, "", track, dry_run=True))
+        except Invalid:
+            continue
+    return sorted(out, key=lambda t: abs(t["length_m"] - t["was_m"]))
+
+
 BESIDE_M = 25       # a mapped path or road this near a stretch runs beside it
 BESIDE_STEP_M = 10  # how often along a stretch it is compared with the mapped lines
 BESIDE_RUN = 12     # looks in a row on a mapped line before it counts as followed (120 m)

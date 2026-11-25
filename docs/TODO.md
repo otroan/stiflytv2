@@ -72,9 +72,9 @@ step is still started on their word; the details of each are further down.
    tracks"): kept as they came, cleaned (jumps, stops, gaps; parts cut out
    by hand), a lens on the front page, v1's tracks taken in from an export
    of its table. Decided the same day: a route may be laid on a track, a
-   stretch chosen at a time. Left, in this order: laying a chosen stretch
-   on a track in the route editor; the tracks in the editor and near a
-   route; checking the height model and Naismith's rule against the tracks
+   stretch chosen at a time: built the same day ("Lay it on a GPX
+   track…" in the route editor). Left: part of a stretch (divide it first,
+   for now); the tracks near a route in its panel; checking the height model and Naismith's rule against the tracks
    that have times and heights (time walking against the rule, the device's
    climb against the model's), and v1's factor of 1.05 for distances.
 4. **The route card**: a page to print with what a work party needs, from

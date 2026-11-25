@@ -682,6 +682,29 @@ if (own) {
   check("a stretch's popup says how long it is" + (await js("Boolean(EDITOR)") ? ", and offers to divide it there" : ""), await until(`/Stretch of .*\\d (m|km)/.test((document.querySelector(".maplibregl-popup") || {}).textContent || "") && (!EDITOR || [...document.querySelectorAll(".maplibregl-popup button")].some(b => b.textContent === "Divide it here"))`, 10), await text(".maplibregl-popup"));
   await js("closePopups()");
 }
+// A GPX track along a stretch of the open route (the feature `tracks`), added for the trial: in fixing, the stretch
+// offers to be laid on it, lists it, and pointing at it draws the line it would give. Nothing is laid.
+if (EDIT && await js(`myFeatures.includes("tracks") && Boolean(EDITOR) && Boolean(openRoute)`)) {
+  const along = await js(`(() => { const f = ownedLines.features.filter(f => f.properties.kind === "trail" && f.properties.routes.some(r => r.id === openRoute.id)).sort((a, b) => b.geometry.coordinates.length - a.geometry.coordinates.length)[0];
+    if (!f) return null; window.trialStretch = f.geometry.coordinates; const at = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: at, zoom: 14 }); return JSON.stringify(at); })()`);
+  if (along) {
+    editing = true;
+    const tid = await js(`(async () => { const c = trialStretch, t0 = Date.UTC(2025, 6, 1, 8); let t = t0, pts = [];
+      for (let i = 0; i < c.length; i++) { if (i) t += 1000 * metresOf([c[i - 1], c[i]]) / 1.3; pts.push('<trkpt lat="' + (c[i][1] + 0.000045).toFixed(7) + '" lon="' + c[i][0].toFixed(7) + '"><time>' + new Date(t).toISOString() + '</time></trkpt>'); }
+      const body = '<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Trial along</name><trkseg>' + pts.join("") + '</trkseg></trk></gpx><!-- ' + Date.now() + ' -->';
+      const r = await fetch(new URL("tracks", API), { method: "POST", headers: { ...THROUGH, "Content-Type": "application/gpx+xml" }, body }); return r.ok ? (await r.json()).id : "refused " + r.status; })()`);
+    check("a trial track along a stretch is added", /^[0-9a-f-]{36}$/.test(tid), tid);
+    await js(`(() => { setFixing(true); const a = trialStretch[Math.floor(trialStretch.length / 2)]; map.jumpTo({ center: a, zoom: 15 }); })()`);
+    await until(`map.loaded() && !map.isMoving()`, 15); await sleep(900);
+    await click(await onMap(along));
+    check("in fixing, a stretch offers to lay it on a GPX track", await until(`[...document.querySelectorAll(".maplibregl-popup button")].some(b => b.textContent === "Lay it on a GPX track…")`, 10), await text(".maplibregl-popup"));
+    await js(`[...document.querySelectorAll(".maplibregl-popup button")].find(b => b.textContent === "Lay it on a GPX track…").click()`);
+    check("which lists the track that passes both its ends, and draws the line it would give", await until(`/Trial along/.test((document.querySelector(".maplibregl-popup") || {}).textContent || "")
+      && map.querySourceFeatures("gpxpreview").length > 0`, 20), await text(".maplibregl-popup"));
+    await js(`(async () => { closePopups(); setFixing(false); await fetch(new URL("tracks/" + ${JSON.stringify(tid)}, API), { method: "DELETE", headers: THROUGH }); })()`);
+    editing = false;
+  }
+}
 // Choosing an area shows it on the map.
 // Both an area with routes of yours and one with none yet, where only the spots its routes end at say where it is.
 const yoursIn = a => `ownedLines.features.some(f => f.properties.codes.split(", ").some(c => c.toLowerCase().startsWith(${JSON.stringify(a)})))`;

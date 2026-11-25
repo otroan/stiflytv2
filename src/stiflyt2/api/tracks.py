@@ -13,6 +13,9 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from stiflyt2.api import auth, mcp
+from stiflyt2.api.owned_routes import Seen
+from stiflyt2.api.places import Editor
+from stiflyt2.domain import routes
 from stiflyt2.ops import tracks, undo
 
 V1 = "/api/v1/tracks"
@@ -38,6 +41,11 @@ class Change(BaseModel):
 
 class Undo(BaseModel):
     txid: int | None = None
+
+
+class OnTrack(BaseModel):
+    track: str = Field(max_length=40, description="The track to lay the stretch on")
+    dry_run: bool = False
 
 
 class Cut(BaseModel):
@@ -123,6 +131,20 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         return Response(status_code=204)
 
 
+    @app.get("/api/v1/owned/stretches/{edge_id}/tracks")
+    def along(edge_id: Annotated[str, Path(max_length=40)], _: May) -> list[dict]:
+        """The tracks that pass both ends of a stretch, each with the line the stretch would have laid on it."""
+        with read.connection() as conn:
+            return routes.tracks_along(conn, edge_id)
+
+    @app.post("/api/v1/owned/stretches/{edge_id}/track")
+    def lay(edge_id: Annotated[str, Path(max_length=40)], body: OnTrack, author: Editor, _: May, seen: Seen = None) -> dict:
+        """Lay a stretch on a track: its line becomes the track's way between its ends. Or preview that."""
+        with (read if body.dry_run else write).connection() as conn:
+            routes.as_seen(conn, edge_id, None if body.dry_run else seen)
+            return routes.on_track(conn, edge_id, author, body.track, dry_run=body.dry_run)
+
+
 def _quoted(name: str) -> str:
     from urllib.parse import quote
     return quote(name)
@@ -144,3 +166,25 @@ def route_tracks(c: mcp.Call, a: Tracks) -> dict:
     rid = mcp._route_id(c.conn, a.route) if a.route else None
     told = tracks.listing(c.conn, a.area, rid)
     return {"tracks": told, "count": len(told)}
+
+
+class LayOnTrack(mcp.Args):
+    stretch: mcp.Stretch
+    track: str | None = Field(None, max_length=40, description="The id of a track, from `route_tracks`. Left out: "
+                                                               "say which tracks pass both ends of the stretch")
+    dry_run: mcp.DryRun = True
+
+
+@mcp.tool("Lay a stretch on a GPX track", changes=True, feature="tracks")
+def lay_on_track(c: mcp.Call, a: LayOnTrack) -> dict:
+    """Lay a stretch on a GPX track that somebody walked: its line becomes the track's way between the stretch's two
+    ends (the track cleaned; the ends stay where they are). Without a track, the tracks that pass both ends within
+    60 m, each with the length the stretch would have. Dry, it says what it would do. A track is where somebody
+    walked that day, as their device logged it some metres off: say so, and lay a stretch on one only where the
+    person has said that is the way. Every route on the stretch moves with it."""
+    if not a.track:
+        found = routes.tracks_along(c.conn, a.stretch)
+        return {"tracks": [{k: t[k] for k in ("track", "length_m", "was_m", "ends_m")} for t in found]}
+    told = routes.on_track(c.conn, a.stretch, c.author, a.track, dry_run=a.dry_run)
+    told.pop("geometry")
+    return told

@@ -66,6 +66,7 @@ _WHAT = {
     "route.stretch_maintainers": "who maintains a stretch of {code} changed",
     "edge.bent": "a line pulled",
     "edge.snapped": "a stretch laid on a path or road",
+    "edge.laid_on_track": "a stretch laid on a GPX track",
     "route.laid_beside": "{code} laid on the paths and roads beside it",
     "edge.laid_beside": "a stretch laid on the path or road beside it",
     "edge.redrawn": "a stretch drawn by hand",

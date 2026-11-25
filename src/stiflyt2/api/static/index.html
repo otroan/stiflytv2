@@ -257,6 +257,8 @@ const map = new maplibregl.Map({
       draft: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       held: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       corners: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      gpx: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      gpxpreview: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
     },
     layers: [
       ...baseLayers(),
@@ -320,6 +322,9 @@ const map = new maplibregl.Map({
         layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12,
                   "text-offset": [0, 1.1], "text-anchor": "top", "text-max-width": 9, "text-optional": true },
         paint: { "text-color": "#12222c", "text-halo-color": "#ffffff", "text-halo-width": 1.6 } },
+      // GPX tracks walked here (the feature `tracks`): under your routes, to lay a stretch on.
+      { id: "gpx-tracks", type: "line", source: "gpx", layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#d81b60", "line-width": width(1.2, 2.4), "line-opacity": 0.6 } },
       // Your routes: solid where marked, dashed where not; crossings in their own colours.
       // A route that is discontinued and kept: there, and plainly not one to walk.
       { id: "yours-discontinued", type: "line", source: "ownedroutes", filter: ["==", ["get", "discontinued"], true],
@@ -339,6 +344,9 @@ const map = new maplibregl.Map({
       { id: "draft-line", type: "line", source: "draft", filter: ["==", ["geometry-type"], "LineString"],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": C.sign, "line-width": 3, "line-dasharray": [0.5, 1.5] } },
+      // A stretch as it would be laid on a GPX track, while the track is being chosen.
+      { id: "gpx-preview", type: "line", source: "gpxpreview", layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#d81b60", "line-width": 4, "line-dasharray": [1, 1.2] } },
       { id: "draft-points", type: "circle", source: "draft", filter: ["==", ["geometry-type"], "Point"],
         paint: { "circle-radius": 4, "circle-color": C.sign, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
       // What is yours: places, their access points and the connectors between them.
@@ -663,6 +671,8 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     areaGot = { area, got: [anchors, report] };
     areaSpots = { area: area.toLowerCase(), found: anchors };
     if (areaSelect.value !== area || seq !== areaSeq) return;
+    if (myFeatures.includes("tracks") && !quiet) get("tracks.geojson", { area: area.toLowerCase() })
+      .then(drawn => { if (areaSelect.value === area) whenStyled(() => map.getSource("gpx").setData(drawn)); }).catch(() => {});
     const reload = () => loadArea(false);
     const open = i => i.about === "network" ? showFinding(i) : i.about === "route" ? openOwnedRoute(i.id) : i.about === "place" ? openPlace(i.id) : selectRoute(i.id);
     const R = report.routes, L = report.length, N = report.network, items = report.items;
@@ -1585,6 +1595,8 @@ function renderPlace(place, problem) {
 }
 refreshEditing();
 const meAsked = get("auth/me");
+let myFeatures = [];
+meAsked.then(me => { myFeatures = me.features || []; }).catch(() => {});
 meAsked.then(me => {
   roleSwitch(me, document.querySelector("footer"));
   // With nothing else asked for, the editor opens with the first of your areas, as your profile says.
@@ -1624,6 +1636,7 @@ const ROUTE_EVENT = {
   "route.reviewed": () => "Said to be done",
   "route.reopened": () => "Not done after all",
   "route.laid_beside": p => `Laid on the mapped paths and roads beside it: ${p.stretches} stretch${p.stretches === 1 ? "" : "es"}, ${p.to_m} m from ${p.from_m} m`,
+  "edge.laid_on_track": p => `A stretch laid on the GPX track “${p.name}”: ${p.to_m} m from ${p.from_m} m`,
   "route.maintainers_changed": p => `Maintained by ${(p.to || []).join("; ") || "nobody stated"}` + (p.as ? `, as ${p.as}` : ""),
   "route.grading_changed": p => `Grading ${p.to || "taken away"}`,
   "route.stretch_maintainers": p => p.to ? `One stretch maintained by ${p.to.join("; ")}` : "One stretch back to what the route says",
@@ -1675,7 +1688,10 @@ let drag = null;
 const inOpenRoute = f => openRoute && f.properties.codes.split(", ").includes(openRoute.code);
 const reachMetres = (lat, pixels = 12) => Math.min(50, pixels * 78271.517 * Math.cos(lat * Math.PI / 180) / 2 ** map.getZoom());
 const around = (point, r = 6) => [[point.x - r, point.y - r], [point.x + r, point.y + r]];
-const closePopups = () => { for (const popup of document.querySelectorAll(".maplibregl-popup")) popup.remove(); };
+const closePopups = () => {
+  for (const popup of document.querySelectorAll(".maplibregl-popup")) popup.remove();
+  if (map.getSource("gpxpreview")) map.getSource("gpxpreview").setData({ type: "FeatureCollection", features: [] });
+};
 // After a change: fetch what is yours again and show the route as it now is, with a line saying what happened.
 async function reloadOpen(note, problem) {
   const id = openRoute && openRoute.id;
@@ -1728,6 +1744,7 @@ function stretchPopup(f, at) {
         return r.changes ? `Laid on the mapped path or road for ${km(r.followed_m / 1000)} of it: ${r.length_m} m, from ${r.was_m} m. The rest lies as it did.`
                          : "No mapped path or road runs beside it for long enough to follow, where it does not lie on one already.";
       })),
+      ...(myFeatures.includes("tracks") ? [act("Lay it on a GPX track…", () => trackChoice(st, at))] : []),
       act("Divide it here", divide),
       act("Change what it is", () => stretchForm(st, at, () => reloadOpen("Stretch changed."))),
       act("Draw it by hand", () => startDraw(st.edge_id, (points, follow) => attempt(async () => {
@@ -1746,6 +1763,29 @@ function stretchPopup(f, at) {
       act("Someone else maintains it here", () => maintainerForm(st, at)),
       act("Fix the line itself", () => setFixing(true)),
     ] : [])))).addTo(map);
+}
+// Laying a stretch on a GPX track (the feature `tracks`): the tracks that pass both its ends, each with the line the
+// stretch would have; pointing at one draws that line, a click lays the stretch on it.
+async function trackChoice(st, at) {
+  const box = el("div", { class: "pop" }, el("h3", {}, "Lay it on a GPX track"), el("div", { class: "sub" }, "Looking for tracks that pass both its ends…"));
+  const draft = line => map.getSource("gpxpreview").setData({ type: "FeatureCollection", features: line ? [{ type: "Feature", properties: {}, geometry: line }] : [] });
+  const popup = new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(at).setDOMContent(box).addTo(map);
+  popup.on("close", () => draft(null));
+  let found;
+  try { found = await get(`owned/stretches/${st.edge_id}/tracks`); }
+  catch (err) { box.replaceChildren(el("h3", {}, "Lay it on a GPX track"), el("div", { class: "error" }, err.message)); return; }
+  const when = t => t.walked ? new Date(`${t.walked}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date";
+  box.replaceChildren(el("h3", {}, "Lay it on a GPX track"),
+    found.length ? el("div", { class: "sub", style: "margin-bottom:6px" }, "Point at one to see the line it gives. The ends stay where they are; every route on the stretch follows.")
+                 : el("div", { class: "sub" }, "No track passes both its ends (within 60 m) without a break. Add tracks among the Tracks on the front page."),
+    el("div", { class: "actions", style: "flex-direction:column;align-items:stretch" }, ...found.map(t => el("button", { class: "btn", style: "text-align:left",
+      onmouseenter: () => draft(t.geometry), onfocus: () => draft(t.geometry),
+      onclick: () => { popup.remove(); attempt(async () => {
+        const r = await send("POST", `owned/stretches/${st.edge_id}/track`, { track: t.track.id }, asSeen(st.edge_id));
+        return `Laid on the track “${r.track.name}”: ${r.length_m} m, from ${r.was_m} m.`;
+      }); } },
+      el("strong", {}, t.track.name), el("span", { class: "sub" }, ` ${when(t.track)}: ${t.length_m} m, from ${t.was_m} m; the ends ${t.ends_m[0]} and ${t.ends_m[1]} m off it`)))));
+  if (found.length) draft(found[0].geometry);
 }
 // ---- From one route to another on the map. ----
 // What routes are called, asked for when they are to be chosen between: a code alone is hard to remember.

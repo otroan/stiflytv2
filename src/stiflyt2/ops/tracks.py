@@ -699,6 +699,72 @@ def clean_again(conn, every: bool = False) -> dict:
     return {"cleaned": done}
 
 
+# --- a stretch laid on a track --------------------------------------------------------------------------------------
+
+REACH_M = 60            # an end of a stretch this near a track is taken to lie on it: a device is some metres off
+
+
+def _passes(p: np.ndarray, at: tuple[float, float], reach: float) -> list[tuple[float, float]]:
+    """Each time a part of a track passes a point within reach: how near, and where along the part (the point before,
+    and how far on to the next, as a fraction)."""
+    d = np.hypot(p[:, 0] - at[0], p[:, 1] - at[1])
+    near = d <= reach
+    out = []
+    edges = np.flatnonzero(np.diff(np.r_[0, near.astype(np.int8), 0]))
+    for a, b in zip(edges[::2], edges[1::2], strict=True):
+        i = a + int(np.argmin(d[a:b]))
+        best = (float(d[i]), float(i))
+        for j in (i - 1, i):
+            if 0 <= j < len(p) - 1:
+                u, seg = p[j, :2], p[j + 1, :2] - p[j, :2]
+                span = float(seg @ seg)
+                t = 0.0 if span == 0 else min(1.0, max(0.0, float((np.asarray(at) - u) @ seg) / span))
+                q = u + t * seg
+                gap = math.hypot(q[0] - at[0], q[1] - at[1])
+                if gap < best[0]:
+                    best = (gap, j + t)
+        out.append(best)
+    return out
+
+
+def _at(p: np.ndarray, s: float) -> np.ndarray:
+    i = min(int(s), len(p) - 2)
+    return p[i, :2] + (s - i) * (p[i + 1, :2] - p[i, :2])
+
+
+def piece(conn, track: str, a: tuple[float, float], b: tuple[float, float], near_m: float) -> dict | None:
+    """The piece of a track from where it passes one point to where it passes the other (EPSG:25833), unbroken. Where
+    it passes either more than once (out and back), the piece nearest `near_m` long. None where it passes not both."""
+    got = conn.execute("""SELECT ST_AsEWKB(l.geom) FROM ops.track t JOIN ops.track_line l ON l.track_id = t.id AND l.key = t.line_key
+                          WHERE t.id = %s::uuid""", (track,)).fetchone() if _uuid(track) else None
+    if not got:
+        raise NotFound("no such track")
+    best = None
+    for p in _parts_of(got[0]):
+        along = np.r_[0.0, np.cumsum(np.hypot(*np.diff(p[:, :2], axis=0).T))]
+        def metres(s: float, along: np.ndarray = along) -> float:
+            i = min(int(s), len(along) - 2)
+            return float(along[i] + (s - i) * (along[i + 1] - along[i]))
+
+        for da, sa in _passes(p, a, REACH_M):
+            for db, sb in _passes(p, b, REACH_M):
+                length = abs(metres(sb) - metres(sa))
+                if length < 1:
+                    continue
+                score = abs(length - near_m)
+                if best is None or score < best[0]:
+                    best = (score, p, sa, sb, da, db, length)
+    if best is None:
+        return None
+    _, p, sa, sb, da, db, length = best
+    lo, hi = sorted((sa, sb))
+    inner = p[math.floor(lo) + 1:math.ceil(hi), :2]
+    line = np.vstack([_at(p, lo), inner, _at(p, hi)])
+    if sa > sb:
+        line = line[::-1]
+    return {"coords": [tuple(a), *map(tuple, line.tolist()), tuple(b)], "ends_m": [round(da), round(db)], "on_track_m": length}
+
+
 # --- files -----------------------------------------------------------------------------------------------------------
 
 def file(conn, track: str) -> tuple[Path, str]:
