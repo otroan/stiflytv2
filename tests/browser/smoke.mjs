@@ -364,6 +364,7 @@ if (await js(`hasIssues()`)) {
   await toPart("tab-issues");
   check("the issues tab lists what is open in the area", await until(`view === "issues" && Array.isArray(entries) && /Issues in/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel h2"));
   check("the address says the issues are open", (await js("location.search")).includes("view=issues"));
+  await js("arriving.then(() => true)");                // the area fitted to when it came, not over the spot below
   const spot = EDIT && await onMap(`(() => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.properties.ids.split("|").filter(Boolean).length === 1); if (!f) return null;
     window.trialLine = f.geometry.coordinates; const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)]; map.jumpTo({ center: c, zoom: 14 }); return c; })()`);
   if (spot) {

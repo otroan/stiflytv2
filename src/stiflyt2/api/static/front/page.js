@@ -47,8 +47,14 @@ function visit(next, sure) {
   if (url.href !== location.href) history.pushState(null, "", url);
   return arrive(to);
 }
-// Arriving somewhere: by a click, by the browser going back, or by the address the page was opened with.
+// Arriving somewhere: by a click, by the browser going back, or by the address the page was opened with. It is done
+// (and `arriving` with it) when what was asked for on the way in is here and the map has been fitted to it, on this
+// arrival and those before it: a lens chosen while the area is still coming waits for the area.
+let arriving = Promise.resolve();
 function arrive(to, fitting = true) {
+  return (arriving = Promise.all([arriving, arriveAt(to, fitting)]).then(() => {}));
+}
+function arriveAt(to, fitting) {
   // The planner is of no area: anywhere in Norway. The area one was in is remembered, for the other parts.
   const wanted = to.view !== "planner" && areas.some(a => a.area === to.area) ? to.area : null, moved = wanted !== area;
   // Going in among the signs, or to a sign site: the signs are asked for as they are now.
