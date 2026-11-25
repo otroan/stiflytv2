@@ -1,14 +1,15 @@
 """Issues and notices on the routes over HTTP, and for an assistant: the feature `issues` (ADR-004, ADR-005).
 
-Looking and changing both need the feature. An issue is saved as it is made, unless the person has other
-decisions in operations that are not saved yet, which it then joins; Undo takes it back either way.
+Looking needs the feature; reporting and changing also the editor or operations role. An issue is saved as it
+is made, unless the person has other decisions in operations that are not saved yet, which it then joins; Undo
+takes it back either way.
 """
 from __future__ import annotations
 
 import datetime as dt
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Path, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,18 @@ from stiflyt2.ops import issues, undo
 
 V1 = "/api/v1/issues"
 May = Annotated[str, Depends(auth.may("issues"))]
+
+
+def _reporter(who: May, request: Request):
+    """Reporting and changing issues is for one who may change the routes or decide about signs: with the
+    feature alone one looks."""
+    person = auth.person_of(request)
+    if not (person.edits or person.operates):
+        raise HTTPException(403, "you may look at issues; reporting and changing them needs the editor or operations role")
+    return who
+
+
+Reporter = Annotated[str, Depends(_reporter)]
 Id = Annotated[str, Path(max_length=40)]
 Kind = Literal["closed", "warning", "clearing", "marking", "sign", "bridge", "wet", "other"]
 State = Literal["reported", "planned", "done", "dismissed"]
@@ -104,20 +117,20 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return issues.one(conn, entry)
 
     @app.post(V1, status_code=201)
-    def report(body: Report, author: May) -> dict:
+    def report(body: Report, author: Reporter) -> dict:
         """Report an issue or put up a notice: at a spot on a route, along one of its stretches, or of the whole route."""
         with write.connection() as conn:
             return undo.kept_as_made(conn, author, lambda: issues.report(conn, author, **body.model_dump()))
 
     @app.patch(f"{V1}/{{entry}}")
-    def change(entry: Id, body: Change, author: May) -> dict:
+    def change(entry: Id, body: Change, author: Reporter) -> dict:
         """Say something else of an issue: its state, text, kind, dates, or where it is."""
         said = body.model_dump(exclude_unset=True)
         with write.connection() as conn:
             return undo.kept_as_made(conn, author, lambda: issues.change(conn, author, entry, said))
 
     @app.delete(f"{V1}/{{entry}}", status_code=204)
-    def take_away(entry: Id, author: May) -> Response:
+    def take_away(entry: Id, author: Reporter) -> Response:
         """Take an issue away. Undo brings it back."""
         with write.connection() as conn:
             undo.kept_as_made(conn, author, lambda: issues.take_away(conn, author, entry))

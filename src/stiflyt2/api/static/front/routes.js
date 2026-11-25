@@ -220,5 +220,5 @@ function routeIssues(r) {
     open.length ? el("ul", {}, ...open.map(e => el("li", { class: "hit entry", tabindex: 0, onclick: () => openEntry(e.id), onkeydown: enter(() => openEntry(e.id)) },
       kindTag(e), el("span", { class: "grow" }, el("span", { class: "said clip" }, e.text)), el("span", { class: "far" }, e.state === "planned" ? "planned" : whenSaid(e.made_at)))))
       : el("div", { class: "sub" }, entries ? "Nothing open on this route." : "Loading…"),
-    el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => placeEntry(r) }, "Report an issue on this route"))];
+    mayChangeIssues() ? el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => placeEntry(r) }, "Report an issue on this route")) : ""];
 }

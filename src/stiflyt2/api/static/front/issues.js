@@ -11,6 +11,8 @@ let entryAsk = null;             // a new issue, or one being changed: { route, 
 let entryShow = "open";          // which the list has: the open ones, those done or dismissed, or all
 let entryUndo = null;            // your latest decision in operations, which an undo would take back
 const hasIssues = () => (me.features || []).includes("issues");
+// Reporting and changing issues is for one who may change routes or signs: the others with the feature look.
+const mayChangeIssues = () => hasIssues() && (me.features || []).some(f => f === "routes" || f === "signs");
 const dayOf = d => d ? new Date(`${d}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 const whenSaid = t => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const entriesOn = id => (entries || []).filter(e => e.routes.some(r => r.id === id));
@@ -144,7 +146,7 @@ function renderIssues() {
     el("h2", { class: "area" }, `Issues in ${area}`),
     el("div", { class: "sub" }, "What is wrong or to be done on the routes, and notices to walkers: a route closed, or a warning."),
     told,
-    el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => placeEntry(null) }, "Report an issue")),
+    mayChangeIssues() ? el("div", { class: "actions" }, el("button", { class: "btn main", onclick: () => placeEntry(null) }, "Report an issue")) : "",
     el("div", { class: "filter", role: "group", "aria-label": "Which issues are listed" }, chip("open", `Open (${counts.open})`), chip("shut", `Done or dismissed (${counts.shut})`), chip("all", "All")),
     adrift ? el("div", { class: "sub" }, `${adrift} no longer lie on a route in use: open each to move it onto a route, or take it away.`) : "",
     el("ul", { style: "margin-top:6px" }, ...listed.map(e => el("li", { class: "hit entry", tabindex: 0, onclick: () => openEntry(e.id), onkeydown: enter(() => openEntry(e.id)) },
@@ -152,7 +154,7 @@ function renderIssues() {
       el("span", { class: "grow" }, el("span", { class: "said clip" }, e.text),
         el("span", { class: "sub" }, ` ${placeSaid(e)}${e.active ? ", in force" : e.notice && e.lapsed ? ", lapsed" : ""}${e.adrift ? ", adrift" : ""}`)),
       el("span", { class: "far" }, e.open ? (e.state === "planned" ? "planned" : whenSaid(e.made_at)) : (statesOf(e)[e.state] || e.state).toLowerCase())))),
-    listed.length ? "" : el("div", { class: "sub" }, entryShow === "open" ? "Nothing open. Report one with the button, or by clicking a route after it." : "None."));
+    listed.length ? "" : el("div", { class: "sub" }, entryShow === "open" ? (mayChangeIssues() ? "Nothing open. Report one with the button, or by clicking a route after it." : "Nothing open.") : "None."));
 }
 function renderEntry(told) {
   const listedE = (entries || []).find(x => x.id === entryOpen);
@@ -164,8 +166,9 @@ function renderEntry(told) {
   const where = e.about === "route" ? "The whole route" : e.about === "part" ? "Along" : "At";
   const others = e.routes.filter(r => !e.route || r.id !== e.route.id);
   // Its state: one row, the one it is in pressed. A click on another puts it there.
-  const states = el("div", { class: "filter states", role: "group", "aria-label": "State" }, ...Object.entries(statesOf(e)).map(([k, says]) =>
-    el("button", { "aria-pressed": String(e.state === k), onclick: () => { if (e.state !== k) to(k); } }, says)));
+  const states = mayChangeIssues() ? el("div", { class: "filter states", role: "group", "aria-label": "State" }, ...Object.entries(statesOf(e)).map(([k, says]) =>
+    el("button", { "aria-pressed": String(e.state === k), onclick: () => { if (e.state !== k) to(k); } }, says)))
+    : (statesOf(e)[e.state] || e.state);
   const fact = (name, ...said) => [el("dt", {}, name), el("dd", {}, ...said)];
   const history = (entryShown && entryShown.told && entryShown.told.history) || [];
   panel.replaceChildren(back,
@@ -181,7 +184,7 @@ function renderEntry(told) {
       ...fact("State", states),
       ...fact("Reported", `${whenSaid(e.made_at)} by ${e.made_by}`),
       ...(e.updated_at !== e.made_at ? fact("Last changed", `${whenSaid(e.updated_at)} by ${e.updated_by}`) : [])),
-    el("div", { class: "actions" },
+    !mayChangeIssues() ? "" : el("div", { class: "actions" },
       el("button", { class: "btn", title: e.about === "part" ? "What it is, its parts, or its dates" : "What it is, or its dates", onclick: () => { entryAsk = { id: e.id }; render(); } }, "Change it…"),
       e.about === "spot" ? el("button", { class: "btn", title: "Click the route where it is", onclick: () => moveEntry(e.id) }, "Move it") : "",
       el("button", { class: "btn quiet", title: "It is taken away. Undo brings it back.", onclick: () => { if (confirm("Take this issue away? Undo brings it back.")) entryChange(() => send("DELETE", `issues/${e.id}`)).then(ok => { if (ok) visit({ entry: null }); }); } }, "Take it away")),

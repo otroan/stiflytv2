@@ -203,6 +203,12 @@ def test_issues_are_a_feature_of_their_own_in_the_page_and_for_an_assistant(conn
             assert "route_issues" not in {t["name"] for t in rpc(client, "tools/list")["result"]["tools"]}
 
             access.set_state(owner, "issues", "all", "test")
+            # One who may neither change the routes nor decide about signs looks, and reports nothing.
+            as_reader = {**PAGE, "X-Stiflyt-As": "reader"}
+            no = client.post(f"{V1}/issues", json=ask, headers=as_reader)
+            assert (no.status_code, no.json()["detail"]) == (
+                403, "you may look at issues; reporting and changing them needs the editor or operations role")
+            assert client.get(f"{V1}/issues", params={"area": "bre"}, headers=as_reader).status_code == 200
             made = client.post(f"{V1}/issues", json=ask, headers=PAGE)
             assert made.status_code == 201 and made.json()["text"] == "Paint worn off"
             # Made with nothing else waiting: saved as made, and Undo still takes it back.
@@ -217,6 +223,8 @@ def test_issues_are_a_feature_of_their_own_in_the_page_and_for_an_assistant(conn
             assert chosen.status_code == 200 and chosen.json()["parts"][0]["metres"] == 200
             assert client.post(f"{V1}/issues", json={**ask, "kind": "nonsense"}, headers=PAGE).status_code == 422
             assert client.patch(f"{V1}/issues/not-one", json={"state": "done"}, headers=PAGE).status_code == 404
+            assert client.patch(f"{V1}/issues/{entry}", json={"state": "done"}, headers=as_reader).status_code == 403
+            assert client.delete(f"{V1}/issues/{entry}", headers=as_reader).status_code == 403
 
             # For an assistant: listed, and dry unless told otherwise.
             assert {"route_issues", "report_issue", "change_issue"} <= {t["name"] for t in rpc(client, "tools/list")["result"]["tools"]}

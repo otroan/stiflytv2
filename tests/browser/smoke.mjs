@@ -601,6 +601,10 @@ if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   await clickOn(`document.querySelector("#panel li.hit")`);
   check("a reader can choose no sign and is offered nothing to change", await until(`Boolean(open) && document.querySelectorAll("#panel .plate").length > 0 && document.querySelectorAll("#panel .plate:not([disabled])").length === 0 && ![...document.querySelectorAll("#panel button")].some(b => /No signs here|Another post|Change/.test(b.textContent))`, 10));
   check("and is refused by the server, not only by the page", await js(`fetch("/api/v1/signs/undo", { headers: THROUGH }).then(r => r.status === 403)`));
+  if (await js("hasIssues()")) {
+    await open(`?area=${where}&view=issues`);
+    check("a reader looks at the issues and is offered none to report", await until(`view === "issues" && Array.isArray(entries) && /Issues in/.test(document.querySelector("#panel h2.area")?.textContent || "") && ![...document.querySelectorAll("#panel button")].some(b => /Report an issue/.test(b.textContent))`, 15));
+  }
   await clickOn(`[...document.querySelectorAll(".role-switch button")].find(b => b.textContent.startsWith("Back to"))`);
   check("back as oneself", await until(`typeof me !== "undefined" && me.role === ${JSON.stringify(holds)} && me.really === null`, 20), await text(".role-switch"));
   await until(`Boolean(over)`);
