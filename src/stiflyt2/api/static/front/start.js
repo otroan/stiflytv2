@@ -9,9 +9,9 @@ document.getElementById("tab-plan").addEventListener("click", goTo(() => lastOf(
 for (const [v, id] of Object.entries(PART_TABS)) if (v !== "signs") document.getElementById(id).addEventListener("click", goTo(() => v));
 
 document.addEventListener("keydown", e => {
-  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else undoLast(); }
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && (view === "signs" || view === "issues" || view === "reports" || view === "tracks") && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) { e.preventDefault(); if (view === "issues") undoEntry(); else if (view === "reports") undoReport(); else if (view === "tracks") undoTrack(); else undoLast(); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (ownedAt) ownedPopup.remove(); else if (route) leaveRoute(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoBox.open) return; if (!basketBox.hidden) { basketBox.hidden = true; basket.setAttribute("aria-expanded", "false"); basket.focus(); } else if (placing) { stopPlacing(); drawTracks(); if (entryAsk && entryAsk.picking) { entryAsk.picking = null; render(); } } else if (entryAsk) { entryAsk = null; render(); } else if (entryOpen) visit({ entry: null }); else if (reportAsk) { reportAsk = null; render(); } else if (reportOpen) visit({ report: null }); else if (trackRenaming) { trackRenaming = false; render(); } else if (trackOpen) visit({ track: null }); else if (editing) { editing = null; render(); } else if (open) visit({ site: null }); else if (lookingAtAdrift) { lookingAtAdrift = false; render(); } else if (ownedAt) ownedPopup.remove(); else if (route) leaveRoute(); } });
 
 (async () => {
   try {
@@ -27,6 +27,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     document.getElementById("tab-trips").hidden = !(me.features || []).includes("trips");
     document.getElementById("tab-issues").hidden = !hasIssues();
     document.getElementById("tab-photos").hidden = !hasPhotos();
+    document.getElementById("tab-tracks").hidden = !hasTracks();
     document.getElementById("tab-reports").hidden = !hasReports();
     document.getElementById("tab-landowners").hidden = !hasLandowners();
     document.getElementById("tab-planner").hidden = !hasPlanner();

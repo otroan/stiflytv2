@@ -36,6 +36,8 @@ planner_app = typer.Typer(help="The route planner's network: every way in Norway
 app.add_typer(planner_app, name="planner")
 terrain_app = typer.Typer(help="How high the ground is anywhere in Norway, from Kartverket's height model at 50 m")
 app.add_typer(terrain_app, name="terrain")
+tracks_app = typer.Typer(help="GPX tracks walked on the routes")
+app.add_typer(tracks_app, name="tracks")
 
 File = Annotated[Path | None, typer.Option(help="Use a local copy of the delivery")]
 
@@ -1025,6 +1027,66 @@ def terrain_fetch(again: Annotated[bool, typer.Option("--again", help="Also the 
     except terrain.Unavailable as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from e
+
+
+@tracks_app.callback(invoke_without_command=True)
+def tracks_state(ctx: typer.Context) -> None:
+    """How many tracks there are, by area."""
+    if ctx.invoked_subcommand:
+        return
+    with psycopg.connect(settings.api_dsn) as conn:
+        rows = conn.execute("SELECT coalesce(area, '-'), count(*) FROM ops.track GROUP BY 1 ORDER BY 1").fetchall()
+    typer.echo(", ".join(f"{a} {n}" for a, n in rows) or "No tracks.")
+
+
+@tracks_app.command("take-in")
+def tracks_take_in(
+    files: Annotated[list[Path], typer.Argument(help="GPX files, or v1's tracks exported as CSV (id, area_code, name, "
+                                                     "…, wkt in EPSG:25833)")],
+    by: Annotated[str, typer.Option("--by", help="The name they are added under")],
+    area: Annotated[str | None, typer.Option("--area", help="The area of those that are near no route")] = None,
+) -> None:
+    """Take tracks in: GPX files as they are, or v1's tracks (lines alone) from a CSV export of its table. A file
+    taken in before is the track already kept. Prints counts only."""
+    import csv
+    import sys
+
+    from stiflyt2.api.auth import Author
+    from stiflyt2.domain.places import Invalid
+    from stiflyt2.ops import tracks
+
+    author = Author(by, "api")
+    told = {"added": 0, "again": 0, "refused": 0}
+    csv.field_size_limit(sys.maxsize)
+    with psycopg.connect(settings.api_dsn) as conn:
+        for f in files:
+            if f.suffix.lower() == ".csv":
+                with f.open(newline="", encoding="utf-8") as rows:
+                    work = [(r["wkt"], r.get("name"), (r.get("area_code") or area or "").lower() or None, f"v1:{r['id']}", None)
+                            for r in csv.DictReader(rows)]
+            else:
+                work = [(None, None, area, "file", f)]
+            for wkt, name, where, origin, gpx in work:
+                try:
+                    with conn.transaction():
+                        made = (tracks.add_line(conn, author, wkt, name=name, area=where, origin=origin) if wkt else
+                                tracks.add(conn, author, gpx.read_bytes(), area=where, origin=origin, filename=gpx.name))
+                    told["again" if made.get("again") else "added"] += 1
+                except Invalid as e:
+                    told["refused"] += 1
+                    typer.echo(f"{gpx.name if gpx else origin}: {e}", err=True)
+    typer.echo(json.dumps(told))
+
+
+@tracks_app.command("clean-again")
+def tracks_clean_again(every: Annotated[bool, typer.Option("--every", help="All of them, not only those whose "
+                                                                           "cleaned line is missing")] = False) -> None:
+    """Clean the tracks anew: those whose cleaned line is missing (after a copy is put back: the nightly copy leaves
+    them out), or every one (after the cleaning has changed)."""
+    from stiflyt2.ops import tracks
+
+    with psycopg.connect(settings.api_dsn) as conn:
+        typer.echo(json.dumps(tracks.clean_again(conn, every)))
 
 
 if __name__ == "__main__":

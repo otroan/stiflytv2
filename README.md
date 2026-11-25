@@ -1665,6 +1665,57 @@ Over the API: `GET /api/v1/photos?area=|route=|entry=|unplaced=true`,
 `PATCH` (`caption`, `lon`/`lat`, `entry`) and `DELETE` on one. An assistant
 has `route_photos`.
 
+## GPX tracks: a feature of its own
+
+Tracks walked on the routes, as a phone or a watch logged them, for those
+who are signed in and have the feature `tracks`; adding and changing them
+needs the editor or operations role as well. On the front page they are a
+lens of their own under Routes ("Tracks"): the area's tracks as pink lines on
+the map, a list of them (when each was walked, how long it took, who added
+it), and a place to drop GPX files or choose them, many at once. A track is
+of the area of the route nearest its middle, and is listed in every area
+whose routes it comes within 100 m of.
+
+A track opened says when it was walked, its length, the time in all and the
+time walking, the climb by the device's own heights, and what cleaning took
+out; the track as it came is a dashed line under it, and the stops are white
+points. "Cut out a part" takes two clicks on the track, where a detour or the
+drive home begins and ends; each part cut out is listed, with "Put it back".
+"Rename", the file as it came, the track cleaned as GPX, and "Take it away".
+Every change can be undone (Undo, or Ctrl+Z), as among the issues.
+
+What came is kept as it came, once, by its digest: every point with its
+height and time, in `ops.track_raw`, and the file on the server's disk
+(`settings.tracks_dir`, `var/tracks/`). Cleaning (`ops/tracks.py`) moves no
+point but those of a stop and smooths nothing:
+
+- a point that jumps away and back faster than anyone walks (6 m a second;
+  with no times, one out 40 m or more and back) is taken out;
+- where the device stood still for two minutes or more (within 12 m), what
+  it logged there is one stop, and the stop is not counted as walking;
+- the parts of a file are joined where one begins within 50 m of where the
+  one before ended (a watch paused), and a track is cut in two where two
+  points lie more than 300 m apart with ten minutes or more between them,
+  or faster than one walks (the device was off, or in a car);
+- what was cut out by hand is left out.
+
+The track cleaned and what it comes to are in `ops.track_line`, worked out
+once for each way the track has been cut, so that Undo needs no work. They
+are left out of the nightly copy and made again by
+`stiflyt2 tracks clean-again` (also after the cleaning has changed:
+`--every`). Tracks are taken in from the command line with
+`stiflyt2 tracks take-in FILES --by NAME`: GPX files, or v1's tracks as a CSV
+export of its table (lines alone, with no heights or times). `stiflyt2
+tracks` counts them by area.
+
+Over the API: `GET /api/v1/tracks?area=|route=`, `GET /api/v1/tracks.geojson?area=`,
+`POST /api/v1/tracks` with the file as the body and `area`, `name`,
+`filename` in the query, `GET /api/v1/tracks/{id}` (with its lines, stops and
+cuts), `GET /api/v1/tracks/{id}/gpx` (`?cleaned=true`), `PATCH` (`name`,
+`area`) and `DELETE` on one, `POST /api/v1/tracks/{id}/cuts` with
+`from_point` and `to_point`, `DELETE /api/v1/tracks/{id}/cuts/{n}`, and
+`GET`/`POST /api/v1/tracks/undo`. An assistant has `route_tracks`.
+
 ## Setup
 
 Setting up from nothing, where your OS user is not a PostgreSQL superuser:

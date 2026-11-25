@@ -144,6 +144,7 @@ function drawMap() {
 map.on("click", e => {
   if (placing && placing.issue) { placedEntry(e); return; }
   if (placing && placing.photo) { placedPhoto(e); return; }
+  if (placing && placing.trackCut) { placedTrackCut(e); return; }
   if (placing && placing.reportPart !== undefined) { placedReportPart(e); return; }
   if (placing === "site") { stopPlacing(); change(async () => { open = (await send("POST", "signs/sites", { area, lon: e.lngLat.lng, lat: e.lngLat.lat })).key; }); return; }
   if (placing && placing.to) {
@@ -160,6 +161,8 @@ map.on("click", e => {
   if (placing) { const node = placing.node; stopPlacing(); change(() => send("POST", "signs/posts", { node, lon: e.lngLat.lng, lat: e.lngLat.lat })); return; }
   if (view === "planner") { if (!planIgnoreClick) planAt(e.lngLat); return; }      // anywhere: a point of the walk
   const box = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+  // Among the tracks a click on one opens it.
+  if (view === "tracks") { const t = map.getLayer("tracks") && map.queryRenderedFeatures(box, { layers: ["tracks"] })[0]; if (t && t.properties.id !== trackOpen) openTrack(t.properties.id); return; }
   // Among the signs a site comes before the photos taken by it: they are there to be looked at beside it.
   const site = view === "signs" && map.queryRenderedFeatures(box, { layers: ["sites"] })[0];
   if (site) { openSite(site.properties.key); return; }
@@ -194,6 +197,7 @@ function showTip(e) {
   const hit = layers => { const on = layers.filter(visible); return on.length ? map.queryRenderedFeatures(box, { layers: on })[0] : null; };
   let key = "", body = null;
   const group = hit(["photo-groups"]), shot = !group && hit(["photos"]), issue = !group && !shot && hit(["entries", "entry-lines"]);
+  const stop = !group && !shot && !issue && hit(["track-stops"]), track = !group && !shot && !issue && !stop && hit(["tracks"]);
   if (group) {
     key = `g${group.properties.cluster_id}`;
     body = () => el("div", {}, el("strong", {}, `${group.properties.point_count} photos`), el("div", { class: "sub" }, "Click to come nearer"));
@@ -202,6 +206,13 @@ function showTip(e) {
     key = `p${shot.properties.id}`;
     body = () => el("div", { class: "tip-photo" }, p ? el("img", { src: photoUrl(p, "thumb"), alt: "", width: 96, height: 96 }) : "",
       el("div", {}, el("strong", {}, p && p.caption || "A photo"), p && whenTaken(p) ? el("div", { class: "sub" }, `Taken ${whenTaken(p)}`) : ""));
+  } else if (stop) {
+    key = `s${stop.properties.at}`;
+    body = () => el("div", {}, el("strong", {}, `Stood still ${lasting(stop.properties.s)}`), el("div", { class: "sub" }, `From ${clock(stop.properties.at)}`));
+  } else if (track) {
+    const t = (tracksAll || []).find(x => x.id === track.properties.id);
+    key = `t${track.properties.id}`;
+    body = () => el("div", {}, el("strong", {}, track.properties.name), t ? el("div", { class: "sub" }, [walkedOn(t), t.length_m !== null ? km(t.length_m / 1000) : null, `added by ${t.made_by}`].filter(Boolean).join(", ")) : "");
   } else if (issue) {
     const x = (entries || []).find(y => y.id === issue.properties.id);
     key = `e${issue.properties.id}`;
@@ -251,7 +262,8 @@ map.on("mousemove", e => {
   if (placing || map.isMoving()) { tip.remove(); tipSays = ""; return; }
   showTip(e);
   const issues = [...(map.getLayoutProperty("entries", "visibility") === "visible" ? ["entries", "entry-lines"] : []),
-                  ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : [])];
+                  ...(map.getLayoutProperty("photos", "visibility") === "visible" ? ["photos", "photo-groups"] : []),
+                  ...(view === "tracks" && map.getLayer("tracks") && !placing ? ["tracks"] : [])];
   // Among the owners every spot can be clicked: a hand where a property is drawn, else a crosshair (zoomed out, or none known).
   const owners = view === "landowners" && area && map.getLayoutProperty("parcels-fill", "visibility") === "visible";
   map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: [view === "signs" ? "sites" : "sites-small", ...issues] }).length || (routesOpen() && routesAt(e.point).length) ? "pointer"

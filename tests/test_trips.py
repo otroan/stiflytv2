@@ -259,4 +259,4 @@ def test_the_command_line_knows_the_feature_though_it_loads_no_part_of_the_servi
     """Asked which features there are, the modules that are features are loaded: one can be given from the command line."""
     said = subprocess.run([sys.executable, "-c", "from stiflyt2 import features; print(sorted(features.load()))"],
                           capture_output=True, text=True, check=True).stdout
-    assert said.strip() == "['issues', 'landowners', 'photos', 'planner', 'presence', 'reports', 'routes', 'signs', 'trips']"
+    assert said.strip() == "['issues', 'landowners', 'photos', 'planner', 'presence', 'reports', 'routes', 'signs', 'tracks', 'trips']"

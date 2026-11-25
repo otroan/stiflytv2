@@ -26,18 +26,19 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report") };
+  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner", "tracks"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report"), track: q.get("track") };
 }
 function addressOf(at) {
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner"].includes(at.view) ? at.view : null,
+  for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner", "tracks"].includes(at.view) ? at.view : null,
       route: ROUTE_VIEWS.includes(at.view) && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
-      issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null }))
+      issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null,
+      track: at.view === "tracks" && at.area ? at.track : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
 }
 function visit(next, sure) {
-  const to = { view, area, route, site: open, entry: entryOpen, report: reportOpen, ...next };
+  const to = { view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen, ...next };
   // Leaving a sign site with decisions that are not saved: it is asked first what is to become of them.
   if (!sure && view === "signs" && open && pending.changes.length && (to.view !== "signs" || to.area !== area || (to.site || null) !== open)) {
     beforeLeavingSite(() => visit(next, true));
@@ -64,6 +65,7 @@ function arriveAt(to, fitting) {
   if (view !== "issues" || entryOpen || route) entryAsk = null;
   reportOpen = view === "reports" && wanted && !route ? to.report || null : null;
   if (view !== "reports" || reportOpen || route) reportAsk = null;
+  trackOpen = view === "tracks" && wanted ? to.track || null : null; trackRenaming = false;
   editing = null; problem = null;
   if (view !== "signs" || moved) lookingAtAdrift = false;
   leaveProfile(); pointRoute(null);
@@ -74,9 +76,10 @@ function arriveAt(to, fitting) {
   area = wanted; over = null; overProblem = null; found = null; foundProblem = null; shown = "all"; sought = ""; seek = ""; chosen.clear();
   entries = null; entriesFor = null; entriesProblem = null; entryShown = null; photosAll = null; photosFor = null;
   reportsAll = upkeep = sinceLines = null; reportsFor = null; reportShown = null;
+  tracksAll = trackLines = tracksFor = trackShown = null;
   if (area) localStorage.setItem("stiflyt2.area", area); else if (to.view !== "planner") localStorage.removeItem("stiflyt2.area");
   render();
-  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos(), loadReports()]) : Promise.resolve()).then(() => { if (fitting && view !== "planner") fit(); });
+  return (area ? Promise.all([loadArea(), load(), loadEntries(), loadPhotos(), loadReports(), loadTracks()]) : Promise.resolve()).then(() => { if (fitting && view !== "planner") fit(); });
 }
 async function loadArea() {
   const asked = area;
@@ -143,8 +146,8 @@ async function change(request) {
 // The parts of the page: the routes, the signs and planning, at the top; under the routes the lenses one looks at
 // them through (their overview, issues, reports, photos, owners), under planning what is planned. A lens or a kind
 // of plan one does not have is not there, nor a row with only one in it. Each part goes back to the lens last used.
-const PARTS = { routes: ["routes", "issues", "reports", "photos", "landowners"], plan: ["planner", "trips"] };
-const PART_TABS = { routes: "lens-routes", issues: "tab-issues", reports: "tab-reports", photos: "tab-photos", landowners: "tab-landowners",
+const PARTS = { routes: ["routes", "issues", "reports", "photos", "tracks", "landowners"], plan: ["planner", "trips"] };
+const PART_TABS = { routes: "lens-routes", issues: "tab-issues", reports: "tab-reports", photos: "tab-photos", tracks: "tab-tracks", landowners: "tab-landowners",
                     planner: "tab-planner", trips: "tab-trips", signs: "tab-signs" };
 const partOf = v => PARTS.routes.includes(v) ? "routes" : PARTS.plan.includes(v) ? "plan" : "signs";
 const partShown = id => !document.getElementById(id).hidden;
@@ -183,6 +186,7 @@ function render() {
   else if (view === "trips") renderTrips();
   else if (view === "issues") renderIssues();
   else if (view === "photos") renderPhotos();
+  else if (view === "tracks") renderTracks();
   else if (view === "reports") renderReports();
   else if (view === "landowners") renderLandowners();
   else if (!found) panel.replaceChildren(foundProblem ? el("div", { class: "error" }, `Could not get the signs: ${foundProblem}`) : el("div", { class: "sub" }, "Working out the signs…"));
@@ -196,8 +200,9 @@ function render() {
   drawPlan();
   drawIssues();
   drawPhotos();
+  drawTracks();
   drawReports();
   drawLandowners();
-  const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen });       // what a change of yours led to is in the address too
+  const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

@@ -55,7 +55,7 @@ const mouse = (type, x, y, buttons = 0) => send("Input.dispatchMouseEvent", { ty
 const click = async at => { await mouse("mouseMoved", at.x, at.y); await mouse("mousePressed", at.x, at.y, 1); await mouse("mouseReleased", at.x, at.y); };
 const centre = async sel => JSON.parse(await js(`(() => { const e = ${sel}; if (!e) return "null"; e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }); })()`));
 // A lens under Routes, or a kind of plan under Plan: its row is there once its part is open.
-const LENSES = { "lens-routes": "routes", "tab-issues": "issues", "tab-reports": "reports", "tab-photos": "photos", "tab-landowners": "landowners",
+const LENSES = { "lens-routes": "routes", "tab-issues": "issues", "tab-reports": "reports", "tab-photos": "photos", "tab-tracks": "tracks", "tab-landowners": "landowners",
                  "tab-planner": "planner", "tab-trips": "trips" };
 const toPart = async id => {
   const v = LENSES[id], plan = v === "planner" || v === "trips", top = plan ? "tab-plan" : "tab-routes", row = plan ? "plans" : "lenses";
@@ -494,6 +494,52 @@ if (await js(`hasPhotos()`)) {
   await toPart("lens-routes");
   await until(`view === "routes"`, 10);
 } else check("no photos are shown to one who does not have the feature", await js(`photosAll === null && map.getLayoutProperty("photos", "visibility") === "none"`));
+
+// Tracks (the feature `tracks`): a GPX file added in the page along a route, cleaned of a jump, opened, a part of it cut out
+// on the map and put back, and taken away.
+if (await js(`hasTracks()`)) {
+  await toPart("tab-tracks");
+  check("the tracks part lists the area's tracks", await until(`view === "tracks" && Array.isArray(tracksAll) && /Tracks in/.test(document.querySelector("#panel h2").textContent)`, 15), await text("#panel h2"));
+  if (EDIT) {
+    editing = true;
+    check("and offers to add GPX files", await js(`/Choose GPX files/.test(document.querySelector("#panel .photo-drop").textContent)`));
+    // Along the middle of a line of the area: a point every 3 seconds, 4 metres apart, and one that jumps 300 m away.
+    await js(`(async () => { const f = lines.features.find(f => f.properties.areas.includes("|" + area + "|") && f.geometry.coordinates.length > 20), c = f.geometry.coordinates;
+      const at = c.slice(Math.floor(c.length / 4), Math.floor(c.length * 3 / 4)), pts = [];
+      // A point every 4 m along the line, as one walks it.
+      const m = (a, b) => Math.hypot((b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180), (b[1] - a[1]) * 110540);
+      for (let i = 0, carry = 0; i < at.length - 1 && pts.length < 800; i++) {
+        const d = m(at[i], at[i + 1]);
+        for (let s = carry; s < d; s += 4) pts.push([at[i][0] + (at[i + 1][0] - at[i][0]) * s / d, at[i][1] + (at[i + 1][1] - at[i][1]) * s / d]);
+        carry = (4 - ((d - carry) % 4)) % 4;
+      }
+      if (pts.length > 10) pts[Math.floor(pts.length / 2)][1] += 0.003;
+      const t0 = Date.UTC(2025, 7, 14, 7), gpx = '<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Trial walk</name><trkseg>'
+        + pts.map((p, i) => '<trkpt lat="' + p[1].toFixed(7) + '" lon="' + p[0].toFixed(7) + '"><ele>' + (900 + i * 0.2).toFixed(1) + '</ele><time>' + new Date(t0 + i * 3000).toISOString() + '</time></trkpt>').join("") + '</trkseg></trk></gpx>';
+      await addTracks([new File([gpx + "<!-- " + Date.now() + " -->"], "trial.gpx", { type: "application/gpx+xml" })]); })()`);
+    check("a GPX file is added, and it says so", await until(`(tracksAll || []).some(t => t.name === "Trial walk") && /1 track added/.test(document.getElementById("panel").textContent)`, 20), await text("#panel"));
+    await js(`openTrack(tracksAll.find(t => t.name === "Trial walk").id)`);
+    check("opened, it says what it comes to and what cleaning took out, and is drawn on the map with the track as it came",
+      await until(`Boolean(trackShown && trackShown.line) && /Length/.test(document.querySelector("#panel dl.facts").textContent) && /1 point that jumped away was taken out/.test(document.getElementById("panel").textContent)
+        && map.querySourceFeatures("track-open").length > 0 && map.querySourceFeatures("track-came").length > 0 && location.search.includes("track=")`, 20), await text("#panel"));
+    await until(`!map.isMoving()`, 10);
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Cut out a part")`);
+    const ends = await js(`JSON.stringify((() => { const c = trackShown.line.coordinates[0]; return [c[Math.floor(c.length / 5)], c[Math.floor(c.length * 2 / 5)]]; })())`);
+    await click(await onMap(JSON.stringify(JSON.parse(ends)[0])));
+    check("a part to cut out begins where the track is clicked", await until(`placing && placing.trackCut && Boolean(placing.from) && /where it ends/.test(document.getElementById("hint").textContent)`, 5));
+    await click(await onMap(JSON.stringify(JSON.parse(ends)[1])));
+    check("and ends at the next click: the track is in two parts, and the cut is listed", await until(`trackShown && trackShown.parts === 2 && /Cut out by hand/.test(document.getElementById("panel").textContent)`, 15), await text("#panel"));
+    check("and Undo offers to take that back", await until(`!document.getElementById("undo").hidden && /Undo: a part cut out of a track/.test(document.getElementById("undo").textContent)`, 10), await text("#undo"));
+    await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Put it back")`);
+    check("put back, it is one part again", await until(`trackShown && trackShown.parts === 1 && trackShown.cuts && trackShown.cuts.length === 0`, 15), await text("#panel"));
+    const trial = await js("trackOpen");
+    await js(`fetch("/api/v1/tracks/" + trackOpen, { method: "DELETE", headers: THROUGH }).then(() => visit({ track: null })).then(loadTracks)`);
+    check("taken away, the trial track is gone", await until(`!(tracksAll || []).some(t => t.id === ${JSON.stringify(trial)}) && !trackOpen`, 10));
+    editing = false;
+  }
+  await toPart("lens-routes");
+  await until(`view === "routes"`, 10);
+} else check("the tracks part is not there for one who does not have the feature", await js(`document.getElementById("tab-tracks").hidden`));
 
 // Reports (the feature `reports`): how long since each route was inspected, as a list and on the map; a report made in the form.
 if (await js(`hasReports()`)) {

@@ -68,6 +68,7 @@ def database(tmp_path_factory):
     settings.google_client_id = settings.google_client_secret = settings.session_secret = settings.public_url = ""
     settings.data_dir = tmp_path_factory.mktemp("raw")
     settings.photos_dir = tmp_path_factory.mktemp("photos")
+    settings.tracks_dir = tmp_path_factory.mktemp("tracks")
     yield
 
 

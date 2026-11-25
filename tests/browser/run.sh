@@ -11,7 +11,7 @@ set -u
 : "${STIFLYT2_SSH:?name the server: STIFLYT2_SSH=<user>@<server>}"
 dir=${STIFLYT2_DIR:-stiflytv2} area=${AREA:-bre} port=${PORT:-8113}
 here=$(cd "$(dirname "$0")" && pwd)
-ssh_() { ssh -o BatchMode=yes -o ConnectTimeout=20 "$STIFLYT2_SSH" "$@"; }
+ssh_() { ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 "$STIFLYT2_SSH" "$@"; }
 
 stop() {
     [ -n "${tunnel:-}" ] && kill "$tunnel" 2>/dev/null
@@ -34,7 +34,7 @@ export STIFLYT2_API_DSN="dbname=stiflyt2_test user=stiflyt2_api $conn" STIFLYT2_
 import psycopg
 with psycopg.connect(dbname='stiflyt2_test', autocommit=True) as c:
     c.execute('SET ROLE stiflyt2_owner')
-    for key in ('trips', 'presence', 'issues', 'photos', 'reports', 'landowners', 'planner'):
+    for key in ('trips', 'presence', 'issues', 'photos', 'reports', 'landowners', 'planner', 'tracks'):
         c.execute(\"INSERT INTO access.feature (key, state, by) VALUES (%s, 'all', 'the walk-through') ON CONFLICT (key) DO UPDATE SET state = 'all'\", (key,))
 "
 nohup .venv/bin/uvicorn stiflyt2.api.app:app --host 127.0.0.1 --port 8101 --app-dir src > /tmp/stiflyt2-test-viewer.log 2>&1 &
@@ -42,7 +42,7 @@ for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8101/api/v1/status 
 curl -s -X POST "http://127.0.0.1:8101/api/v1/areas/$AREA/routes"; echo
 REMOTE
 
-ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -L "$port:127.0.0.1:8101" "$STIFLYT2_SSH" &
+ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -L "$port:127.0.0.1:8101" "$STIFLYT2_SSH" &
 tunnel=$!
 sleep 2
 STIFLYT2_EDIT=1 node "$here/smoke.mjs" "http://localhost:$port/"

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Photos, each kept once by the digest of its file, with a smaller copy to show and a thumbnail. Not in the
     # nightly copies off the server: they are to go to object storage (docs/TODO.md).
     photos_dir: Path = Path("var/photos")
+    # GPX tracks as they came, each kept once by the digest of its file. Not in the nightly copies either; what the
+    # tracks are (their points, heights and times) is, in the database.
+    tracks_dir: Path = Path("var/tracks")
     user_agent: str = "stiflyt2-importer/0.1 (DNT route maintenance)"
     # A delivery in which more than this share of a layer's features changed is refused.
     max_churn: float = 0.5

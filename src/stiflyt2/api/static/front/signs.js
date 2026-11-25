@@ -146,11 +146,11 @@ const undoBar = document.getElementById("undo");
 const countOf = n => `${n} change${n === 1 ? "" : "s"}`;
 function renderUndo() {
   // Among the issues: your latest decision in operations, whatever it was, and the way to take it back.
-  if (view === "issues" || view === "reports") {
-    const last = view === "issues" ? entryUndo : reportUndo;
+  if (view === "issues" || view === "reports" || view === "tracks") {
+    const last = view === "issues" ? entryUndo : view === "reports" ? reportUndo : trackUndo;
     undoBar.hidden = !last;
     undoBar.replaceChildren(last ? el("button", { class: "link", title: last.in_the_way ? `${last.in_the_way} came after, and is about the same thing` : "Takes back your latest decision",
-      onclick: view === "issues" ? undoEntry : undoReport }, `Undo: ${last.what}`) : "");
+      onclick: view === "issues" ? undoEntry : view === "reports" ? undoReport : undoTrack }, `Undo: ${last.what}`) : "");
     return;
   }
   const n = pending.changes.length;

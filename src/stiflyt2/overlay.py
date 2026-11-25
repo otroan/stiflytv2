@@ -39,7 +39,7 @@ OWNER = "stiflyt2_owner"
 COUNTED = {"places": "core.place", "routes": "core.route", "stretches": "core.edge",
            "changes": "history.event"}
 COUNTED_BESIDE = {"people": "access.person", "feedback entries": "feedback.entry", "issues": "ops.entry",
-                  "reports": "ops.report", "photos": "ops.photo", "sign sites decided on": "ops.sign_site"}
+                  "reports": "ops.report", "photos": "ops.photo", "tracks": "ops.track", "sign sites decided on": "ops.sign_site"}
 
 
 # Not compressed: the nightly copies also go into a git repository off the server, which keeps only what
@@ -104,7 +104,8 @@ def backup_beside(directory: Path) -> Path:
     """Write a copy of what is kept beside the overlay: who may use the tool, and what they met using it."""
     directory.mkdir(parents=True, exist_ok=True)
     file = directory / f"tool-{database()}-{datetime.now(UTC):%Y%m%dT%H%M%S.%fZ}.dump"
-    _run("pg_dump", *_FORMAT, f"--role={OWNER}", *(f"--schema={s}" for s in BESIDE),
+    # The tracks cleaned are worked out from what came, and are left out: `stiflyt2 tracks clean-again` makes them.
+    _run("pg_dump", *_FORMAT, f"--role={OWNER}", *(f"--schema={s}" for s in BESIDE), "--exclude-table-data=ops.track_line",
          f"--file={file}", database())
     return file
 

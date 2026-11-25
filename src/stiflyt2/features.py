@@ -42,7 +42,7 @@ def feature(key: str, title: str, ask: str, state: str = "given") -> Feature:
 # The modules that are features. Each names itself when it is loaded; listed here so that whoever asks which
 # features there are (the command line, which loads none of them for its own sake) finds them all.
 MODULES = ("stiflyt2.ops.trips", "stiflyt2.presence", "stiflyt2.ops.issues", "stiflyt2.ops.photos", "stiflyt2.ops.reports",
-           "stiflyt2.ops.landowners", "stiflyt2.ops.planner")
+           "stiflyt2.ops.landowners", "stiflyt2.ops.planner", "stiflyt2.ops.tracks")
 
 
 def load() -> dict[str, Feature]:
