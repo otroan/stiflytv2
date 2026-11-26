@@ -63,13 +63,17 @@ route.
    a v; a summer route's has none. Making, laying out and renaming a route
    refuse a code of the other season.
 
+8. **A winter route goes with the summer route of its number** (built the
+   same day): each shows the other (`routes.twin`); a summer route given
+   another number takes its winter route with it; the winter's checks say
+   where a winter route has no summer route, or the two go between different
+   places. Both pages have a summer/winter switch, in the address and
+   remembered.
+
 ## What is left
 
-- The two seasons side by side in the pages: a summer/winter switch on the
-  front page and in the route editor.
-- A winter route's twin: shown with it, its code following when the summer
-  code changes, a check where the two do not run between the same places.
 - Each winter's track from the people who stake the routes, kept with the
   route and the season, and the normal line laid on it where it has moved.
 - When a winter route is open, by the area contact.
-- Signs for the winter routes.
+- Signs for the winter routes: on posts of their own, at the winter's own
+  junctions (usually not where the summer's signs stand).
