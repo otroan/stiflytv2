@@ -37,7 +37,7 @@ import math
 import psycopg
 from psycopg.rows import dict_row
 
-from stiflyt2 import features, height, terrain
+from stiflyt2 import features, height, seasons, terrain
 from stiflyt2.domain.places import Invalid, NotFound
 
 features.feature("planner", "plan a walk from anywhere to anywhere in Norway",
@@ -641,7 +641,10 @@ def near(conn, lon: float, lat: float, o: Options | None = None) -> dict:
 
 
 def _named(conn, steps: list[dict], coords: list) -> None:
-    """The marked routes a step goes along, by their codes: Turrutebasen's, and ours (in use) where they lie."""
+    """The marked routes a step goes along, by their codes: Turrutebasen's, and ours (in use) where they lie.
+
+    The summer's routes only: the way is walked, and a winter route is not walked.
+    """
     marked = [s for s in steps if s["class"] in ("dnt", "marked")]
     if not marked:
         return
@@ -653,11 +656,11 @@ def _named(conn, steps: list[dict], coords: list) -> None:
                            UNION
                            SELECT r.code FROM core.edge e JOIN core.edge_revision v ON v.id = e.current_revision_id
                            JOIN core.route_leg l ON l.edge_id = e.id
-                           JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                           JOIN core.route r ON r.id = l.route_id AND r.status = 'active' AND r.season = %s
                            WHERE e.status = 'active' AND ST_DWithin(v.geom, p, 25)) x)
             FROM unnest(%s::float8[], %s::float8[]) WITH ORDINALITY u(x, y, i),
                  LATERAL ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 4326), 25833) p""",
-            ([m[0] for m in mids], [m[1] for m in mids])).fetchall()
+            (seasons.SUMMER, [m[0] for m in mids], [m[1] for m in mids])).fetchall()
     for i, codes in found:
         if codes:
             marked[i - 1]["routes"] = codes

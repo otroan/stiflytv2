@@ -11,6 +11,8 @@ from fastapi import FastAPI, Path, Query
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from stiflyt2 import seasons
+from stiflyt2.api.params import Season
 from stiflyt2.domain import lookup
 
 V1 = "/api/v1"
@@ -34,10 +36,12 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
 
     @app.get(f"{V1}/here")
     def here(lon: Annotated[float, Query(ge=-180, le=180)], lat: Annotated[float, Query(ge=-90, le=90)],
-             radius_m: Annotated[float, Query(gt=0, le=lookup.HERE_MAX_M)] = lookup.HERE_M) -> dict:
-        """What lies around a point: names, mapped paths and roads, Turrutebasen, and what is yours."""
+             radius_m: Annotated[float, Query(gt=0, le=lookup.HERE_MAX_M)] = lookup.HERE_M,
+             season: Season | None = None) -> dict:
+        """What lies around a point: names, mapped paths and roads, Turrutebasen, and what is yours (of a season,
+        when one is asked for; each stretch says its season)."""
         with read.connection() as conn:
-            return lookup.here(conn, lon, lat, radius_m)
+            return lookup.here(conn, lon, lat, radius_m, season=season)
 
     @app.post(f"{V1}/mapped-way")
     def mapped_way(body: Between) -> dict:
@@ -52,7 +56,7 @@ def register(app: FastAPI, read: ConnectionPool) -> None:
             return lookup.shared(conn, a, b)
 
     @app.get(f"{V1}/areas/{{area}}/checks")
-    def checks(area: Area) -> dict:
-        """The odd things of an area: where to look, not what is wrong."""
+    def checks(area: Area, season: Season = seasons.SUMMER) -> dict:
+        """The odd things of an area's routes of a season: where to look, not what is wrong."""
         with read.connection() as conn:
-            return lookup.checks(conn, area)
+            return lookup.checks(conn, area, season=season)

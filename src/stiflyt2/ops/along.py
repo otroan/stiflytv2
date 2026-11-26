@@ -13,6 +13,7 @@ import uuid
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import anchor
 
@@ -84,18 +85,20 @@ class Route:
         return cut
 
 
-def on(conn, routes: list[str] | None, lon: float, lat: float) -> dict:
-    """The stretch of these routes (None: of any route in use) nearest a clicked point, and where along it."""
+def on(conn, routes: list[str] | None, lon: float, lat: float, *, season: str = seasons.SUMMER) -> dict:
+    """The stretch of these routes (None: of any route in use of the season asked for) nearest a clicked point, and
+    where along it."""
+    season = seasons.known(season)
     found = _rows(conn, f"""
         SELECT e.id::text AS edge, l.route_id::text AS route, ST_LineLocatePoint(v.geom, q.p) AS at,
                ST_Distance(v.geom, q.p) AS off
         FROM core.route_leg l JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
         JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id,
              (SELECT {_POINT} AS p) q
-        WHERE (%(routes)s::uuid[] IS NULL OR l.route_id = ANY(%(routes)s::uuid[]))
+        WHERE ((%(routes)s::uuid[] IS NULL AND r.season = %(season)s) OR l.route_id = ANY(%(routes)s::uuid[]))
           AND ST_DWithin(v.geom, q.p, %(near)s)
         ORDER BY off, r.discontinued_since IS NOT NULL LIMIT 1""",
-                  {"lon": lon, "lat": lat, "routes": routes, "near": ON_ROUTE_M})
+                  {"lon": lon, "lat": lat, "routes": routes, "near": ON_ROUTE_M, "season": season})
     if not found:
         raise Invalid(f"that is not on {'the route' if routes else 'a route in use'}: click within {ON_ROUTE_M} m of its line")
     return {"edge": found[0]["edge"], "at": round(found[0]["at"], 6), "route": found[0]["route"]}

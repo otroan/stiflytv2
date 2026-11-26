@@ -28,7 +28,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from stiflyt2 import features
+from stiflyt2 import features, seasons
 from stiflyt2.config import settings
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import areas as areas_of
@@ -221,16 +221,17 @@ _SHOWN = """
 
 
 def listing(conn, area: str | None = None, route: str | None = None, entry: str | None = None,
-            unplaced: bool = False, report: str | None = None) -> list[dict]:
+            unplaced: bool = False, report: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
     """The photos of an area, those taken near a route (within 75 m of its line), those of an issue, or those that
     wait to be placed: the newest taken first."""
+    season = seasons.known(season)
     where, params = [], {}
     if area:
-        # Of the area, or taken near a route added to it from another.
+        # Of the area, or taken near a route of the season asked for added to it from another.
         where.append("""(p.area = %(area)s OR EXISTS (SELECT 1 FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
                          JOIN core.edge_revision v ON v.id = e.current_revision_id
                          WHERE l.route_id = ANY(%(added)s::uuid[]) AND ST_DWithin(v.geom, p.geom, %(near)s)))""")
-        params.update(area=area.lower(), added=areas_of.added_to(conn, area), near=NEAR_ROUTE_M)
+        params.update(area=area.lower(), added=areas_of.added_to(conn, area, season=season), near=NEAR_ROUTE_M)
     if route:
         if not _uuid(route):
             raise NotFound("no such route")
@@ -254,22 +255,24 @@ def listing(conn, area: str | None = None, route: str | None = None, entry: str 
     return _rows(conn, sql, params)
 
 
-def days(conn, area: str, routes: list[str] | None = None) -> list[dict]:
+def days(conn, area: str, routes: list[str] | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
     """The days photos were taken in an area, or near some of its routes, the latest first: for one who reports what
-    was done, the photos say which day it was and where they went. Each day with its photos and the routes they were
-    taken near (within 75 m), those with most photos first."""
+    was done, the photos say which day it was and where they went. Each day with its photos and the routes of the
+    season asked for they were taken near (within 75 m), those with most photos first."""
+    season = seasons.known(season)
     for r in routes or []:
         if not _uuid(r):
             raise NotFound("no such route")
     found = _rows(conn, _SHOWN.replace("FROM ops.photo p", """,
                ARRAY(SELECT DISTINCT r.id::text || ' ' || r.code FROM core.route_leg l
-                     JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
+                     JOIN core.route r ON r.id = l.route_id AND r.status = 'active' AND r.season = %(season)s
                      JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
                      WHERE ST_DWithin(v.geom, p.geom, %(near)s) AND (lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))) AS near
         FROM ops.photo p""") + """ WHERE p.taken_at IS NOT NULL AND p.geom IS NOT NULL AND (p.area = %(area)s OR EXISTS (
             SELECT 1 FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
             WHERE l.route_id = ANY(%(added)s::uuid[]) AND ST_DWithin(v.geom, p.geom, %(near)s))) ORDER BY p.taken_at""",
-                  {"area": area.lower(), "near": NEAR_ROUTE_M, "added": areas_of.added_to(conn, area)})
+                  {"area": area.lower(), "near": NEAR_ROUTE_M, "added": areas_of.added_to(conn, area, season=season),
+                   "season": season})
     told: dict = {}
     for p in found:
         near = [tuple(x.split(" ", 1)) for x in p.pop("near")]

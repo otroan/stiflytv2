@@ -5,11 +5,12 @@ from collections import Counter
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import height
+from stiflyt2 import height, seasons
 from stiflyt2.domain import routes
 from stiflyt2.ops import areas as areas_of
 
-_IN_USE = "t.status = 'active' AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL"
+# In use, and of the season asked for (%(season)s).
+_IN_USE = "t.status = 'active' AND t.season = %(season)s AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL"
 _LEGS = """core.route t JOIN core.route_leg l ON l.route_id = t.id
            JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id"""
 _LEN = "ST_Length(ST_Transform(v.geom, 4326)::geography)"
@@ -20,14 +21,15 @@ def _rows(conn, sql: str, params: dict | None = None) -> list[dict]:
         return cur.execute(sql, params or {}).fetchall()
 
 
-def areas(conn) -> list[dict]:
-    """The areas that have routes of ours in use, by the three letters their codes start with, and with the routes
-    added to them from another area (`added`, ids).
+def areas(conn, *, season: str = seasons.SUMMER) -> list[dict]:
+    """The areas that have routes of ours in use of the season asked for, by the three letters their codes start
+    with, and with the routes added to them from another area (`added`, ids).
 
     For each how many routes, and how far they go on foot when each is
     walked for itself. Lengths are in metres.
     """
-    more = areas_of.added(conn)
+    season = seasons.known(season)
+    more = areas_of.added(conn, season=season)
     pairs = [(a, r) for a, ids in more.items() for r in ids]
     told = _rows(conn, f"""
         WITH member AS (
@@ -37,14 +39,15 @@ def areas(conn) -> list[dict]:
                round(coalesce(sum({_LEN}) FILTER (WHERE v.kind <> 'water'), 0))::int AS route_m
         FROM member m JOIN core.route t ON t.id = m.id LEFT JOIN core.route_leg l ON l.route_id = t.id
         LEFT JOIN core.edge e ON e.id = l.edge_id LEFT JOIN core.edge_revision v ON v.id = e.current_revision_id
-        GROUP BY 1 ORDER BY 2 DESC, 1""", {"a": [a for a, _ in pairs], "r": [r for _, r in pairs]})
+        GROUP BY 1 ORDER BY 2 DESC, 1""", {"a": [a for a, _ in pairs], "r": [r for _, r in pairs], "season": season})
     for a in told:
         a["added"] = more.get(a["area"], [])
     return told
 
 
-def area(conn, area: str) -> dict:
-    """One area: its routes in use, each with its length, climb, time and grading, and what they add up to.
+def area(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
+    """One area: its routes in use of the season asked for, each with its length, climb, time and grading, and what
+    they add up to.
 
     `statistics` counts ground once where routes share a stretch, and says
     how much of it is marked; the highest and lowest the routes go; how many
@@ -52,7 +55,8 @@ def area(conn, area: str) -> dict:
     climb give where none is set); and the places the routes pass, by kind.
     Lengths and heights are in metres.
     """
-    a = {"a": area.lower(), "added": areas_of.added_to(conn, area)}
+    season = seasons.known(season)
+    a = {"a": area.lower(), "added": areas_of.added_to(conn, area, season=season), "season": season}
     mine = f"{_IN_USE} AND (lower(left(t.code, 3)) = %(a)s OR t.id = ANY(%(added)s::uuid[]))"
     listed = _rows(conn, f"""
         SELECT t.id::text AS id, t.code, t.name, t.grading,

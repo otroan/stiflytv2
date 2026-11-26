@@ -18,9 +18,10 @@ import re
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.domain import routes, worklist
 from stiflyt2.domain.places import Invalid, NotFound
-from stiflyt2.index.tables import WINTER_CODE
+from stiflyt2.seasons import WINTER_CODE
 
 HERE_M = 200            # how far around a point is looked, unless said
 HERE_MAX_M = 2000
@@ -53,12 +54,13 @@ def _has(conn, table: str) -> bool:
     return conn.execute("SELECT to_regclass(%s) IS NOT NULL", (table,)).fetchone()[0]
 
 
-def _waiting(conn, area: str | None = None) -> list[dict]:
-    """Turrutebasen's candidates that are neither yours nor set aside by a person."""
+def _waiting(conn, area: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
+    """Turrutebasen's candidates of the season asked for that are neither yours nor set aside by a person."""
     aside = routes.withdrawn_by_a_person(conn) | set(routes.taken_out_by_a_person(conn))
-    found = _rows(conn, """
+    candidates = seasons.CANDIDATES[seasons.known(season)].route
+    found = _rows(conn, f"""
         SELECT r.id, r.code, r.label, r.maintainers, r.length_m, ST_X(c.p) AS lon, ST_Y(c.p) AS lat
-        FROM source_index.route r, LATERAL (SELECT ST_Transform(ST_PointOnSurface(r.geom), 4326) AS p) c
+        FROM source_index.{candidates} r, LATERAL (SELECT ST_Transform(ST_PointOnSurface(r.geom), 4326) AS p) c
         WHERE %(a)s::text IS NULL OR r.area_prefix = %(a)s ORDER BY length(r.code), r.label""", {"a": area})
     return [c for c in found if c["label"] not in aside and not routes.owner_of(conn, c["id"])]
 
@@ -119,6 +121,10 @@ def _winter(conn, code: str) -> dict:
         FROM source_index.winter_route r WHERE r.code = %(c)s ORDER BY r.label""", {"c": code})
     if not candidates:
         raise NotFound(f"nothing in the loaded Turrutebasen carries the number {code}, among the winter routes either")
+    for c in candidates:
+        yours = routes.owner_of(conn, c["id"])
+        c["yours"] = yours and {"id": yours, "code": conn.execute(
+            "SELECT code FROM core.route WHERE id = %s", (yours,)).fetchone()[0]}
     segments = _rows(conn, """
         SELECT t.id, r.label AS candidate, round(t.length_m)::int AS length_m, t.codes, t.marking, t.preparation,
                t.maintainers, extract(year FROM t.captured)::int AS drawn, t.updated,
@@ -131,11 +137,18 @@ def _winter(conn, code: str) -> dict:
             "candidates": candidates, "segments": segments, "length_m": sum(s["length_m"] for s in segments)}
 
 
-def here(conn, lon: float, lat: float, radius_m: float = HERE_M) -> dict:
-    """What lies around a point, nearest first: names, mapped paths and roads, Turrutebasen, and what is yours."""
+def here(conn, lon: float, lat: float, radius_m: float = HERE_M, *, season: str | None = None) -> dict:
+    """What lies around a point, nearest first: names, mapped paths and roads, Turrutebasen, and what is yours.
+
+    Each stretch says its season. Given a season, only the stretches of that season (and the connectors of places,
+    which serve both), Turrutebasen's segments of that season, and at each junction its stretches of that season;
+    else every stretch, and Turrutebasen's summer segments.
+    """
     if not 0 < radius_m <= HERE_MAX_M:
         raise Invalid(f"look between 1 and {HERE_MAX_M} m around the point")
-    at = {"lon": lon, "lat": lat, "r": radius_m, "most": HERE_MOST}
+    if season is not None:
+        season = seasons.known(season)
+    at = {"lon": lon, "lat": lat, "r": radius_m, "most": HERE_MOST, "season": season}
     found = {"lon": lon, "lat": lat, "radius_m": radius_m}
     found["names"] = _rows(conn, f"""
         SELECT name, type, metres FROM (
@@ -151,25 +164,29 @@ def here(conn, lon: float, lat: float, radius_m: float = HERE_M) -> dict:
                  SELECT 'road', id, kind, name, round(length_m)::int, round(ST_Distance(geom, {POINT}))::int
                  FROM source_index.road WHERE ST_DWithin(geom, {POINT}, %(r)s)"""
     found["mapped"] = _rows(conn, f"SELECT * FROM ({mapped}) m ORDER BY metres, id LIMIT %(most)s", at)
+    # A winter segment is marked, or staked for the season (SM).
+    marked = "t.marking IN ('JA', 'SM') AS marked" if season == seasons.WINTER else "t.marked"
     found["turrutebasen"] = _rows(conn, f"""
-        SELECT t.id, t.codes, t.marked, t.attrs->>'rutefolger' AS rutefolger, t.maintainers,
+        SELECT t.id, t.codes, {marked}, t.attrs->>'rutefolger' AS rutefolger, t.maintainers,
                round(t.length_m)::int AS length_m, round(ST_Distance(t.geom, {POINT}))::int AS metres
-        FROM source_index.trail_segment t WHERE ST_DWithin(t.geom, {POINT}, %(r)s)
+        FROM source_index.{seasons.CANDIDATES[season or seasons.SUMMER].segment} t
+        WHERE ST_DWithin(t.geom, {POINT}, %(r)s)
         ORDER BY metres, t.id LIMIT %(most)s""", at)
+    of_season = "(%(season)s::text IS NULL OR e.season = %(season)s OR r.kind = 'connector')"
     found["stretches"] = _rows(conn, f"""
-        SELECT e.id::text, r.kind, r.origin, r.marked, r.signed, round(ST_Length(r.geom))::int AS length_m,
+        SELECT e.id::text, e.season, r.kind, r.origin, r.marked, r.signed, round(ST_Length(r.geom))::int AS length_m,
                round(ST_Distance(r.geom, {POINT}))::int AS metres,
                (SELECT coalesce(json_agg(jsonb_build_object('id', y.id, 'code', y.code) ORDER BY y.code), '[]')
                 FROM core.route_leg l JOIN core.route y ON y.id = l.route_id AND y.status = 'active'
                 WHERE l.edge_id = e.id) AS routes
         FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-        WHERE e.status = 'active' AND ST_DWithin(r.geom, {POINT}, %(r)s)
+        WHERE e.status = 'active' AND ST_DWithin(r.geom, {POINT}, %(r)s) AND {of_season}
         ORDER BY metres, e.id LIMIT %(most)s""", at)
     found["junctions"] = _rows(conn, f"""
         SELECT n.id::text, round(ST_Distance(n.geom, {POINT}))::int AS metres, p.name AS arrival_point_of,
                p.primary_node_id = n.id AS routes_meet_here,
                (SELECT count(*)::int FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-                WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node)) AS stretches
+                WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node) AND {of_season}) AS stretches
         FROM core.node n LEFT JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
         WHERE n.status = 'active' AND ST_DWithin(n.geom, {POINT}, %(r)s)
         ORDER BY metres, n.id LIMIT %(most)s""", at)
@@ -259,13 +276,16 @@ def shared(conn, a: str, b: str) -> dict:
             "same_line": bool(max(one, other)) and both >= SAME * max(one, other)}
 
 
-def same_line(conn, area: str) -> list[dict]:
-    """Routes of an area that are one line under two numbers: yours in use, and candidates that wait.
+def same_line(conn, area: str, *, season: str = seasons.SUMMER) -> list[dict]:
+    """Routes of an area, of the season asked for, that are one line under two numbers: yours in use, and
+    candidates that wait.
 
     Two routes that share nearly all of the longer one. A short route along a
     part of a long one is not this: that is what routes do.
     """
-    mine = worklist.routes_of(conn, area)
+    season = seasons.known(season)
+    tables = seasons.CANDIDATES[season]
+    mine = worklist.routes_of(conn, area, season=season)
     found = [{"of": "yours", "shared_m": round(m), "routes": [
                 {"id": a, "code": ca, "length_m": round(ma)}, {"id": b, "code": cb, "length_m": round(mb)}]}
              for a, ca, ma, b, cb, mb, m in conn.execute(f"""
@@ -277,11 +297,11 @@ def same_line(conn, area: str) -> list[dict]:
         WHERE (length(rx.code), rx.code, rx.id) < (length(ry.code), ry.code, ry.id)
         GROUP BY 1, 2, 3, 4, 5, 6 HAVING sum(x.m) >= %(same)s * greatest(tx.m, ty.m)
         ORDER BY length(rx.code), rx.code, ry.code""", {"ids": mine, "same": SAME})]
-    waiting = {c["id"]: c for c in _waiting(conn, area)}
-    for a, la, ma, b, lb, mb, m in conn.execute("""
+    waiting = {c["id"]: c for c in _waiting(conn, area, season=season)}
+    for a, la, ma, b, lb, mb, m in conn.execute(f"""
             WITH legs AS (SELECT rs.route_id, rs.segment_id, t.length_m AS m, r.label, r.length_m AS whole
-                          FROM source_index.route r JOIN source_index.route_segment rs ON rs.route_id = r.id
-                          JOIN source_index.trail_segment t ON t.id = rs.segment_id
+                          FROM source_index.{tables.route} r JOIN source_index.{tables.route_segment} rs ON rs.route_id = r.id
+                          JOIN source_index.{tables.segment} t ON t.id = rs.segment_id
                           WHERE r.area_prefix = %(a)s)
             SELECT x.route_id, x.label, x.whole, y.route_id, y.label, y.whole, sum(x.m)
             FROM legs x JOIN legs y ON y.segment_id = x.segment_id
@@ -318,20 +338,22 @@ def _doubles_back(coords: list[tuple[float, float]]) -> list[tuple[tuple[float, 
     return found
 
 
-def checks(conn, area: str) -> dict:
-    """The odd things of an area: easy to see on a map, and until now only found by someone looking.
+def checks(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
+    """The odd things of an area, among its routes of the season asked for: easy to see on a map, and until now
+    only found by someone looking.
 
     Each is a sentence about one or two routes, with a spot on the map where
     there is one. None of them is certainly wrong: they are where to look.
     """
     area = area.lower()
-    mine, found = worklist.routes_of(conn, area), []
+    season = seasons.known(season)
+    mine, found = worklist.routes_of(conn, area, season=season), []
 
     def tell(kind: str, text: str, about: list[dict], at: tuple | None = None) -> None:
         found.append({"kind": kind, "text": text, "routes": about,
                       "lon": at and round(at[0], 6), "lat": at and round(at[1], 6)})
 
-    for pair in same_line(conn, area):
+    for pair in same_line(conn, area, season=season):
         a, b = pair["routes"]
         tell("same line", f"{a['code']} and {b['code']} are the same line for {pair['shared_m'] / 1000:.1f} km"
              + (" in Turrutebasen" if pair["of"] == "turrutebasen" else "")
@@ -354,7 +376,7 @@ def checks(conn, area: str) -> dict:
                             " 25833), 4326) AS p) x", (x, y)).fetchone()
 
     codes = {r["code"].lower() for r in lines}
-    waiting = _waiting(conn, area)
+    waiting = _waiting(conn, area, season=season)
     for c in waiting:
         codes.add(c["code"])
     for r in lines:
@@ -394,6 +416,7 @@ def checks(conn, area: str) -> dict:
                  about, at)
 
     # A stretch that Turrutebasen has in terrain or unmarked, by a glacier's name, and that is not held as glacier.
+    # Turrutebasen's foot routes: of the summer's routes only.
     for row in _rows(conn, """
             SELECT DISTINCT ON (e.id) y.id::text, y.code, g.name, round(ST_Length(r.geom))::int AS metres,
                    ST_X(c.p) AS lon, ST_Y(c.p) AS lat
@@ -407,9 +430,9 @@ def checks(conn, area: str) -> dict:
                           WHERE p.type = 'isbre' AND ST_DWithin(p.geom, r.geom, %(near)s)
                           ORDER BY p.geom <-> r.geom LIMIT 1) g ON true,
                  LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(r.geom, 0.5), 4326) AS p) c
-            WHERE l.route_id = ANY(%(ids)s::uuid[]) AND r.kind NOT IN ('glacier', 'water')
+            WHERE l.route_id = ANY(%(ids)s::uuid[]) AND y.season = %(summer)s AND r.kind NOT IN ('glacier', 'water')
               AND ST_Length(r.geom) > %(near)s
-            ORDER BY e.id, y.code""", {"ids": mine, "near": BY_GLACIER_M}):
+            ORDER BY e.id, y.code""", {"ids": mine, "near": BY_GLACIER_M, "summer": seasons.SUMMER}):
         tell("glacier", f"{row['metres']} m of {row['code']} is unmarked or in terrain by {row['name']} and is not "
                         "said to be glacier", [{"id": row["id"], "code": row["code"], "yours": True}],
              (row["lon"], row["lat"]))

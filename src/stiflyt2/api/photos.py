@@ -12,7 +12,9 @@ from fastapi.responses import FileResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from stiflyt2 import seasons
 from stiflyt2.api import auth, mcp
+from stiflyt2.api.params import Season
 from stiflyt2.ops import photos, undo
 
 V1 = "/api/v1/photos"
@@ -42,10 +44,10 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     def listed(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
                route: Annotated[str | None, Query(max_length=40)] = None,
                entry: Annotated[str | None, Query(max_length=40)] = None, unplaced: bool = False,
-               report: Annotated[str | None, Query(max_length=40)] = None) -> list[dict]:
+               report: Annotated[str | None, Query(max_length=40)] = None, season: Season = seasons.SUMMER) -> list[dict]:
         """The photos of an area, of a route (taken within 75 m of it), of an issue or a report, or those to be placed."""
         with read.connection() as conn:
-            return photos.listing(conn, area, route, entry, unplaced, report)
+            return photos.listing(conn, area, route, entry, unplaced, report, season=season)
 
     @app.post(V1, status_code=201)
     async def add(request: Request, author: Adder,
@@ -65,10 +67,10 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 
     @app.get(f"{V1}/days")
     def taken_on(_: May, area: Annotated[str, Query(pattern="^[A-Za-z]{3}$")],
-                 routes: Annotated[str | None, Query(max_length=2500)] = None) -> list[dict]:
+                 routes: Annotated[str | None, Query(max_length=2500)] = None, season: Season = seasons.SUMMER) -> list[dict]:
         """The days photos were taken in an area, or near some of its routes (ids, with commas): the latest first."""
         with read.connection() as conn:
-            return photos.days(conn, area, [r for r in (routes or "").split(",") if r] or None)
+            return photos.days(conn, area, [r for r in (routes or "").split(",") if r] or None, season=season)
 
     @app.get(f"{V1}/{{photo}}")
     def single(photo: Id, _: May) -> dict:
@@ -101,6 +103,7 @@ class Photos(mcp.Args):
     area: str | None = Field(None, pattern="^[A-Za-z]{3}$", description="An area: its three letters")
     route: str | None = Field(None, max_length=40, description="Or the photos taken near a route, by its code or id")
     issue: str | None = Field(None, max_length=40, description="Or those of an issue, by its id")
+    season: mcp.Season = seasons.SUMMER
 
 
 @mcp.tool("Photos from the routes", feature="photos")
@@ -108,7 +111,7 @@ def route_photos(c: mcp.Call, a: Photos) -> dict:
     """The photos of an area, those taken within 75 m of a route, or those of an issue: where each was taken, when,
     what is said of it, and the address of its thumbnail and of the copy to show (`/api/v1/photos/<id>/1600`)."""
     rid = mcp._route_id(c.conn, a.route) if a.route else None
-    told = photos.listing(c.conn, a.area, rid, a.issue)
+    told = photos.listing(c.conn, a.area, rid, a.issue, season=a.season)
     for p in told:
         p["shown_at"] = f"/api/v1/photos/{p['id']}/1600"
         p.pop("sha256", None)

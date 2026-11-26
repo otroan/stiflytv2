@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import height
+from stiflyt2 import height, seasons
 from stiflyt2.domain import routes
 
 OFFSET_M = 1.0    # a line that has moved less than this is not reported
@@ -36,9 +36,11 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
     Kinds of change: geometry, attributes, delete (a segment that is no stretch
     at all), remove from route, add to route, new segment, route attribute (who
     maintains it, grading), route name, route code.
+
+    Turrutebasen's foot routes are the summer's: the summer's routes and stretches only, whatever else is asked.
     """
     digits = 7 if srid == 4326 else 2
-    params = {"area": (area or "").lower(), "srid": srid, "digits": digits}
+    params = {"area": (area or "").lower(), "srid": srid, "digits": digits, "summer": seasons.SUMMER}
     out: list[dict] = []
 
     def add(change, text, *, lokalid=None, versjonid=None, rutenummer=(), was=None, now=None,
@@ -79,7 +81,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         LEFT JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed',
              LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(ST_GeometryN(t.geom, 1), 0.5), 4326) AS p) c
         WHERE sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen' AND sr.ref_type = 'adopted_from'
-          AND e.status <> 'undone'
+          AND e.status <> 'undone' AND e.season = %(summer)s
           AND (%(area)s = '' OR EXISTS (SELECT 1 FROM unnest(t.codes) code
                                         WHERE code ~ ('^' || %(area)s || '[0-9]')))
         GROUP BY t.id, c.p ORDER BY t.id""", params)
@@ -144,7 +146,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                                      AND sr.source_key = 'turrutebasen'
         LEFT JOIN source_index.route c ON c.id = sr.detail->>'candidate_id'
         LEFT JOIN source_index.route l ON c.id IS NULL AND l.label = sr.detail->>'label'
-        WHERE r.status = 'active' AND r.discontinued_since IS NULL
+        WHERE r.status = 'active' AND r.season = %(summer)s AND r.discontinued_since IS NULL
           AND r.unpublished_why IS NULL      -- not published: nothing is added for it; its number is asked off, below
           AND (%(area)s = '' OR lower(sr.external_id) ~ ('^' || %(area)s || '[0-9]'))
         ORDER BY length(r.code), r.code""", params)
@@ -230,7 +232,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
     for w in _rows(conn, """
             WITH gone AS (
                 SELECT DISTINCT c.id, c.code, NULL::text AS why FROM history.event e
-                JOIN core.route r ON r.id = e.subject_id AND r.status = 'retired'
+                JOIN core.route r ON r.id = e.subject_id AND r.status = 'retired' AND r.season = %(summer)s
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
                 JOIN source_index.route c ON c.label = sr.detail->>'label'
@@ -247,7 +249,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
                 JOIN source_index.route c ON c.label = sr.detail->>'label'
-                WHERE r.status = 'active' AND r.discontinued_since IS NOT NULL
+                WHERE r.status = 'active' AND r.season = %(summer)s AND r.discontinued_since IS NOT NULL
                   AND (%(area)s = '' OR lower(c.code) ~ ('^' || %(area)s || '[0-9]'))
               UNION     -- kept and not published: not to be shown by Turrutebasen either
                 SELECT DISTINCT c.id, c.code, 'not published: ' || r.unpublished_why
@@ -255,14 +257,15 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
                 JOIN source_index.route c ON c.label = sr.detail->>'label'
-                WHERE r.status = 'active' AND r.unpublished_why IS NOT NULL AND r.discontinued_since IS NULL
+                WHERE r.status = 'active' AND r.season = %(summer)s AND r.unpublished_why IS NOT NULL
+                  AND r.discontinued_since IS NULL
                   AND (%(area)s = '' OR lower(c.code) ~ ('^' || %(area)s || '[0-9]')))
             SELECT g.code AS rutenummer, g.why, t.id AS lokalid, t.codes, t.attrs->>'versjonid' AS versjonid,
                    t.length_m AS metres, ST_AsGeoJSON(ST_Transform(t.geom, %(srid)s), %(digits)s)::json AS geometry,
                    ARRAY[ST_X(p.p), ST_Y(p.p)] AS at,
                    (SELECT array_agg(DISTINCT y.code ORDER BY y.code) FROM core.source_reference ad
                     JOIN core.route_leg l ON l.edge_id = ad.subject_id
-                    JOIN core.route y ON y.id = l.route_id AND y.status = 'active'
+                    JOIN core.route y ON y.id = l.route_id AND y.status = 'active' AND y.season = %(summer)s
                     WHERE ad.subject_type = 'edge' AND ad.source_key = 'turrutebasen'
                       AND ad.ref_type = 'adopted_from' AND ad.external_id = t.id) AS others
             FROM gone g JOIN source_index.route_segment rs ON rs.route_id = g.id

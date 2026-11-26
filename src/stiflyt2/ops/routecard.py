@@ -76,10 +76,10 @@ def gather(conn, route: str, parts: list[str], notices: bool = True) -> dict:
         uuid.UUID(route)
     except ValueError:
         raise NotFound(f"no route in use has the id {route}") from None
-    row = conn.execute("SELECT code FROM core.route WHERE id = %s AND status = 'active'", (route,)).fetchone()
+    row = conn.execute("SELECT code, season FROM core.route WHERE id = %s AND status = 'active'", (route,)).fetchone()
     if not row:
         raise NotFound(f"no route in use has the id {route}")
-    code = row[0]
+    code, season = row
     facts = factsheet.of_route(conn, route)
     walked = on_route.Route(conn, route)
     card = {"id": route, "code": code, "area": code[:3].lower(), "parts": parts, "facts": facts, "metres": walked.metres,
@@ -101,7 +101,7 @@ def gather(conn, route: str, parts: list[str], notices: bool = True) -> dict:
     if "heritage" in parts:
         card["heritage"] = _heritage(conn, route, walked)
     if "upkeep" in parts:
-        card["upkeep"] = next((s for s in reports.status(conn, card["area"]) if s["id"] == route), None)
+        card["upkeep"] = next((s for s in reports.status(conn, card["area"], season=season) if s["id"] == route), None)
         card["reports"] = reports.listing(conn, route=route)[:10]
     if "photos" in parts:
         card["photos"] = photos.listing(conn, route=route)[:12]

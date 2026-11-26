@@ -446,7 +446,7 @@ def test_a_stretch_is_redrawn_a_junction_moved_and_a_route_carried_on(conn):
     with pytest.raises(places.Invalid, match="does not touch"):
         routes.add_stretch(conn, route["id"], longer["version"], AUTHOR, segment_id=FAR)
     routes.remove_leg(conn, route["id"], longer["version"], routes._segment_edges(
-        conn, AUTHOR, "t.id = %(id)s", onward)[0], AUTHOR)
+        conn, AUTHOR, "t.id = %(id)s", onward, season="summer")[0], AUTHOR)
     assert str(routes.owner_of(conn, candidate(conn, "bre18"))) == str(route["id"])
 
     # A junction dropped on another is joined to it. The stretch that ran between the two has
@@ -475,7 +475,7 @@ def test_a_stretch_is_redrawn_a_junction_moved_and_a_route_carried_on(conn):
                                              FROM core.node n WHERE n.id = %(n)s)""", {"n": fork},
                             fork, routes._node_at(conn, conn.execute(
                                 "SELECT ST_Translate(geom, 20, 20) FROM core.node WHERE id = %s",
-                                (fork,)).fetchone()[0]), "trail", "drawn", True, True)
+                                (fork,)).fetchone()[0]), "trail", "drawn", True, True, season="summer")
     routes._add_legs(conn, route["id"], [spur])
     forked = routes.detail(conn, route["id"])
     assert forked["shape"] == "branched" and len(forked["twigs"]) == 3
@@ -487,7 +487,7 @@ def test_a_stretch_is_redrawn_a_junction_moved_and_a_route_carried_on(conn):
     end = after["ends"][0]["id"]
     loop = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ARRAY[n.geom, ST_Translate(n.geom, 2, 0), n.geom])
                                              FROM core.node n WHERE n.id = %(n)s)""", {"n": end},
-                            end, end, "trail", "adopted", True, True)
+                            end, end, "trail", "adopted", True, True, season="summer")
     routes._add_legs(conn, route["id"], [loop])
     looped = routes.detail(conn, route["id"])
     assert looped["shape"] == "line" and len(looped["ends"]) == 2
@@ -644,7 +644,7 @@ def test_a_stretch_is_divided_where_a_route_is_to_stop_beside_it(conn):
     assert [p[1] for p in parts] == [1, 2] and abs(parts[0][2] + parts[1][2] - metres) <= 1
     assert conn.execute("SELECT status FROM core.edge WHERE id = %s", (edge,)).fetchone() == ("retired",)
     # A candidate made yours later gets every part of a divided segment.
-    assert set(routes._segment_edges(conn, AUTHOR, "t.id = %(id)s", lokalid)) == {p[0] for p in parts}
+    assert set(routes._segment_edges(conn, AUTHOR, "t.id = %(id)s", lokalid, season="summer")) == {p[0] for p in parts}
 
     # Divided and otherwise alike, the segment is still what Turrutebasen has: nothing to report.
     assert not [c for c in corrections.corrections(conn, "bre") if c["lokalid"] == lokalid]
@@ -704,7 +704,7 @@ def test_an_end_is_moved_and_a_route_sent_another_way_without_touching_any_stret
     for a, b in ((before, side), (side, after)):
         routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(x.geom, y.geom) FROM core.node x, core.node y
                                           WHERE x.id = %(a)s AND y.id = %(b)s)""", {"a": a, "b": b},
-                         a, b, "trail", "drawn", True, True)
+                         a, b, "trail", "drawn", True, True, season="summer")
     untouched = lines()
     at = conn.execute("SELECT ST_X(ST_Transform(geom, 4326)), ST_Y(ST_Transform(geom, 4326)) "
                       "FROM core.node WHERE id = %s", (side,)).fetchone()
@@ -1258,7 +1258,7 @@ def test_an_end_dropped_on_the_routes_own_start_closes_it_as_a_round_trip(conn):
     back = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ARRAY[b.geom,
             ST_Translate(ST_Centroid(ST_Collect(a.geom, b.geom)), 400, 400), a.geom])
         FROM core.node a, core.node b WHERE a.id = %(a)s AND b.id = %(b)s)""",
-        {"a": start["id"], "b": end["id"]}, end["id"], start["id"], "trail", "drawn", None, None)
+        {"a": start["id"], "b": end["id"]}, end["id"], start["id"], "trail", "drawn", None, None, season="summer")
     version = routes.detail(conn, route)["version"]
 
     shown = routes.move_end(conn, route, version, AUTHOR, end["id"], start["lon"], start["lat"], dry_run=True)
@@ -1306,7 +1306,7 @@ def test_a_route_is_kept_without_being_published(conn):
     routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ARRAY[b.geom,
             ST_Translate(ST_Centroid(ST_Collect(a.geom, b.geom)), 400, 400), a.geom])
         FROM core.node a, core.node b WHERE a.id = %(a)s AND b.id = %(b)s)""",
-        {"a": start["id"], "b": end["id"]}, end["id"], start["id"], "trail", "drawn", None, None)
+        {"a": start["id"], "b": end["id"]}, end["id"], start["id"], "trail", "drawn", None, None, season="summer")
     routes.move_end(conn, route, routes.detail(conn, route)["version"], AUTHOR, end["id"], start["lon"], start["lat"])
     made = routes.detail(conn, route)
     assert made["unpublished"] is None
@@ -1368,7 +1368,7 @@ def test_a_route_that_runs_double_between_two_junctions_is_not_one_line(conn):
     beside = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ARRAY[a.geom,
             ST_Translate(ST_Centroid(ST_Collect(a.geom, b.geom)), 0, %(far)s), b.geom])
         FROM core.node a, core.node b WHERE a.id = %(a)s AND b.id = %(b)s)""",
-        {"a": a, "b": b, "far": metres}, a, b, "trail", "adopted", True, True)
+        {"a": a, "b": b, "far": metres}, a, b, "trail", "adopted", True, True, season="summer")
     routes._add_legs(conn, route, [beside])
 
     twice = routes.detail(conn, route)

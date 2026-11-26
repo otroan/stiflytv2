@@ -8,14 +8,17 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.domain import routes as owned
 
-IN_USE = "t.status = 'active' AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL"
+# In use, and of the season asked for (%(season)s).
+IN_USE = "t.status = 'active' AND t.season = %(season)s AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL"
 
 
-def routes(conn, text: str, limit: int = 10) -> list[dict]:
-    """Routes in use that match: the code itself first, then codes that begin so, then names, then the routes
-    that pass a place so named (with the place). Each with its area and what it is called."""
+def routes(conn, text: str, limit: int = 10, *, season: str = seasons.SUMMER) -> list[dict]:
+    """Routes in use of the season asked for that match: the code itself first, then codes that begin so, then
+    names, then the routes that pass a place so named (with the place). Each with its area and what it is called."""
+    season = seasons.known(season)
     q = text.strip()
     if len(q) < 2:
         return []
@@ -35,7 +38,7 @@ def routes(conn, text: str, limit: int = 10) -> list[dict]:
                 JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
                 WHERE {IN_USE} AND p.name ILIKE '%%' || %(q)s || '%%')
             SELECT * FROM (SELECT DISTINCT ON (id) id::text, code, name, passes, rank FROM hit ORDER BY id, rank, passes) x
-            ORDER BY rank, length(code), code LIMIT %(limit)s""", {"q": q, "limit": limit}).fetchall()
+            ORDER BY rank, length(code), code LIMIT %(limit)s""", {"q": q, "limit": limit, "season": season}).fetchall()
     nameless = [r["id"] for r in found if not r["name"]]
     called = owned.called(conn, nameless) if nameless else {}
     return [{"id": r["id"], "code": r["code"], "area": r["code"][:3].lower(), "name": r["name"] or called.get(r["id"]),

@@ -12,9 +12,10 @@ from fastapi.responses import FileResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from stiflyt2 import height
+from stiflyt2 import height, seasons
 from stiflyt2.api import auth, mcp
 from stiflyt2.api.owned_routes import Seen
+from stiflyt2.api.params import Season
 from stiflyt2.api.places import Editor
 from stiflyt2.domain import routes
 from stiflyt2.ops import tracks, undo
@@ -56,16 +57,18 @@ class Cut(BaseModel):
 
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get(V1)
-    def listed(_: May, area: Area = None, route: Annotated[str | None, Query(max_length=40)] = None) -> list[dict]:
-        """The tracks of an area (or that come within 100 m of one of its routes), or near a route: the latest first."""
+    def listed(_: May, area: Area = None, route: Annotated[str | None, Query(max_length=40)] = None,
+               season: Season = seasons.SUMMER) -> list[dict]:
+        """The tracks of an area (or that come within 100 m of one of its routes of the season), or near a route: the
+        latest first."""
         with read.connection() as conn:
-            return tracks.listing(conn, area, route)
+            return tracks.listing(conn, area, route, season=season)
 
     @app.get(f"{V1}.geojson")
-    def drawn(_: May, area: Annotated[str, Query(pattern="^[A-Za-z]{3}$")]) -> dict:
+    def drawn(_: May, area: Annotated[str, Query(pattern="^[A-Za-z]{3}$")], season: Season = seasons.SUMMER) -> dict:
         """The tracks of an area as lines to draw, simplified to a few metres."""
         with read.connection() as conn:
-            return tracks.lines(conn, area)
+            return tracks.lines(conn, area, season=season)
 
     @app.post(V1, status_code=201)
     async def add(request: Request, author: Adder, area: Area = None,
@@ -78,11 +81,11 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                                                                       filename=filename))
 
     @app.get(f"{V1}/compared")
-    def compared(_: May, area: Area = None) -> dict:
+    def compared(_: May, area: Area = None, season: Season = seasons.SUMMER) -> dict:
         """What the checked tracks of an area (or all) come to: time walking against Naismith's rule, and the
         device's climb against the height model's."""
         with read.connection() as conn:
-            return tracks.compared(conn, area)
+            return tracks.compared(conn, area, season=season)
 
     @app.get(f"{V1}/undo")
     def would_undo(author: May) -> dict:
@@ -174,6 +177,7 @@ class Tracks(mcp.Args):
     area: str | None = Field(None, pattern="^[A-Za-z]{3}$", description="An area: its three letters")
     route: str | None = Field(None, max_length=40, description="Or the tracks that come within 100 m of a route, by "
                                                                "its code or id")
+    season: mcp.Season = seasons.SUMMER
 
 
 @mcp.tool("GPX tracks walked on the routes", feature="tracks")
@@ -186,8 +190,8 @@ def route_tracks(c: mcp.Call, a: Tracks) -> dict:
     from v1 are lines alone, with no times or heights. A track is somebody's way that day: not the route, and not
     proof that a path is there."""
     rid = mcp._route_id(c.conn, a.route) if a.route else None
-    told = tracks.listing(c.conn, a.area, rid)
-    return {"tracks": told, "count": len(told), "compared": tracks.compared(c.conn, a.area)}
+    told = tracks.listing(c.conn, a.area, rid, season=a.season)
+    return {"tracks": told, "count": len(told), "compared": tracks.compared(c.conn, a.area, season=a.season)}
 
 
 class LayOnTrack(mcp.Args):

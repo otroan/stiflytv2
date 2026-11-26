@@ -24,6 +24,7 @@ import time
 import httpx
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.config import settings
 
 PUNKT = "https://ws.geonorge.no/hoydedata/v1/punkt"
@@ -88,11 +89,14 @@ def ask(http: httpx.Client, points: list, tries: int = TRIES) -> list[tuple[floa
     return found
 
 
-def lacking(conn, *, route_id: str | None = None, area: str | None = None, again: bool = False) -> list[dict]:
-    """The lines in use that have no heights yet: of one route, of the routes of one area, or of everything.
+def lacking(conn, *, route_id: str | None = None, area: str | None = None, again: bool = False,
+            season: str = seasons.SUMMER) -> list[dict]:
+    """The lines in use that have no heights yet: of one route, of the routes of one area (of the season asked
+    for), or of everything.
 
     Each with the points to ask about. With `again`, every line, also those that have them.
     """
+    season = seasons.known(season)
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(f"""
             SELECT DISTINCT ON (k.line) k.line,
@@ -106,10 +110,11 @@ def lacking(conn, *, route_id: str | None = None, area: str | None = None, again
               AND (%(area)s::text IS NULL
                    OR e.id IN (SELECT l.edge_id FROM core.route_leg l
                                JOIN core.route t ON t.id = l.route_id AND t.status = 'active'
+                                    AND t.season = %(season)s
                                WHERE lower(t.code) LIKE lower(%(area)s) || '%%'))
               AND (%(again)s OR NOT EXISTS (SELECT 1 FROM height.profile p WHERE p.line = k.line))
             ORDER BY k.line""",
-            {"step": STEP_M, "route": route_id, "area": area, "again": again}).fetchall()
+            {"step": STEP_M, "route": route_id, "area": area, "again": again, "season": season}).fetchall()
 
 
 def along(points: list, flat_m: float, ground_m: float) -> list[float]:

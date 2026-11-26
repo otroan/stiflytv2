@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from stiflyt2.seasons import WINTER_CODE
+
 BUILD = "source_index_build"
 
 # Sign distances need true lengths: planar length in EPSG:25833 is off by
@@ -58,9 +60,8 @@ class Group:
 # stretch: it can change along a route and can be shared, so it is kept per
 # segment, as a list.
 SPLIT_M = 1000
-# DNT's winter routes among the ski trails: the summer code with a v (jot11v, har116v). The other ski trails
-# (prepared tracks, mostly the municipalities') are not routes of DNT's.
-WINTER_CODE = "^[a-z]{3}[0-9]+[a-z]*v$"
+# DNT's winter routes among the ski trails: the summer code with a v (jot11v, har116v; `seasons`). The other ski
+# trails (prepared tracks, mostly the municipalities') are not routes of DNT's.
 
 TURRUTEBASEN = Group(
     source="turrutebasen",

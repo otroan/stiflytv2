@@ -35,7 +35,7 @@ def test_a_short_extra_end_is_proposed_taken_out_and_a_long_one_is_not(conn):
             "SELECT ST_Translate(geom, %s, 0) FROM core.node WHERE id = %s", (metres, fork)).fetchone()[0])
         edge = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(a.geom, b.geom) FROM core.node a,
                                                    core.node b WHERE a.id = %(a)s AND b.id = %(b)s)""",
-                                {"a": fork, "b": end}, fork, end, "trail", "drawn", True, True)
+                                {"a": fork, "b": end}, fork, end, "trail", "drawn", True, True, season="summer")
         routes._add_legs(conn, route, [edge])
         return edge
 
@@ -107,7 +107,7 @@ def test_pieces_lying_close_are_proposed_joined_and_a_loop_taken_out(conn, monke
     end = joined["ends"][0]["id"]
     loop = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ARRAY[n.geom, ST_Translate(n.geom, 2, 0), n.geom])
                                              FROM core.node n WHERE n.id = %(n)s)""", {"n": end},
-                            end, end, "trail", "adopted", True, True)
+                            end, end, "trail", "adopted", True, True, season="summer")
     routes._add_legs(conn, route, [loop])
     offered = [p for p in proposals.proposals(conn, "bre") if p["kind"] == "loop"]
     assert [p["action"] for p in offered] == [{"kind": "loop", "edge": loop}]

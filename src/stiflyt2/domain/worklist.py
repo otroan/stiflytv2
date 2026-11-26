@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.domain import corrections, kept, network, routes
 
 LOW_SHARE = 0.5   # a route with less than this within 20 m of a mapped path is listed
@@ -13,18 +14,22 @@ def _rows(conn, sql: str, params: dict) -> list[dict]:
         return cur.execute(sql, params).fetchall()
 
 
-def routes_of(conn, area: str, discontinued: bool | None = False) -> list[str]:
-    """Your routes of this area: made from its Turrutebasen codes, or with a code of the area themselves.
+def routes_of(conn, area: str, discontinued: bool | None = False, *, season: str = seasons.SUMMER) -> list[str]:
+    """Your routes of this area, of the season asked for: made from its Turrutebasen codes, or with a code of the
+    area themselves.
 
     Those in use, unless the discontinued ones are asked for instead (True) or as well (None).
     """
+    season = seasons.known(season)
     return [str(r) for (r,) in conn.execute("""
         SELECT r.id FROM core.route r
-        WHERE r.status = 'active' AND (%(d)s::boolean IS NULL OR (r.discontinued_since IS NOT NULL) = %(d)s)
+        WHERE r.status = 'active' AND r.season = %(season)s
+          AND (%(d)s::boolean IS NULL OR (r.discontinued_since IS NOT NULL) = %(d)s)
           AND (lower(r.code) ~ ('^' || %(a)s || '[0-9]') OR EXISTS (
             SELECT 1 FROM core.source_reference sr
             WHERE sr.subject_type = 'route' AND sr.subject_id = r.id
-              AND lower(sr.external_id) ~ ('^' || %(a)s || '[0-9]')))""", {"a": area.lower(), "d": discontinued})]
+              AND lower(sr.external_id) ~ ('^' || %(a)s || '[0-9]')))""",
+        {"a": area.lower(), "d": discontinued, "season": season})]
 
 
 def near_mapped(conn, route_ids: list[str], mapped: str) -> dict[str, float | None]:
@@ -67,14 +72,17 @@ def _who(route: dict) -> list[str]:
     return sorted({*(route.get("maintained_by") or []), *(m["name"] for m in route.get("maintainers") or [])} - {"not stated"})
 
 
-def worklist(conn, area: str) -> dict:
-    """Candidates still to be made yours, and what is wrong with your routes, places and network.
+def worklist(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
+    """Candidates still to be made yours, and what is wrong with your routes, places and network, of the season
+    asked for.
 
     An area is a three-letter route code prefix, such as jot.
     """
     from stiflyt2.domain import whose
 
     area = area.lower()
+    season = seasons.known(season)
+    tables = seasons.CANDIDATES[season]
     items = []
     home = set(whose.home_dnt(conn))       # candidates that say only "DNT" and are DNT Oslo og omegn's
 
@@ -88,10 +96,14 @@ def worklist(conn, area: str) -> dict:
         if not (whose.bare(names) or set(ids) & on_dnt):
             return None
         return "home" if set(ids) & home else "bare"
-    candidates = _rows(conn, """
-        SELECT r.id, r.label, r.name, s.shape, s.pieces, s.ends, r.maintainers,
+    # The winter's candidates have no shape worked out: none is said to be one clean line.
+    shape = ("s.shape, s.pieces, s.ends", "JOIN source_index.route_shape s ON s.route_id = r.id")
+    if season != seasons.SUMMER:
+        shape = ("NULL::text AS shape, NULL::int AS pieces, NULL::int AS ends", "")
+    candidates = _rows(conn, f"""
+        SELECT r.id, r.label, r.name, {shape[0]}, r.maintainers,
                round((r.length_m / 1000)::numeric, 1)::float8 AS length_km
-        FROM source_index.route r JOIN source_index.route_shape s ON s.route_id = r.id
+        FROM source_index.{tables.route} r {shape[1]}
         WHERE r.area_prefix = %(a)s ORDER BY length(r.code), r.label""", {"a": area})
     clean, left = 0, 0
     withdrawn = routes.withdrawn_by_a_person(conn)
@@ -109,37 +121,40 @@ def worklist(conn, area: str) -> dict:
             # A number on a bit of line away from its route, not a route to make yours.
             left += 1
             row["withdrawn"] = True
-            over = [code for (code,) in conn.execute("""
-                SELECT DISTINCT y.code FROM source_index.route_segment rs
+            over = [code for (code,) in conn.execute(f"""
+                SELECT DISTINCT y.code FROM source_index.{tables.route_segment} rs
                 JOIN core.source_reference ad ON ad.subject_type = 'edge' AND ad.source_key = 'turrutebasen'
                      AND ad.ref_type = 'adopted_from' AND ad.external_id = rs.segment_id
                 JOIN core.route_leg l ON l.edge_id = ad.subject_id
-                JOIN core.route y ON y.id = l.route_id AND y.status = 'active'
-                WHERE rs.route_id = %s ORDER BY 1""", (c["id"],))]
+                JOIN core.route y ON y.id = l.route_id AND y.status = 'active' AND y.season = %s
+                WHERE rs.route_id = %s ORDER BY 1""", (season, c["id"]))]
             named = over[0] if len(over) == 1 else ", ".join(over[:-1]) + " and " + over[-1] if over else ""
             row["problems"] = [f"Taken out of {taken_out[c['label']]}, which was made from it"
                                + (f": {named} {'runs' if len(over) == 1 else 'run'} there" if over else "")
                                + ". Kartverket is asked to take the number off"]
             continue
-        if c["shape"] == "line":
+        if c["shape"] in ("line", None):
             if c["label"] in withdrawn:
                 left += 1  # a person withdrew its route: making in bulk leaves it alone
                 row["withdrawn"] = True
                 # Where other routes of yours run over all of it, it was a number too many, not a route.
-                covered = conn.execute("""
+                covered = conn.execute(f"""
                     SELECT coalesce(sum(t.length_m) FILTER (WHERE EXISTS (
                                SELECT 1 FROM core.source_reference ad JOIN core.route_leg l ON l.edge_id = ad.subject_id
-                               JOIN core.route y ON y.id = l.route_id AND y.status = 'active'
+                               JOIN core.route y ON y.id = l.route_id AND y.status = 'active' AND y.season = %s
                                WHERE ad.subject_type = 'edge' AND ad.source_key = 'turrutebasen'
                                  AND ad.ref_type = 'adopted_from' AND ad.external_id = t.id)), 0)
                            / nullif(sum(t.length_m), 0)
-                    FROM source_index.route_segment rs JOIN source_index.trail_segment t ON t.id = rs.segment_id
-                    WHERE rs.route_id = %s""", (c["id"],)).fetchone()[0] or 0
+                    FROM source_index.{tables.route_segment} rs
+                    JOIN source_index.{tables.segment} t ON t.id = rs.segment_id
+                    WHERE rs.route_id = %s""", (season, c["id"])).fetchone()[0] or 0
                 row["problems"] = ["You withdrew it: other routes of yours run there, and Kartverket is asked "
                                    "to take the number off" if covered >= corrections.COVERED
                                    else "You withdrew it: a number on a stray bit of line, which Kartverket is asked "
                                         "to take off" if c["length_km"] * 1000 < corrections.STRAY_M
                                    else "You withdrew it: it is left as a candidate"]
+            elif c["shape"] is None:
+                row["problems"] = ["Not made yours yet"]
             else:
                 clean += 1
                 row["problems"] = ["One clean line, not made yours yet"]
@@ -150,16 +165,16 @@ def worklist(conn, area: str) -> dict:
         items.append({"about": "candidate", "id": c["id"], "label": c["label"],
                       "problem": "shape", "text": f"Not yours yet: {what}"})
 
-    mine = routes_of(conn, area)
+    mine = routes_of(conn, area, season=season)
     made_from: dict[str, list] = {}
     for route_id, candidate in conn.execute(
             """SELECT subject_id::text, detail->>'candidate_id' FROM core.source_reference
                WHERE subject_type = 'route' AND ref_type = 'adopted_from' AND subject_id = ANY(%s::uuid[])""",
-            ([str(m) for m in [*mine, *routes_of(conn, area, discontinued=True)]],)):
+            ([str(m) for m in [*mine, *routes_of(conn, area, discontinued=True, season=season)]],)):
         made_from.setdefault(route_id, []).append(candidate)
     made_ids = [c for cs in made_from.values() for c in cs if c]
     on_dnt.update(i for i, names in conn.execute(
-        "SELECT id, maintainers FROM source_index.route WHERE id = ANY(%s)", (made_ids,))
+        f"SELECT id, maintainers FROM source_index.{tables.route} WHERE id = ANY(%s)", (made_ids,))
         if whose.BARE in {whose.norm(n) for n in names or []} and whose.HOME not in {whose.norm(n) for n in names or []})
     mapped = routes.mapped_lines(conn)      # paths, and roads where they are loaded
     share = near_mapped(conn, mine, mapped)
@@ -209,7 +224,7 @@ def worklist(conn, area: str) -> dict:
         if p["points"] > 1:
             items.append({"about": "place", "id": str(p["id"]), "label": p["name"], "problem": "place",
                           "text": f"Routes arrive at {p['points']} spots: check which belong"})
-    net = network.validate(conn, mine)
+    net = network.validate(conn, mine, season=season)
     # A finding a person has looked at and found right is kept apart, and can be brought back.
     settled = {key for (key,) in conn.execute("SELECT key FROM core.accepted_finding")}
     accepted = []
@@ -220,7 +235,7 @@ def worklist(conn, area: str) -> dict:
                 "whole": f.get("whole", False), "bbox": f.get("bbox")}
         (accepted if f["key"] in settled else items).append(item)
     # Discontinued routes are kept and listed, and nothing is asked of them.
-    for route_id in routes_of(conn, area, discontinued=True):
+    for route_id in routes_of(conn, area, discontinued=True, season=season):
         r = routes.detail(conn, route_id)
         rows.append({"kind": "yours", "id": r["id"], "code": r["code"], "name": r["name"] or r["generated_name"],
                      "km": round(r["length"]["on_foot_m"] / 1000, 1), "done": r["reviewed"], "discontinued": True,

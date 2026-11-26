@@ -15,6 +15,7 @@ import math
 from datetime import date
 from html import escape
 
+from stiflyt2 import seasons
 from stiflyt2.domain.places import NotFound
 from stiflyt2.ops import signs
 
@@ -69,7 +70,7 @@ def _map(site: dict, lines: list[list]) -> str:
 
 
 def _routes_near(conn, site: dict) -> list[list]:
-    """The lines of the routes around a site, as longitude and latitude."""
+    """The lines of the summer's routes around a site, as longitude and latitude: the signs are the summer's, for now."""
     lines = []
     for (geometry,) in conn.execute("""
             SELECT ST_AsGeoJSON(ST_Transform(ST_Intersection(r.geom, ST_Buffer(c.at, %(around)s)), 4326), 6)::json
@@ -77,8 +78,9 @@ def _routes_near(conn, site: dict) -> list[list]:
                  core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
             WHERE e.status = 'active' AND ST_DWithin(r.geom, c.at, %(around)s)
               AND EXISTS (SELECT 1 FROM core.route_leg g JOIN core.route t ON t.id = g.route_id AND t.status = 'active'
-                          AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL WHERE g.edge_id = e.id)""",
-            {"lon": site["lon"], "lat": site["lat"], "around": AROUND_M}):
+                          AND t.season = %(summer)s AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL
+                          WHERE g.edge_id = e.id)""",
+            {"lon": site["lon"], "lat": site["lat"], "around": AROUND_M, "summer": seasons.SUMMER}):
         if geometry["type"] == "LineString":
             lines.append(geometry["coordinates"])
         elif geometry["type"] == "MultiLineString":

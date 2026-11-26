@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
 from stiflyt2.domain import kept, places, routes, worklist
 from stiflyt2.domain.places import AUTOMATIC
 
@@ -39,19 +40,20 @@ def _version(conn, route_id: str) -> int:
 def _between(conn, route_id: str, a: str, b: str) -> tuple[dict, float] | None:
     """A stretch that already runs between two nodes and is not part of the route: how to add it, and its length.
 
-    One of yours first, else a Turrutebasen segment whose two ends lie at the two nodes.
+    One of yours first, else a Turrutebasen segment whose two ends lie at the two nodes: of the route's season.
     """
+    season = routes.season_of(conn, route_id)
     yours = conn.execute("""
         SELECT e.id::text, ST_Length(r.geom) FROM core.edge e
         JOIN core.edge_revision r ON r.id = e.current_revision_id
-        WHERE e.status = 'active' AND r.kind <> 'connector'
+        WHERE e.status = 'active' AND e.season = %(season)s AND r.kind <> 'connector'
           AND (r.a_node, r.b_node) IN ((%(a)s::uuid, %(b)s::uuid), (%(b)s::uuid, %(a)s::uuid))
           AND NOT EXISTS (SELECT 1 FROM core.route_leg l WHERE l.edge_id = e.id AND l.route_id = %(r)s)
-        ORDER BY 2 LIMIT 1""", {"a": a, "b": b, "r": route_id}).fetchone()
+        ORDER BY 2 LIMIT 1""", {"a": a, "b": b, "r": route_id, "season": season}).fetchone()
     if yours:
         return {"edge_id": yours[0]}, yours[1]
-    segment = conn.execute("""
-        SELECT t.id, t.length_m FROM core.node x, core.node y, source_index.trail_segment t
+    segment = conn.execute(f"""
+        SELECT t.id, t.length_m FROM core.node x, core.node y, source_index.{seasons.CANDIDATES[season].segment} t
         WHERE x.id = %(a)s AND y.id = %(b)s AND GeometryType(t.geom) = 'LINESTRING'
           AND ST_DWithin(t.geom, x.geom, %(m)s) AND ST_DWithin(t.geom, y.geom, %(m)s)
           AND ((ST_DWithin(ST_StartPoint(t.geom), x.geom, %(m)s) AND ST_DWithin(ST_EndPoint(t.geom), y.geom, %(m)s))
@@ -157,17 +159,20 @@ def _snap(conn, edge_id: str) -> dict | None:
             "length_m": traced["length_m"], "geometry": traced["geometry"]}
 
 
-def proposals(conn, area: str) -> list[dict]:
-    """What can be proposed for an area now. Needs a connection that may write; keeps nothing."""
-    area = area.lower()
+def proposals(conn, area: str, *, season: str = seasons.SUMMER) -> list[dict]:
+    """What can be proposed for an area's routes of a season now. Needs a connection that may write; keeps
+    nothing."""
+    area, season = area.lower(), seasons.known(season)
     out = []
 
-    # Candidates that are not one line: would they be, with a short end out or two pieces joined?
+    # Candidates that are not one line: would they be, with a short end out or two pieces joined? (Turrutebasen's
+    # summer routes: of its winter routes nothing says their shape.)
     for c in _rows(conn, """
             SELECT r.id, r.label FROM source_index.route r
             JOIN source_index.route_shape s ON s.route_id = r.id
-            WHERE r.area_prefix = %(a)s AND s.shape <> 'line' ORDER BY length(r.code), r.label""",
-            {"a": area}):
+            WHERE r.area_prefix = %(a)s AND s.shape <> 'line' AND %(season)s = %(summer)s
+            ORDER BY length(r.code), r.label""",
+            {"a": area, "season": season, "summer": seasons.SUMMER}):
         if routes.owner_of(conn, c["id"]):
             continue
         done = _try(conn, lambda c=c: _repair(conn, routes.make(conn, c["id"], AUTOMATIC), AUTOMATIC))
@@ -177,7 +182,7 @@ def proposals(conn, area: str) -> list[dict]:
             out.append({**done, "label": c["label"], "text": text,
                         "action": {"kind": done["kind"], "candidate": c["id"]}})
 
-    mine = worklist.routes_of(conn, area)
+    mine = worklist.routes_of(conn, area, season=season)
     # Your routes that are not one line.
     for route in _rows(conn, """SELECT id::text AS id, code FROM core.route
                                 WHERE id = ANY(%(ids)s::uuid[]) ORDER BY length(code), code""",
@@ -224,7 +229,7 @@ def proposals(conn, area: str) -> list[dict]:
             JOIN core.node x ON x.id = ends.n
             JOIN core.place p ON p.id = x.place_id AND p.status = 'confirmed' AND p.primary_node_id <> x.id
             JOIN core.edge_revision r ON (r.a_node, r.b_node) IN ((x.id, p.primary_node_id), (p.primary_node_id, x.id))
-            JOIN core.edge e ON e.current_revision_id = r.id AND e.status = 'active'
+            JOIN core.edge e ON e.current_revision_id = r.id AND e.status = 'active' AND e.season = t.season
             WHERE r.kind NOT IN ('connector', 'water')
               AND NOT EXISTS (SELECT 1 FROM core.route_leg l WHERE l.route_id = t.id AND l.edge_id = e.id)
             ORDER BY length(t.code), t.code""", {"ids": mine}):
@@ -295,7 +300,7 @@ def proposals(conn, area: str) -> list[dict]:
     # An arrival point of a place that your routes only pass: left from when the place was made
     # from where Turrutebasen's routes ended, before the routes were mended. Not one where a route
     # of yours ends, nor one where a Turrutebasen segment that is not yours yet ends.
-    for spot in _rows(conn, """
+    for spot in _rows(conn, f"""
             WITH touch AS (
                 SELECT l.route_id, x.n AS node, count(*) AS legs
                 FROM core.route_leg l JOIN core.route t ON t.id = l.route_id AND t.status = 'active'
@@ -315,7 +320,7 @@ def proposals(conn, area: str) -> list[dict]:
               AND EXISTS (SELECT 1 FROM touch x WHERE x.node = n.id AND x.route_id = ANY(%(ids)s::uuid[]))
               AND NOT EXISTS (SELECT 1 FROM touch x WHERE x.node = n.id AND x.legs = 1)
               AND NOT EXISTS (
-                  SELECT 1 FROM source_index.trail_segment s
+                  SELECT 1 FROM source_index.{seasons.CANDIDATES[season].segment} s
                   WHERE ST_DWithin(s.geom, n.geom, %(near)s) AND GeometryType(s.geom) = 'LINESTRING'
                     AND (ST_DWithin(ST_StartPoint(s.geom), n.geom, %(near)s)
                          OR ST_DWithin(ST_EndPoint(s.geom), n.geom, %(near)s))
@@ -406,7 +411,7 @@ def approve(conn, author: str, action: dict) -> str | None:
 _TOLD = ("code", "was_m", "length_m", "turrutebasen_m", "beside_m", "followed_m", "stretches", "moves_m")
 
 
-def against_mapped(conn, area: str) -> dict:
+def against_mapped(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
     """Every route of the area against the mapped paths and roads: what laying each on them would give.
 
     Nothing is changed. A route is listed when a mapped line runs beside it
@@ -414,7 +419,7 @@ def against_mapped(conn, area: str) -> dict:
     """
     done = {str(r) for (r,) in conn.execute("SELECT id FROM core.route WHERE status = 'active' AND reviewed")}
     seen, rows, compared, was, beside = {}, [], 0, 0, 0
-    for route_id in worklist.routes_of(conn, area):
+    for route_id in worklist.routes_of(conn, area, season=season):
         found = routes.compare_with_mapped(conn, route_id, "", seen=seen)
         compared, was, beside = compared + 1, was + found["was_m"], beside + found["beside_m"]
         if found["stretches"]:
@@ -423,13 +428,13 @@ def against_mapped(conn, area: str) -> dict:
     return {"area": area.lower(), "compared": compared, "was_m": was, "beside_m": beside, "routes": rows}
 
 
-def lay_all_beside(conn, area: str, author: str) -> dict:
+def lay_all_beside(conn, area: str, author: str, *, season: str = seasons.SUMMER) -> dict:
     """Lay every route of the area that is not done on the mapped paths and roads beside it. One action.
 
     A stretch that a route said to be done runs over is left as it is, also
     where another route shares it: done means a person has found it right.
     """
-    mine = worklist.routes_of(conn, area)
+    mine = worklist.routes_of(conn, area, season=season)
     done = {str(r) for (r,) in conn.execute("SELECT id FROM core.route WHERE status = 'active' AND reviewed")}
     leave = frozenset(str(e) for (e,) in conn.execute(
         "SELECT DISTINCT edge_id FROM core.route_leg WHERE route_id = ANY(%s::uuid[])", (sorted(done),)))

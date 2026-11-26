@@ -13,7 +13,9 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Respo
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from stiflyt2 import seasons
 from stiflyt2.api import auth, mcp
+from stiflyt2.api.params import Season
 from stiflyt2.ops import issues, undo
 
 V1 = "/api/v1/issues"
@@ -87,10 +89,11 @@ class Undo(BaseModel):
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get(V1)
     def listed(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
-               route: Annotated[str | None, Query(max_length=40)] = None) -> list[dict]:
-        """The issues and notices of an area or a route: open first, notices in force first among them."""
+               route: Annotated[str | None, Query(max_length=40)] = None, season: Season = seasons.SUMMER) -> list[dict]:
+        """The issues and notices of an area's routes of a season, or of a route: open first, notices in force
+        first among them."""
         with read.connection() as conn:
-            return issues.listing(conn, area, route)
+            return issues.listing(conn, area, route, season=season)
 
     @app.get(f"{V1}/undo")
     def would_undo(author: May) -> dict:
@@ -143,6 +146,7 @@ class Issues(mcp.Args):
     area: str | None = Field(None, pattern="^[A-Za-z]{3}$", description="An area: its three letters")
     route: str | None = Field(None, max_length=40, description="Or one route, by its code or id")
     all: bool = Field(False, description="True: also what is done or dismissed")
+    season: mcp.Season = seasons.SUMMER
 
 
 @mcp.tool("Issues and notices on the routes", feature="issues")
@@ -153,7 +157,7 @@ def route_issues(c: mcp.Call, a: Issues) -> dict:
     where it is (`lon`, `lat`), its state (reported, planned, done, dismissed), whether a notice is in force
     (`active`), and whether it has lost what it hung on (`adrift`). Open ones only, unless `all`."""
     rid = mcp._route_id(c.conn, a.route) if a.route else None
-    told = [e for e in issues.listing(c.conn, a.area, rid) if a.all or e["open"]]
+    told = [e for e in issues.listing(c.conn, a.area, rid, season=a.season) if a.all or e["open"]]
     for e in told:
         e.pop("lines", None)
     return {"issues": told, "count": len(told)}

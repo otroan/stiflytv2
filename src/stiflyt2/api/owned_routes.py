@@ -10,8 +10,9 @@ from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from stiflyt2 import height, utno
+from stiflyt2 import height, seasons, utno
 from stiflyt2.api import auth
+from stiflyt2.api.params import Season
 from stiflyt2.api.places import Editor
 from stiflyt2.domain import (
     corrections,
@@ -137,6 +138,8 @@ class Way(BaseModel):
     code: str | None = Field(None, max_length=40)
     name: str | None = Field(None, max_length=160)
     version: int | None = None
+    # The season of a new route: the one its code says when left out (a v after the number: the winter's).
+    season: seasons.Season | None = None
 
 
 class Moved(BaseModel):
@@ -199,28 +202,30 @@ def utno_says(route: dict, address: str | None) -> dict:
 
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get("/api/v1/areas/{area}/worklist")
-    def todo(area: Area) -> dict:
-        """What needs attention in an area: shapes, geometry, names, places."""
+    def todo(area: Area, season: Season = seasons.SUMMER) -> dict:
+        """What needs attention in an area's routes of the season: shapes, geometry, names, places."""
         with read.connection() as conn:
-            return worklist.worklist(conn, area)
+            return worklist.worklist(conn, area, season=season)
 
     @app.get("/api/v1/report")
-    def areas_report(maintainer: Annotated[str | None, Query(max_length=120)] = None) -> dict:
+    def areas_report(maintainer: Annotated[str | None, Query(max_length=120)] = None,
+                     season: Season = seasons.SUMMER) -> dict:
         """Every area side by side: ground covered and how much of it is marked, shared stretches counted once."""
         with read.connection() as conn:
-            return report.areas(conn, maintainer)
+            return report.areas(conn, maintainer, season=season)
 
     @app.get("/api/v1/owned/areas")
-    def areas_in_use() -> list[dict]:
-        """The areas that have routes of yours in use: how many, and how far they go."""
+    def areas_in_use(season: Season = seasons.SUMMER) -> list[dict]:
+        """The areas that have routes of yours of the season in use: how many, and how far they go."""
         with read.connection() as conn:
-            return overview.areas(conn)
+            return overview.areas(conn, season=season)
 
     @app.get("/api/v1/owned/areas/{area}")
-    def area_in_use(area: Area) -> dict:
-        """One area: its routes in use with length, climb, time and grading, and what they add up to."""
+    def area_in_use(area: Area, season: Season = seasons.SUMMER) -> dict:
+        """One area: its routes of the season in use with length, climb, time and grading, and what they add up
+        to."""
         with read.connection() as conn:
-            return overview.area(conn, area)
+            return overview.area(conn, area, season=season)
 
     @app.get("/api/v1/maintainers")
     def who_maintains() -> dict:
@@ -231,10 +236,10 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return {"home": settings.home_maintainer or None, "maintainers": report.maintainers(conn)}
 
     @app.get("/api/v1/areas/{area}/report")
-    def area_report(area: Area) -> dict:
-        """Where an area stands: routes, lengths, maintainers, the network, and what is left."""
+    def area_report(area: Area, season: Season = seasons.SUMMER) -> dict:
+        """Where an area stands in a season: routes, lengths, maintainers, the network, and what is left."""
         with read.connection() as conn:
-            return report.report(conn, area)
+            return report.report(conn, area, season=season)
 
     @app.get("/api/v1/current/{subject}/{subject_id}")
     def stands_for(subject: Literal["route", "node", "edge", "place"],
@@ -250,16 +255,16 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return identity.lookup(conn, q)
 
     @app.get("/api/v1/areas/{area}/mapped")
-    def against_mapped(area: Area) -> dict:
+    def against_mapped(area: Area, season: Season = seasons.SUMMER) -> dict:
         """Every route of the area against the mapped paths and roads: what laying each on them would give."""
         with read.connection() as conn:
-            return proposals.against_mapped(conn, area)
+            return proposals.against_mapped(conn, area, season=season)
 
     @app.post("/api/v1/areas/{area}/mapped")
-    def lay_all_beside(area: Area, author: Editor) -> dict:
+    def lay_all_beside(area: Area, author: Editor, season: Season = seasons.SUMMER) -> dict:
         """Lay every route of the area that is not done on the mapped paths and roads beside it. One action."""
         with write.connection() as conn:
-            return proposals.lay_all_beside(conn, area, author)
+            return proposals.lay_all_beside(conn, area, author, season=season)
 
     @app.get("/api/v1/health")
     def health() -> dict:
@@ -273,10 +278,10 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 
     @app.get("/api/v1/search/routes")
     def search_routes(q: Annotated[str, Query(min_length=1, max_length=100)],
-                      limit: Annotated[int, Query(ge=1, le=30)] = 10) -> list[dict]:
+                      limit: Annotated[int, Query(ge=1, le=30)] = 10, season: Season = seasons.SUMMER) -> list[dict]:
         """Routes of ours in use by code, by name, or by a place they pass: for the search on the front page."""
         with read.connection() as conn:
-            return search.routes(conn, q, limit)
+            return search.routes(conn, q, limit, season=season)
 
     @app.get("/api/v1/owned/route-names")
     def route_names(ids: Annotated[str, Query(max_length=1000)]) -> dict[str, str | None]:
@@ -388,11 +393,11 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         return Response(status_code=204)
 
     @app.get("/api/v1/areas/{area}/proposals")
-    def proposed(area: Area) -> list[dict]:
+    def proposed(area: Area, season: Season = seasons.SUMMER) -> list[dict]:
         """Repairs simple enough to approve at a glance. Each is tried out first; nothing is kept."""
         with write.connection() as conn:
             try:
-                return proposals.proposals(conn, area)
+                return proposals.proposals(conn, area, season=season)
             finally:
                 conn.rollback()
 
@@ -586,10 +591,12 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 
     @app.post(f"{V1}/plan")
     def plan(body: Way) -> dict:
-        """The shortest way through the points over what exists, as a route would be laid. Keeps nothing."""
+        """The shortest way through the points over what exists of the season, as a route would be laid. Keeps
+        nothing."""
+        season = body.season or (seasons.of_code(body.code) if body.code else seasons.SUMMER)
         with write.connection() as conn:
             try:
-                return routes.plan(conn, body.points, body.reach_m)
+                return routes.plan(conn, body.points, body.reach_m, season=season)
             finally:
                 conn.rollback()
 
@@ -640,7 +647,7 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         """Make a new route through the points."""
         with write.connection() as conn:
             return routes.detail(conn, routes.lay_out(conn, author, body.points, body.code or "",
-                                                      body.name, body.reach_m))
+                                                      body.name, body.reach_m, season=body.season))
 
     @app.post(f"{V1}/{{route_id}}/between")
     def lay_out_again(route_id: str, body: Way, author: Editor) -> dict:
@@ -652,8 +659,9 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
             return routes.detail(conn, route_id)
 
     @app.get(f"{V1}.geojson")
-    def collection(edges: Annotated[str | None, Query(max_length=8000)] = None) -> dict:
-        """Every stretch used by one of your routes, with its kind and whether it is marked.
+    def collection(edges: Annotated[str | None, Query(max_length=8000)] = None,
+                   season: Season = seasons.SUMMER) -> dict:
+        """Every stretch used by one of your routes of the season, with its kind and whether it is marked.
 
         With `edges` (ids with commas between, at most 200), only those: what a page reads anew after a change.
         """
@@ -666,13 +674,13 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
                 except ValueError:
                     continue
         with read.connection() as conn:
-            return routes.collection(conn, wanted)
+            return routes.collection(conn, wanted, season=season)
 
     @app.get(f"{V1}.marks")
-    def marks() -> dict[str, str]:
+    def marks(season: Season = seasons.SUMMER) -> dict[str, str]:
         """A mark per stretch on the map that changes when anything the map says of it does."""
         with read.connection() as conn:
-            return routes.marks(conn)
+            return routes.marks(conn, season=season)
 
     @app.get(f"{V1}/{{route_id}}")
     def route(route_id: str) -> dict:

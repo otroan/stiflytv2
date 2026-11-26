@@ -13,19 +13,21 @@ import re
 
 from psycopg.types.json import Jsonb
 
+from stiflyt2 import seasons
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import anchor
 
 _AREA = re.compile(r"^[a-z]{3}$")
 
 
-def added(conn) -> dict[str, list[str]]:
-    """The routes in use added to each area from another, by area: their ids now."""
+def added(conn, *, season: str = seasons.SUMMER) -> dict[str, list[str]]:
+    """The routes in use of the season asked for added to each area from another, by area: their ids now."""
+    season = seasons.known(season)
     rows = conn.execute("SELECT area, route_id::text FROM ops.area_route ORDER BY added_at").fetchall()
     now = anchor.stands_for(conn, "route", {r for _, r in rows})
     in_use = {i for (i,) in conn.execute("""SELECT id::text FROM core.route WHERE id = ANY(%s::uuid[]) AND status = 'active'
-                                            AND discontinued_since IS NULL AND unpublished_why IS NULL""",
-                                         ([i for v in now.values() for i in v],))}
+                                            AND season = %s AND discontinued_since IS NULL AND unpublished_why IS NULL""",
+                                         ([i for v in now.values() for i in v], season))}
     told: dict[str, list[str]] = {}
     for area, route in rows:
         for r in now.get(route, []):
@@ -34,13 +36,17 @@ def added(conn) -> dict[str, list[str]]:
     return told
 
 
-def added_to(conn, area: str) -> list[str]:
-    return added(conn).get((area or "").lower(), [])
+def added_to(conn, area: str, *, season: str = seasons.SUMMER) -> list[str]:
+    """The routes in use of the season asked for added to this area from another: their ids now."""
+    return added(conn, season=season).get((area or "").lower(), [])
 
 
 def listing(conn) -> dict[str, list[dict]]:
-    """The routes added to each area, with their codes: for a page to show and take out."""
-    ids = added(conn)
+    """The routes added to each area, of both seasons, with their codes: for a page to show and take out."""
+    ids: dict[str, list[str]] = {}
+    for season in seasons.SEASONS:
+        for a, v in added(conn, season=season).items():
+            ids.setdefault(a, []).extend(v)
     codes = dict(conn.execute("SELECT id::text, code FROM core.route WHERE id = ANY(%s::uuid[])",
                               ([i for v in ids.values() for i in v],)).fetchall())
     return {a: [{"id": i, "code": codes.get(i)} for i in v] for a, v in ids.items()}
@@ -53,11 +59,11 @@ def _event(conn, author, area: str, type_: str, payload: dict) -> None:
 
 
 def _route(conn, code: str) -> dict:
-    found = conn.execute("""SELECT id::text, code FROM core.route WHERE status = 'active' AND lower(code) = lower(%s)
+    found = conn.execute("""SELECT id::text, code, season FROM core.route WHERE status = 'active' AND lower(code) = lower(%s)
                             AND discontinued_since IS NULL""", (code.strip(),)).fetchone()
     if not found:
         raise NotFound(f"no route of ours in use is called {code}")
-    return {"id": found[0], "code": found[1]}
+    return {"id": found[0], "code": found[1], "season": found[2]}
 
 
 def add(conn, author, area: str, code: str) -> dict:
@@ -68,7 +74,7 @@ def add(conn, author, area: str, code: str) -> dict:
     r = _route(conn, code)
     if r["code"][:3].lower() == area:
         raise Invalid(f"{r['code']} is of {area} already, by its code")
-    if r["id"] in added_to(conn, area):
+    if r["id"] in added_to(conn, area, season=r["season"]):
         raise Invalid(f"{r['code']} is added to {area} already")
     conn.execute("INSERT INTO ops.area_route (area, route_id, added_by) VALUES (%s, %s::uuid, %s)", (area, r["id"], str(author)))
     _event(conn, author, area, "area.route_added", {"route": r["code"]})

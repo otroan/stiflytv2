@@ -305,6 +305,7 @@ def area_report(
     maintainer: Annotated[str | None, typer.Option(
         help="With no area: only the ground this maintainer looks after, e.g. 'DNT | DNT Oslo og omegn'")] = None,
     as_json: Annotated[bool, typer.Option("--json", help="As JSON")] = False,
+    season: Annotated[str, typer.Option(help="summer, or winter: DNT's winter routes")] = "summer",
 ) -> None:
     """Where an area stands: routes, lengths, maintainers, the network, and what is left to do.
 
@@ -318,10 +319,10 @@ def area_report(
 
     with psycopg.connect(settings.api_dsn) as conn:
         if area is None:
-            found = report.areas(conn, maintainer)
+            found = report.areas(conn, maintainer, season=season)
             typer.echo(json.dumps(found, ensure_ascii=False, indent=1) if as_json else report.areas_as_text(found))
             return
-        found = report.report(conn, area)
+        found = report.report(conn, area, season=season)
     typer.echo(json.dumps(found, ensure_ascii=False, indent=1, default=str) if as_json else report.as_text(found))
 
 
@@ -737,10 +738,12 @@ def height_fill(
     A stretch is asked about once; after that only when its line has been
     moved. Can be stopped and run again: what has been answered is kept.
     """
-    from stiflyt2 import height
+    from stiflyt2 import height, seasons
 
     with psycopg.connect(settings.api_dsn, autocommit=True) as conn:
-        todo = height.lacking(conn, area=area, again=again)
+        # The routes of both seasons need their heights.
+        todo = (height.lacking(conn, again=again) if area is None else
+                [line for season in seasons.SEASONS for line in height.lacking(conn, area=area, again=again, season=season)])
         if not todo:
             typer.echo("Every stretch has heights.")
             return

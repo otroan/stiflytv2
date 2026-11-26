@@ -11,8 +11,10 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Respo
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from stiflyt2 import seasons
 from stiflyt2.api import auth, mcp
 from stiflyt2.api.issues import Part
+from stiflyt2.api.params import Season
 from stiflyt2.ops import issues, reports, undo
 
 V1 = "/api/v1/reports"
@@ -78,25 +80,27 @@ class Change(BaseModel):
 def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
     @app.get(V1)
     def listed(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
-               route: Annotated[str | None, Query(max_length=40)] = None) -> list[dict]:
-        """The reports of an area, or those that cover some of a route: the latest done first."""
+               route: Annotated[str | None, Query(max_length=40)] = None, season: Season = seasons.SUMMER) -> list[dict]:
+        """The reports of an area's routes of a season, or those that cover some of a route: the latest done first."""
         with read.connection() as conn:
-            return reports.listing(conn, area, route)
+            return reports.listing(conn, area, route, season=season)
 
     @app.get(f"{V1}/status")
     def status(_: May, area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
-               maintainer: Annotated[str | None, Query(max_length=120)] = None) -> list[dict]:
+               maintainer: Annotated[str | None, Query(max_length=120)] = None,
+               season: Season = seasons.SUMMER) -> list[dict]:
         """Each route in use: when it was last inspected and last had a work party, whether it is due, and whether the
         maintainer asked for (the home maintainer, when none is) looks after it."""
         with read.connection() as conn:
-            return reports.status(conn, area, maintainer)
+            return reports.status(conn, area, maintainer, season=season)
 
     @app.get(f"{V1}/coverage")
     def coverage(_: May, kind: Literal["inspection", "work"],
-                 area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None) -> list[dict]:
+                 area: Annotated[str | None, Query(pattern="^[A-Za-z]{3}$")] = None,
+                 season: Season = seasons.SUMMER) -> list[dict]:
         """What the inspections or the work parties covered, as lines with the day: the latest last."""
         with read.connection() as conn:
-            return reports.coverage(conn, area, kind)
+            return reports.coverage(conn, area, kind, season=season)
 
     @app.post(f"{V1}/parts")
     def chosen(body: Chosen, _: May) -> dict:
@@ -145,6 +149,7 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
 class Upkeep(mcp.Args):
     area: str | None = Field(None, pattern="^[A-Za-z]{3}$", description="An area: its three letters")
     route: str | None = Field(None, max_length=40, description="Or one route, by its code or id: its reports")
+    season: mcp.Season = seasons.SUMMER
 
 
 @mcp.tool("When routes were last inspected and worked on", feature="reports")
@@ -159,7 +164,7 @@ def route_upkeep(c: mcp.Call, a: Upkeep) -> dict:
             t.pop("lines", None)
             t.pop("edges", None)
         return {"reports": told}
-    return {"routes": reports.status(c.conn, a.area), "due_every_years": reports.DUE_YEARS}
+    return {"routes": reports.status(c.conn, a.area, season=a.season), "due_every_years": reports.DUE_YEARS}
 
 
 class Covered(mcp.Args):

@@ -108,7 +108,9 @@ def _touch(conn, place_id: str, author: str) -> None:
 
 
 def _connect(conn, author: str, node_id: str, primary_id: str) -> None:
-    """A connector from an access point to the primary one, as a straight line to begin with."""
+    """A connector from an access point to the primary one, as a straight line to begin with. It is a part of the
+    place, which both seasons share, and no route runs over it: it is kept as the summer's, as the database has a
+    stretch be of one season, and whatever asks for the connectors takes them whatever the season."""
     edge = conn.execute("INSERT INTO core.edge DEFAULT VALUES RETURNING id").fetchone()[0]
     revision = conn.execute(
         """INSERT INTO core.edge_revision
@@ -654,14 +656,14 @@ def around(conn, place_id: str) -> dict:
                t.routes
         FROM {here}, core.node n, LATERAL (
             SELECT jsonb_agg(jsonb_build_object('id', r.id, 'code', r.code, 'version', r.version,
-                                                'ends_here', r.legs = 1) ORDER BY r.code) AS routes,
+                                                'season', r.season, 'ends_here', r.legs = 1) ORDER BY r.code) AS routes,
                    bool_or(r.legs = 1) AS ends
-            FROM (SELECT rt.id, rt.code, rt.version, count(*) AS legs
+            FROM (SELECT rt.id, rt.code, rt.version, rt.season, count(*) AS legs
                   FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
                   JOIN core.edge e ON e.id = l.edge_id AND e.status = 'active'
                   JOIN core.edge_revision v ON v.id = e.current_revision_id
                   WHERE n.id IN (v.a_node, v.b_node) AND v.a_node <> v.b_node
-                  GROUP BY rt.id, rt.code, rt.version) r) t
+                  GROUP BY rt.id, rt.code, rt.version, rt.season) r) t
         WHERE n.status = 'active' AND n.place_id IS DISTINCT FROM here.id
           AND ST_DWithin(n.geom, here.at, %(near)s) AND t.ends
         ORDER BY metres, n.id""", {"id": place_id, "near": NEARBY_M})

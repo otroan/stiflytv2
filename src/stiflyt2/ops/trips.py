@@ -45,7 +45,7 @@ from dataclasses import dataclass, replace
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import features, height
+from stiflyt2 import features, height, seasons
 from stiflyt2.domain import routes as owned
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import areas as areas_of
@@ -106,7 +106,8 @@ class Stretch:
 def network(conn, over_ice: bool = False) -> tuple[dict[str, Stretch], dict[str, dict]]:
     """Every stretch that can be walked: those of routes in use, and the links between a place's arrival points.
 
-    Not water. Not ice either, unless asked for. And the places at the junctions.
+    Not water. Not ice either, unless asked for. And the places at the junctions. The summer's routes only:
+    a winter route runs over frozen lakes and bogs, which are not walked.
     """
     with conn.cursor(row_factory=dict_row) as cur:
         rows = cur.execute(f"""
@@ -118,10 +119,11 @@ def network(conn, over_ice: bool = False) -> tuple[dict[str, Stretch], dict[str,
             LEFT JOIN LATERAL (
                 SELECT array_agg(t.code ORDER BY t.code) AS codes FROM core.route_leg l
                 JOIN core.route t ON t.id = l.route_id
-                WHERE l.edge_id = e.id AND t.status = 'active' AND t.discontinued_since IS NULL) u ON true
+                WHERE l.edge_id = e.id AND t.status = 'active' AND t.season = %(summer)s
+                  AND t.discontinued_since IS NULL) u ON true
             WHERE e.status = 'active' AND r.a_node <> r.b_node AND r.kind <> 'water'
               AND (%(ice)s OR r.kind <> 'glacier') AND (u.codes IS NOT NULL OR r.kind = 'connector')""",
-            {"ice": over_ice}).fetchall()
+            {"ice": over_ice, "summer": seasons.SUMMER}).fetchall()
         places = {p["node"]: p for p in cur.execute("""
             SELECT n.id::text AS node, p.id::text AS id, p.name, p.kind, n.id = p.primary_node_id AS first
             FROM core.node n JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
@@ -725,22 +727,29 @@ def for_routes(conn, *, routes: list[str] | None = None, area: str | None = None
     walked. What of a route lies over water, or over ice unless that is asked
     for, is not walked either, and is said. With `mapped`, it may go along
     paths and roads between the routes, and from where it begins to them.
+
+    The summer's routes only: a trip is walked, and a winter route is not.
     """
     if not 3 <= hours <= 14:
         raise Invalid("a day is between 3 and 14 hours of walking")
     with conn.cursor(row_factory=dict_row) as cur:
         if routes:
             asked = [c.strip() for c in routes if c and c.strip()]
-            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active'
+            winter = sorted(c for c in asked if seasons.of_code(c) == seasons.WINTER)
+            if winter:
+                raise Invalid(f"{', '.join(winter)} {'is a winter route' if len(winter) == 1 else 'are winter routes'}: "
+                              "a trip is planned over the summer's routes")
+            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active' AND season = %s
                                    AND discontinued_since IS NULL AND lower(code) = ANY(%s)""",
-                                ([c.lower() for c in asked],)).fetchall()
+                                (seasons.SUMMER, [c.lower() for c in asked])).fetchall()
             lacking = sorted({c.lower() for c in asked} - {f["code"].lower() for f in found})
             if lacking:
                 raise NotFound(f"no route of yours in use is called {', '.join(lacking)}")
         elif area:
-            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active' AND discontinued_since IS NULL
+            found = cur.execute("""SELECT id::text, code FROM core.route WHERE status = 'active' AND season = %s
+                                   AND discontinued_since IS NULL
                                    AND (lower(left(code, 3)) = lower(%s) OR id = ANY(%s::uuid[]))""",
-                                (area, areas_of.added_to(conn, area))).fetchall()
+                                (seasons.SUMMER, area, areas_of.added_to(conn, area, season=seasons.SUMMER))).fetchall()
             if not found:
                 raise NotFound(f"no route of yours in use begins with {area.lower()}")
         else:

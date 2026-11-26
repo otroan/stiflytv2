@@ -18,7 +18,7 @@ import math
 
 from psycopg.rows import dict_row
 
-from stiflyt2 import height
+from stiflyt2 import height, seasons
 from stiflyt2.domain import identity
 from stiflyt2.domain.places import (
     AUTOMATIC,
@@ -78,6 +78,14 @@ def _touch(conn, route_id: str, author: str) -> None:
                  (route_id,))
 
 
+def season_of(conn, route_id: str) -> str:
+    """The season of a route of ours."""
+    found = conn.execute("SELECT season FROM core.route WHERE id = %s", (route_id,)).fetchone()
+    if not found:
+        raise NotFound("no such route")
+    return found[0]
+
+
 def _node_at(conn, geom) -> str:
     """The node at a point: a place's access point within ACCESS_M, any node within NODE_M, or a new one."""
     found = conn.execute(
@@ -94,8 +102,10 @@ def _node_at(conn, geom) -> str:
 
 def _new_edge(conn, author: str, geom_sql: str, params: dict, a: str, b: str, kind: str,
               origin: str, marked: bool | None, signed: bool | None,
-              maintainers: list[str] | None = None) -> str:
-    edge = conn.execute("INSERT INTO core.edge DEFAULT VALUES RETURNING id").fetchone()[0]
+              maintainers: list[str] | None = None, *, season: str) -> str:
+    """A new stretch, of a season: of the route it is made for. Never shared with a route of the other season."""
+    edge = conn.execute("INSERT INTO core.edge (season) VALUES (%s) RETURNING id",
+                        (seasons.known(season),)).fetchone()[0]
     revision = conn.execute(
         f"""INSERT INTO core.edge_revision (edge_id, rev_no, geom, a_node, b_node, kind, origin,
                                             marked, signed, maintainers, changeset_id, author)
@@ -109,19 +119,29 @@ def _new_edge(conn, author: str, geom_sql: str, params: dict, a: str, b: str, ki
     return str(edge)
 
 
-def _edges_of(conn, candidate_id: str, author: str) -> list[str]:
+def _edges_of(conn, candidate: dict, author: str) -> list[str]:
     """The owned edges for a candidate's segments, made now where they do not exist yet."""
-    return _segment_edges(conn, author, """t.id IN (SELECT segment_id FROM source_index.route_segment
-                                                    WHERE route_id = %(id)s)""", candidate_id)
+    t = seasons.CANDIDATES[candidate["season"]]
+    return _segment_edges(conn, author, f"""t.id IN (SELECT segment_id FROM source_index.{t.route_segment}
+                                                     WHERE route_id = %(id)s)""", candidate["id"],
+                          season=candidate["season"])
 
 
-def _segment_edges(conn, author: str, which: str, value: str) -> list[str]:
-    """The owned edges for some Turrutebasen segments, made now where they do not exist yet."""
+def _adopted(layer: str) -> str:
+    """Which layer of Turrutebasen a stretch was adopted from, as its reference says (alias sr): the summer's
+    foot routes where it says none, as all did before the winter routes came."""
+    return f"coalesce(sr.detail->>'layer', '{seasons.CANDIDATES[seasons.SUMMER].layer}') = '{layer}'"
+
+
+def _segment_edges(conn, author: str, which: str, value: str, *, season: str) -> list[str]:
+    """The owned edges for some Turrutebasen segments of a season (its foot routes, or its winter routes among
+    the ski trails), made now where they do not exist yet."""
+    t = seasons.CANDIDATES[season]
     segments = _rows(conn, f"""
-        SELECT t.id, t.version_id, t.geom, t.marked, t.attrs->>'skilting' AS skilting,
+        SELECT t.id, t.version_id, t.geom, {t.marked} AS marked, t.attrs->>'skilting' AS skilting,
                t.attrs->>'rutefolger' AS follows, t.maintainers, ST_Length(t.geom) AS metres,
                ST_StartPoint(t.geom) AS a, ST_EndPoint(t.geom) AS b
-        FROM source_index.trail_segment t
+        FROM source_index.{t.segment} t
         WHERE {which} AND GeometryType(t.geom) = 'LINESTRING' ORDER BY t.id""", {"id": value})
     snapshot = conn.execute("""SELECT snapshot_id FROM import_control.active_snapshot
                                WHERE source_key = 'turrutebasen' AND scope = 'NO'""").fetchone()
@@ -129,10 +149,11 @@ def _segment_edges(conn, author: str, which: str, value: str) -> list[str]:
     for s in segments:
         # A segment that has been divided is several stretches of yours: all of them.
         known = conn.execute(
-            """SELECT DISTINCT e.id FROM core.source_reference sr JOIN core.edge e ON e.id = sr.subject_id
-               WHERE sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen'
-                 AND sr.ref_type = 'adopted_from' AND sr.external_id = %s AND e.status = 'active'""",
-            (s["id"],)).fetchall()
+            f"""SELECT DISTINCT e.id FROM core.source_reference sr JOIN core.edge e ON e.id = sr.subject_id
+                WHERE sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen' AND {_adopted(t.layer)}
+                  AND sr.ref_type = 'adopted_from' AND sr.external_id = %s AND e.status = 'active'
+                  AND e.season = %s""",
+            (s["id"], season)).fetchall()
         if known:
             edges += [str(e) for (e,) in known]
             continue
@@ -143,13 +164,13 @@ def _segment_edges(conn, author: str, which: str, value: str) -> list[str]:
         if a == b and s["metres"] < 2 * ACCESS_M:
             continue    # a few metres inside one arrival point of a place: nothing to walk
         edge = _new_edge(conn, author, "%(geom)s", {"geom": s["geom"]}, a, b, kind, "adopted",
-                         s["marked"], signed, s["maintainers"])
+                         s["marked"], signed, s["maintainers"], season=season)
         conn.execute(
             """INSERT INTO core.source_reference
                    (subject_type, subject_id, source_key, external_id, snapshot_id, ref_type, detail)
                VALUES ('edge', %s, 'turrutebasen', %s, %s, 'adopted_from', %s)""",
             (edge, s["id"], snapshot[0] if snapshot else None,
-             json.dumps({"feature_version": s["version_id"]})))
+             json.dumps({"feature_version": s["version_id"], "layer": t.layer})))
         edges.append(edge)
     return edges
 
@@ -298,7 +319,21 @@ def _reorder(conn, route_id: str) -> None:
                    VALUES (%s, %s, %s, %s, %s)""", (route_id, seq, edge, reversed_, said.get(edge)))
 
 
+def _same_season(conn, route_id: str, edges: list[str]) -> None:
+    """Refuse a stretch of the other season than the route's: a winter route never runs over a summer stretch,
+    nor a summer route over a winter one. (The database refuses it too; this says why.)"""
+    other = conn.execute("""
+        SELECT r.season, count(*) FROM core.route r, core.edge e
+        WHERE r.id = %s AND e.id = ANY(%s::uuid[]) AND e.season <> r.season GROUP BY 1""",
+        (route_id, edges)).fetchone()
+    if other:
+        mine, theirs = other[0], seasons.WINTER if other[0] == seasons.SUMMER else seasons.SUMMER
+        raise Invalid(f"a {mine} route does not run over a {theirs} route's stretch: the seasons share junctions "
+                      "and places, never a stretch")
+
+
 def _add_legs(conn, route_id: str, edges: list[str]) -> int:
+    _same_season(conn, route_id, edges)
     have = {str(e) for (e,) in conn.execute(
         "SELECT edge_id FROM core.route_leg WHERE route_id = %s", (route_id,))}
     last = conn.execute("SELECT coalesce(max(seq), 0) FROM core.route_leg WHERE route_id = %s",
@@ -312,11 +347,13 @@ def _add_legs(conn, route_id: str, edges: list[str]) -> int:
 
 
 def _candidate(conn, candidate_id: str) -> dict:
-    found = _rows(conn, """SELECT id, code, label, name, maintainer, grading, special_type
-                           FROM source_index.route WHERE id = %(id)s""", {"id": candidate_id})
-    if not found:
-        raise NotFound("no such route candidate")
-    return found[0]
+    """A candidate of Turrutebasen's, of either season (its id says which: the codes differ), with its season."""
+    for season, t in seasons.CANDIDATES.items():
+        found = _rows(conn, f"""SELECT r.id, r.code, r.label, r.name, r.maintainer, {t.graded}
+                                FROM source_index.{t.route} r WHERE r.id = %(id)s""", {"id": candidate_id})
+        if found:
+            return {**found[0], "season": season}
+    raise NotFound("no such route candidate")
 
 
 def _refer(conn, route_id: str, candidate: dict) -> None:
@@ -326,7 +363,7 @@ def _refer(conn, route_id: str, candidate: dict) -> None:
            VALUES ('route', %s, 'turrutebasen', %s, 'adopted_from', %s)""",
         (route_id, candidate["code"], json.dumps({
             "candidate_id": candidate["id"], "label": candidate["label"],
-            "name": candidate["name"], "maintainer": candidate["maintainer"]})))
+            "name": candidate["name"], "maintainer": candidate["maintainer"], "season": candidate["season"]})))
 
 
 def _inherit(conn, route_id: str, candidate_id: str, author: str, tell: bool = False) -> None:
@@ -335,12 +372,14 @@ def _inherit(conn, route_id: str, candidate_id: str, author: str, tell: bool = F
     The route gets what holds for most of its length, if it says nothing yet.
     A leg gets a value of its own only where Turrutebasen says otherwise for it.
     """
-    legs = _rows(conn, """
+    candidate = _candidate(conn, candidate_id)
+    t = seasons.CANDIDATES[candidate["season"]]
+    legs = _rows(conn, f"""
         SELECT l.edge_id::text AS edge, rs.maintainers, t.length_m
-        FROM source_index.route_segment rs
-        JOIN source_index.trail_segment t ON t.id = rs.segment_id
+        FROM source_index.{t.route_segment} rs
+        JOIN source_index.{t.segment} t ON t.id = rs.segment_id
         JOIN core.source_reference sr ON sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen'
-             AND sr.ref_type = 'adopted_from' AND sr.external_id = rs.segment_id
+             AND sr.ref_type = 'adopted_from' AND sr.external_id = rs.segment_id AND {_adopted(t.layer)}
         JOIN core.route_leg l ON l.edge_id = sr.subject_id AND l.route_id = %(route)s
         WHERE rs.route_id = %(c)s""", {"route": route_id, "c": candidate_id})
     route = _rows(conn, "SELECT maintainers, grading, special_type FROM core.route WHERE id = %(id)s",
@@ -360,14 +399,14 @@ def _inherit(conn, route_id: str, candidate_id: str, author: str, tell: bool = F
         if sorted(leg["maintainers"]) != whole:
             conn.execute("UPDATE core.route_leg SET maintainers = %s WHERE route_id = %s AND edge_id = %s",
                          (sorted(leg["maintainers"]), route_id, leg["edge"]))
-    candidate = _candidate(conn, candidate_id)
     conn.execute("""UPDATE core.route SET grading = coalesce(grading, %s),
                            special_type = coalesce(special_type, %s) WHERE id = %s""",
                  (candidate["grading"], candidate["special_type"], route_id))
 
 
 def fill_metadata(conn) -> int:
-    """Give every route that says nothing about who maintains it what Turrutebasen has. Returns how many."""
+    """Give every summer route that says nothing about who maintains it what Turrutebasen has. Returns how many.
+    (A winter route takes it when it is made.)"""
     filled = 0
     for route_id, candidate in conn.execute("""
             SELECT r.id::text, coalesce(c.id, l.id)
@@ -376,8 +415,8 @@ def fill_metadata(conn) -> int:
                  AND sr.source_key = 'turrutebasen'
             LEFT JOIN source_index.route c ON c.id = sr.detail->>'candidate_id'
             LEFT JOIN source_index.route l ON c.id IS NULL AND l.label = sr.detail->>'label'
-            WHERE r.status = 'active' AND r.maintainers = '{}' AND coalesce(c.id, l.id) IS NOT NULL
-            ORDER BY r.code""").fetchall():
+            WHERE r.status = 'active' AND r.season = %s AND r.maintainers = '{}' AND coalesce(c.id, l.id) IS NOT NULL
+            ORDER BY r.code""", (seasons.SUMMER,)).fetchall():
         _inherit(conn, route_id, candidate, AUTOMATIC, tell=True)
         filled += 1
     close_changeset(conn, AUTOMATIC)
@@ -393,27 +432,33 @@ def owner_of(conn, candidate_id: str) -> str | None:
     holds after the index has been rebuilt with other groupings. A longer
     route that merely runs over the same stretches does not count.
     """
+    try:
+        season = _candidate(conn, candidate_id)["season"]
+    except NotFound:
+        return None
+    t = seasons.CANDIDATES[season]
     row = conn.execute(
-        """SELECT l.route_id
-           FROM source_index.route_segment rs
-           JOIN core.source_reference sr ON sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen'
-                                        AND sr.external_id = rs.segment_id
-           JOIN core.route_leg l ON l.edge_id = sr.subject_id
-           JOIN core.route r ON r.id = l.route_id AND r.status = 'active'
-           WHERE rs.route_id = %(c)s AND EXISTS (
-               SELECT 1 FROM core.source_reference made
-               WHERE made.subject_type = 'route' AND made.subject_id = r.id
-                 AND made.external_id = (SELECT code FROM source_index.route WHERE id = %(c)s))
-           GROUP BY l.route_id
-           HAVING count(DISTINCT rs.segment_id) * 2 > (SELECT count(*) FROM source_index.route_segment
-                                                       WHERE route_id = %(c)s)
-           ORDER BY count(DISTINCT rs.segment_id) DESC
-           LIMIT 1""", {"c": candidate_id}).fetchone()
+        f"""SELECT l.route_id
+            FROM source_index.{t.route_segment} rs
+            JOIN core.source_reference sr ON sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen'
+                                         AND sr.external_id = rs.segment_id AND {_adopted(t.layer)}
+            JOIN core.route_leg l ON l.edge_id = sr.subject_id
+            JOIN core.route r ON r.id = l.route_id AND r.status = 'active' AND r.season = %(season)s
+            WHERE rs.route_id = %(c)s AND EXISTS (
+                SELECT 1 FROM core.source_reference made
+                WHERE made.subject_type = 'route' AND made.subject_id = r.id
+                  AND made.external_id = (SELECT code FROM source_index.{t.route} WHERE id = %(c)s))
+            GROUP BY l.route_id
+            HAVING count(DISTINCT rs.segment_id) * 2 > (SELECT count(*) FROM source_index.{t.route_segment}
+                                                        WHERE route_id = %(c)s)
+            ORDER BY count(DISTINCT rs.segment_id) DESC
+            LIMIT 1""", {"c": candidate_id, "season": season}).fetchone()
     return str(row[0]) if row else None
 
 
 def make(conn, candidate_id: str, author: str, code: str | None = None) -> str:
-    """Make a route candidate an owned route.
+    """Make a route candidate an owned route, of the candidate's season: a winter route from one of DNT's winter
+    routes among Turrutebasen's ski trails, made of stretches of its own.
 
     The code is ours to choose. Left out, it is the candidate's label, which is
     marked as temporary when it is only a part label such as jot91/1.
@@ -424,14 +469,17 @@ def make(conn, candidate_id: str, author: str, code: str | None = None) -> str:
     code = (code or candidate["label"]).strip()
     if not code:
         raise Invalid("a route needs a code")
+    unfit = seasons.code_fits(code.split("/")[0], candidate["season"])
+    if unfit:
+        raise Invalid(unfit)
     if conn.execute("SELECT 1 FROM core.route WHERE lower(code) = lower(%s) AND status = 'active'",
                     (code,)).fetchone():
         raise Conflict(f"the code {code} is already used by another of your routes")
     route_id = str(conn.execute(
-        "INSERT INTO core.route (code, code_provisional, reviewed) VALUES (%s, %s, %s) RETURNING id",
-        (code, "/" in code, False)).fetchone()[0])
+        "INSERT INTO core.route (code, code_provisional, reviewed, season) VALUES (%s, %s, %s, %s) RETURNING id",
+        (code, "/" in code, False, candidate["season"])).fetchone()[0])
     _refer(conn, route_id, candidate)
-    legs = _add_legs(conn, route_id, _edges_of(conn, candidate_id, author))
+    legs = _add_legs(conn, route_id, _edges_of(conn, candidate, author))
     _event(conn, author, "route.made", route_id,
            {"candidate": candidate["label"], "code": code, "legs": legs})
     _inherit(conn, route_id, candidate_id, author)
@@ -537,7 +585,8 @@ def taken_out_by_a_person(conn) -> dict[str, str]:
 
 
 def make_default(conn, area: str, maintainer: str | None = None) -> dict:
-    """Make every clean route candidate of an area yours: one connected line with two ends.
+    """Make every clean summer route candidate of an area yours: one connected line with two ends. (Winter routes
+    are made one at a time: Turrutebasen says nothing of their shape.)
 
     They are marked as not reviewed and keep the candidate's label as their
     code. Candidates in pieces or with extra ends are left for a person, as
@@ -1517,8 +1566,12 @@ def move_node(conn, node_id: str, author: str, lon: float, lat: float,
         FROM core.node n
         WHERE n.status = 'active' AND n.id <> %(id)s AND ST_DWithin(n.geom, %(at)s::geometry, %(reach)s)
           AND (n.place_id IS NOT NULL OR EXISTS (
+                -- a junction of the seasons of the stretches that meet at the one moved: the summer's and the
+                -- winter's junctions are joined only at a place, where both arrive
                 SELECT 1 FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-                WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node)))
+                WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node)
+                  AND e.season IN (SELECT m.season FROM core.edge m JOIN core.edge_revision mr ON mr.id = m.current_revision_id
+                                   WHERE m.status = 'active' AND %(id)s IN (mr.a_node, mr.b_node))))
         ORDER BY n.geom <-> %(at)s::geometry LIMIT 1""",
         {"id": node_id, "at": clicked, "reach": max(reach, NODE_M)}).fetchone()
     if other:
@@ -1560,12 +1613,12 @@ def add_stretch(conn, route_id: str, version: int, author: str, *, edge_id: str 
                 segment_id: str | None = None) -> None:
     """Carry a route on along a stretch that exists and touches it.
 
-    The stretch is one of yours (shared from then on), or a Turrutebasen
-    segment, which becomes yours now.
+    The stretch is one of yours (shared from then on), of the route's season, or a Turrutebasen segment of the
+    route's season (a foot route's, or a winter route's among the ski trails), which becomes yours now.
     """
     _route(conn, route_id, version)
     if segment_id:
-        made = _segment_edges(conn, author, "t.id = %(id)s", segment_id)
+        made = _segment_edges(conn, author, "t.id = %(id)s", segment_id, season=season_of(conn, route_id))
         if not made:
             raise NotFound("no such segment")
         edge_id = made[0]
@@ -1598,13 +1651,13 @@ def split(conn, edge_id: str, author: str, lon: float, lat: float) -> str:
     """
     found = conn.execute("""
         SELECT r.a_node::text, r.b_node::text, r.kind, r.origin, r.marked, r.signed, r.maintainers,
-               ST_Length(r.geom), ST_LineLocatePoint(r.geom, p.g), r.geom
+               ST_Length(r.geom), ST_LineLocatePoint(r.geom, p.g), r.geom, e.season
         FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id,
              LATERAL (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 25833) AS g) p
         WHERE e.id = %s AND e.status = 'active' FOR UPDATE OF e""", (lon, lat, edge_id)).fetchone()
     if not found:
         raise NotFound("no such stretch")
-    a, b, kind, origin, marked, signed, maintainers, metres, at, geom = found
+    a, b, kind, origin, marked, signed, maintainers, metres, at, geom, season = found
     if at * metres < SPLIT_END_M or a == b:
         return a
     if (1 - at) * metres < SPLIT_END_M:
@@ -1616,7 +1669,7 @@ def split(conn, edge_id: str, author: str, lon: float, lat: float) -> str:
     for n, (lo, hi, start, end) in enumerate(((0, at, a, node), (at, 1, node, b)), 1):
         part = _new_edge(conn, author, "ST_LineSubstring(%(g)s::geometry, %(lo)s, %(hi)s)",
                          {"g": geom, "lo": lo, "hi": hi}, start, end, kind, origin, marked, signed,
-                         maintainers)
+                         maintainers, season=season)
         conn.execute("""
             INSERT INTO core.source_reference
                    (subject_type, subject_id, source_key, external_id, snapshot_id, ref_type, detail)
@@ -1647,7 +1700,8 @@ WAY_NODE_M = 30        # a point this near a junction or an end means that junct
 WAY_LINE_M = 300       # else it means the spot on the nearest stretch, when one lies this near
 
 
-_WALKED = """e.status = 'active' AND r.a_node <> r.b_node AND r.kind <> 'water'
+# The stretches a way may be found over: of the season of the route it is for (`%(season)s`), never the other's.
+_WALKED = """e.status = 'active' AND e.season = %(season)s AND r.a_node <> r.b_node AND r.kind <> 'water'
              AND NOT (r.kind = 'connector' AND r.origin = 'derived')
              AND NOT (EXISTS (SELECT 1 FROM core.route_leg dl JOIN core.route dr ON dr.id = dl.route_id
                               WHERE dl.edge_id = e.id AND dr.status = 'active'
@@ -1658,17 +1712,20 @@ _WALKED = """e.status = 'active' AND r.a_node <> r.b_node AND r.kind <> 'water'
 
 
 class _Net:
-    """Your stretches and Turrutebasen's segments around a line, as one graph to find a way over.
+    """Your stretches and Turrutebasen's segments of a season around a line, as one graph to find a way over.
 
     Turrutebasen segments that are not stretches yet are made stretches, so
     that both kinds have the junctions a route made from them will have: all
     segments around the line, or only the ones named. Building it therefore
     changes things. A plan builds it in a transaction that is rolled back; the
-    real thing builds it again with only the segments the plan used.
+    real thing builds it again with only the segments the plan used. A winter
+    route's way is found over the winter's stretches and Turrutebasen's winter
+    routes, a summer route's over the summer's: never over the other season's.
     """
 
-    def __init__(self, conn, author: str, xy: list, only: list[str] | None = None):
-        self.conn, self.author = conn, author
+    def __init__(self, conn, author: str, xy: list, only: list[str] | None = None, *, season: str):
+        self.conn, self.author, self.season = conn, author, seasons.known(season)
+        t = seasons.CANDIDATES[self.season]
         straight = sum(math.dist(a, b) for a, b in itertools.pairwise(xy))
         if straight > 150_000:
             raise Invalid("the points lie too far apart to find a way between them in one go")
@@ -1677,16 +1734,17 @@ class _Net:
         self.margin = max(1500.0, 0.5 * straight)
         self.fresh: dict[str, str] = {}     # stretch made here -> the segment it stands for
         self.divided = 0
-        for (segment,) in conn.execute("""
-                SELECT t.id FROM source_index.trail_segment t
+        for (segment,) in conn.execute(f"""
+                SELECT t.id FROM source_index.{t.segment} t
                 WHERE ST_DWithin(t.geom, %(g)s::geometry, %(m)s) AND GeometryType(t.geom) = 'LINESTRING'
                   AND (%(only)s::text[] IS NULL OR t.id = ANY(%(only)s::text[]))
                   AND NOT EXISTS (SELECT 1 FROM core.source_reference sr
                                   JOIN core.edge known ON known.id = sr.subject_id AND known.status <> 'undone'
                                   WHERE sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen'
-                                    AND sr.ref_type = 'adopted_from' AND sr.external_id = t.id)""",
+                                    AND sr.ref_type = 'adopted_from' AND sr.external_id = t.id
+                                    AND {_adopted(t.layer)})""",
                 {"g": self.around, "m": self.margin, "only": only}).fetchall():
-            for edge in _segment_edges(conn, author, "t.id = %(id)s", segment):
+            for edge in _segment_edges(conn, author, "t.id = %(id)s", segment, season=self.season):
                 self.fresh[edge] = segment
 
     def stop(self, x: float, y: float, reach: float, what: str = "that point", far: float | None = None) -> str:
@@ -1696,7 +1754,7 @@ class _Net:
         beside the path), or `far` where the point was pointed at on the map and means what is under it.
         """
         far = max(reach, WAY_LINE_M) if far is None else far
-        here = {"x": x, "y": y, "reach": reach, "far": far}
+        here = {"x": x, "y": y, "reach": reach, "far": far, "season": self.season}
         node = self.conn.execute(f"""
             SELECT n.id::text FROM (SELECT ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 25833) AS g) p, core.node n
             WHERE n.status = 'active' AND ST_DWithin(n.geom, p.g, %(reach)s) AND EXISTS (
@@ -1742,8 +1800,8 @@ class _Net:
         for edge, a, b, metres in self.conn.execute(f"""
                 SELECT e.id::text, r.a_node::text, r.b_node::text, ST_Length(r.geom)
                 FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-                WHERE {_WALKED} AND ST_DWithin(r.geom, %s::geometry, %s)""",
-                (self.around, self.margin)).fetchall():
+                WHERE {_WALKED} AND ST_DWithin(r.geom, %(around)s::geometry, %(margin)s)""",
+                {"around": self.around, "margin": self.margin, "season": self.season}).fetchall():
             self.reach_from.setdefault(a, []).append((b, metres, edge))
             self.reach_from.setdefault(b, []).append((a, metres, edge))
 
@@ -1795,8 +1853,8 @@ def _to_xy(conn, points: list[tuple[float, float]]) -> list:
 
 
 def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | None = None,
-         only: list[str] | None = None) -> dict:
-    """The shortest way through the points (lon, lat), over your stretches and Turrutebasen's segments.
+         only: list[str] | None = None, *, season: str) -> dict:
+    """The shortest way through the points (lon, lat), over your stretches and Turrutebasen's segments of a season.
 
     A point within reach_m of a junction or end means that junction. Otherwise
     it means the spot on the nearest stretch (a hut beside the path), and the
@@ -1818,7 +1876,7 @@ def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | 
         raise Invalid("a route is laid out between at least two points")
     reach = min(reach_m or WAY_NODE_M, 500)
     xy = _to_xy(conn, points)
-    net = _Net(conn, author, xy, only)
+    net = _Net(conn, author, xy, only, season=season)
     lines: list = []        # the mapped paths and roads, read when a point or a step needs them
 
     def mapped() -> _Paths:
@@ -1871,7 +1929,7 @@ def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | 
                 raise Invalid(f"nothing is mapped between points {i + 1} and {j + 1}, and they lie "
                               f"{longest / 1000:.0f} km apart: put points between them, {STRAIGHT_M // 1000} km apart at most")
             steps.append(_new_edge(conn, author, "ST_SetSRID(ST_GeomFromText(%(wkt)s), 25833)", {"wkt": line["wkt"]},
-                                   start, end, "off_trail", "drawn", None, None))
+                                   start, end, "off_trail", "drawn", None, None, season=season))
             straight += line["planar"]
             i = j
             continue
@@ -1889,7 +1947,7 @@ def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | 
         found = mapped().parts(*tied) if tied[0]["tied"] and tied[1]["tied"] else None
         metres = sum(_Paths.along(part) for part, _ in found) if found else 0.0
         if found and metres <= 4 * gap + 500:
-            steps += _draw_along(conn, author, found, start, a, end, b)
+            steps += _draw_along(conn, author, found, start, a, end, b, season=season)
             along += metres
         elif found and gap > HOP_M:
             raise Invalid(f"the mapped way between points {i + 1} and {j + 1} is {metres / 1000:.1f} km for "
@@ -1900,7 +1958,7 @@ def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | 
         else:
             line = _line(conn, [a, b])
             steps.append(_new_edge(conn, author, "ST_SetSRID(ST_GeomFromText(%(wkt)s), 25833)", {"wkt": line["wkt"]},
-                                   start, end, "off_trail", "drawn", None, None))
+                                   start, end, "off_trail", "drawn", None, None, season=season))
             straight += line["planar"]
         i = j
     if len(set(steps)) != len(steps):
@@ -1908,31 +1966,39 @@ def _way(conn, author: str, points: list[tuple[float, float]], reach_m: float | 
     return {**net.told(steps, [s for s in stops if s]), "mapped_m": round(along), "straight_m": round(straight)}
 
 
-def plan(conn, points: list[tuple[float, float]], reach_m: float | None = None) -> dict:
-    """What a route laid out through the points would be. Needs a connection that may write; keeps nothing."""
+def plan(conn, points: list[tuple[float, float]], reach_m: float | None = None, *,
+         season: str = seasons.SUMMER) -> dict:
+    """What a route of a season laid out through the points would be. Needs a connection that may write; keeps
+    nothing."""
     with conn.transaction(force_rollback=True):
-        way = _way(conn, AUTOMATIC, points, reach_m)
+        way = _way(conn, AUTOMATIC, points, reach_m, season=season)
     return {k: v for k, v in way.items() if k != "edges"}
 
 
-def _lay(conn, author: str, points: list[tuple[float, float]], reach_m: float | None) -> dict:
+def _lay(conn, author: str, points: list[tuple[float, float]], reach_m: float | None, *, season: str) -> dict:
     """Find the way as `plan` does, then make it real: only the segments on it become stretches."""
-    return _way(conn, author, points, reach_m, only=plan(conn, points, reach_m)["segments"])
+    return _way(conn, author, points, reach_m, only=plan(conn, points, reach_m, season=season)["segments"],
+                season=season)
 
 
 def lay_out(conn, author: str, points: list[tuple[float, float]], code: str,
-            name: str | None = None, reach_m: float | None = None) -> str:
-    """Make a new route through the points, along the shortest way over what exists."""
+            name: str | None = None, reach_m: float | None = None, *, season: str | None = None) -> str:
+    """Make a new route through the points, along the shortest way over what exists of its season. The season is
+    the one its code says (a v after the number: a winter route), and must be the one asked for."""
     code = (code or "").strip()
     if not code:
         raise Invalid("a route needs a code")
+    season = seasons.known(season) if season else seasons.of_code(code)
+    unfit = seasons.code_fits(code, season)
+    if unfit:
+        raise Invalid(unfit)
     if conn.execute("SELECT 1 FROM core.route WHERE lower(code) = lower(%s) AND status = 'active'",
                     (code,)).fetchone():
         raise Conflict(f"the code {code} is already used by another of your routes")
-    way = _lay(conn, author, points, reach_m)
+    way = _lay(conn, author, points, reach_m, season=season)
     route_id = str(conn.execute(
-        "INSERT INTO core.route (code, code_provisional, reviewed, name) VALUES (%s, %s, false, %s) "
-        "RETURNING id", (code, "/" in code, (name or "").strip() or None)).fetchone()[0])
+        "INSERT INTO core.route (code, code_provisional, reviewed, name, season) VALUES (%s, %s, false, %s, %s) "
+        "RETURNING id", (code, "/" in code, (name or "").strip() or None, season)).fetchone()[0])
     _add_legs(conn, route_id, way["edges"])
     if _graph(conn, route_id)["shape"] != "line":
         raise Invalid("that way does not come out as one line")
@@ -1950,7 +2016,7 @@ def lay_out_again(conn, route_id: str, version: int, author: str,
     are kept, as is what a stretch said for itself where the stretch remains.
     """
     _route(conn, route_id, version)
-    way = _lay(conn, author, points, reach_m)
+    way = _lay(conn, author, points, reach_m, season=season_of(conn, route_id))
     said = dict(conn.execute("DELETE FROM core.route_leg WHERE route_id = %s "
                              "RETURNING edge_id::text, maintainers", (route_id,)).fetchall())
     _add_legs(conn, route_id, way["edges"])
@@ -2074,7 +2140,7 @@ _KIND_OF = {"vegnett": "road", "fkb_wfs": "trail"}
 
 
 def _draw_along(conn, author: str, found: list, from_node: str, from_xy: tuple | None,
-                to_node: str, to_xy: tuple | None) -> list[str]:
+                to_node: str, to_xy: tuple | None, *, season: str) -> list[str]:
     """New stretches of yours along a way over the mapped lines, between two junctions.
 
     One stretch for each run of the same kind of mapped line (paths, roads); a
@@ -2106,7 +2172,7 @@ def _draw_along(conn, author: str, found: list, from_node: str, from_xy: tuple |
         if here == there or line["planar"] < NODE_M:
             continue
         edge = _new_edge(conn, author, "ST_SetSRID(ST_GeomFromText(%(wkt)s), 25833)", {"wkt": line["wkt"]},
-                         here, there, _KIND_OF.get(run["source"], "trail"), "drawn", None, None)
+                         here, there, _KIND_OF.get(run["source"], "trail"), "drawn", None, None, season=season)
         for source, mapped in sorted(run["used"]):
             conn.execute(
                 """INSERT INTO core.source_reference
@@ -2163,9 +2229,11 @@ def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, t
         WHERE n.status = 'active' AND n.id <> %(from)s AND ST_DWithin(n.geom, p.g, %(reach)s)
           AND (n.place_id IS NOT NULL OR EXISTS (
               SELECT 1 FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-              WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node) AND e.id <> ALL(%(fresh)s::uuid[])))
+              WHERE e.status = 'active' AND e.season = %(season)s AND n.id IN (r.a_node, r.b_node)
+                AND e.id <> ALL(%(fresh)s::uuid[])))
         ORDER BY n.place_id IS NULL, n.geom <-> p.g LIMIT 1""",
-        {"x": to[0], "y": to[1], "from": end_node, "reach": max(reach, WAY_NODE_M), "fresh": list(net.fresh)}).fetchone()
+        {"x": to[0], "y": to[1], "from": end_node, "reach": max(reach, WAY_NODE_M), "fresh": list(net.fresh),
+         "season": net.season}).fetchone()
     tip = (at[1], at[2]) if at else tuple(end["foot"]) if end["tied"] else to
     last = at[0] if at else _node_at(conn, f"SRID=25833;POINT({tip[0]:.2f} {tip[1]:.2f})")
     round_trip = last == nodes[0] and pieces == 1
@@ -2174,7 +2242,7 @@ def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, t
         if last == end_node or line["planar"] < NODE_M:
             raise Invalid("the route already ends there")
         made = [_new_edge(conn, author, "ST_SetSRID(ST_GeomFromText(%(wkt)s), 25833)", {"wkt": line["wkt"]},
-                          end_node, last, "off_trail", "drawn", None, None)]
+                          end_node, last, "off_trail", "drawn", None, None, season=net.season)]
         _relay(conn, route_id, edges + made + rest, pieces, round_trip)
         told = net.told(edges + made + rest, [nodes[0], last])
         told.update(cut_m=0, added=1, dropped=0, segments=[], mapped_m=0, straight_m=round(line["planar"]),
@@ -2191,7 +2259,8 @@ def _onward_mapped(conn, net: _Net, route_id: str, author: str, end_node: str, t
         if beside and (beside[0] or 0) > 0.5:
             raise Invalid("the shortest mapped way back to where the route starts is the way it came: carry it on "
                           "a bit at a time, the way round it is to go, and drop its end on its start last")
-    made = _draw_along(conn, author, found, end_node, tuple(a), last, (at[1], at[2]) if at else None)
+    made = _draw_along(conn, author, found, end_node, tuple(a), last, (at[1], at[2]) if at else None,
+                       season=net.season)
     here = last
     if not made:
         raise Invalid("the route already ends there")
@@ -2207,7 +2276,7 @@ def _end(conn, route_id: str, author: str, end_node: str, lon: float, lat: float
     _piece_of(conn, route_id, end_node)     # refuses what is not an end
     (x, y), = _to_xy(conn, [(lon, lat)])
     ex, ey = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = %s", (end_node,)).fetchone()
-    net = _Net(conn, author, [(ex, ey), (x, y)], only)
+    net = _Net(conn, author, [(ex, ey), (x, y)], only, season=season_of(conn, route_id))
     reach = min(reach_m or WAY_NODE_M, 500)
     # With a reach, the spot was pointed at on a map: it means what lies under the pointer, as wide as that
     # is, and nothing further off. Without, it is a position somebody gave, and a line near it is meant.
@@ -2235,8 +2304,8 @@ def _end_over_stretches(conn, net: _Net, route_id: str, end_node: str, x: float,
                   AND ST_DWithin(n.geom, ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 25833), %(near)s)
                   AND (n.place_id IS NOT NULL OR EXISTS (
                       SELECT 1 FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-                      WHERE e.status = 'active' AND n.id IN (r.a_node, r.b_node)))""",
-                {"end": end_node, "x": x, "y": y, "near": ALREADY_M}).fetchone():
+                      WHERE e.status = 'active' AND e.season = %(season)s AND n.id IN (r.a_node, r.b_node)))""",
+                {"end": end_node, "x": x, "y": y, "near": ALREADY_M, "season": net.season}).fetchone():
             raise NoWay("no stretch leads to the mark the end was dropped on")
         raise Invalid("the route already ends there")
     net.load()
@@ -2401,8 +2470,8 @@ def _via_mapped(conn, net: _Net, route_id: str, author: str, to: tuple,
     xy = dict(conn.execute("SELECT id::text, ARRAY[ST_X(geom), ST_Y(geom)] FROM core.node WHERE id = ANY(%s::uuid[])",
                            (forks,)).fetchall())
     out = [(part[::-1], ref) for part, ref in arms[0]["parts"][::-1]]
-    there = _draw_along(conn, author, out, forks[0], tuple(xy[forks[0]]), middle, None)
-    back = _draw_along(conn, author, arms[1]["parts"], middle, None, forks[1], tuple(xy[forks[1]]))
+    there = _draw_along(conn, author, out, forks[0], tuple(xy[forks[0]]), middle, None, season=net.season)
+    back = _draw_along(conn, author, arms[1]["parts"], middle, None, forks[1], tuple(xy[forks[1]]), season=net.season)
     if not there or not back:
         raise Invalid("the route already goes there")
     head, tail = edges[:nodes.index(forks[0])], edges[nodes.index(forks[1]):]
@@ -2424,7 +2493,7 @@ def _via(conn, route_id: str, author: str, edge_id: str, lon: float, lat: float,
     (x, y), = _to_xy(conn, [(lon, lat)])
     ends = conn.execute("SELECT ST_X(geom), ST_Y(geom) FROM core.node WHERE id = ANY(%s::uuid[])",
                         ([before, after],)).fetchall()
-    net = _Net(conn, author, [ends[0], (x, y), ends[-1]], only)
+    net = _Net(conn, author, [ends[0], (x, y), ends[-1]], only, season=season_of(conn, route_id))
     reach, pointed = min(reach_m or WAY_NODE_M, 500), reach_m is not None      # as for an end that is moved
     try:
         # Finding the spot may divide a stretch. Where no way is found, that is not to stay.
@@ -2496,6 +2565,9 @@ def absorb(conn, route_id: str, other_id: str, author: str) -> None:
     a glacier, over water or on foot.
     """
     this, other = _route(conn, route_id), _route(conn, other_id)
+    if season_of(conn, route_id) != season_of(conn, other_id):
+        raise Invalid(f"{this['code']} and {other['code']} are of different seasons: a summer route and a winter "
+                      "route are never one route")
     legs = conn.execute("SELECT edge_id::text, maintainers FROM core.route_leg WHERE route_id = %s ORDER BY seq",
                         (other_id,)).fetchall()
     have = {str(e) for (e,) in conn.execute("SELECT edge_id FROM core.route_leg WHERE route_id = %s",
@@ -2535,8 +2607,11 @@ def add_piece(conn, route_id: str, version: int, candidate_id: str, author: str)
     if owner:
         absorb(conn, route_id, str(owner), author)
         return
+    if candidate["season"] != season_of(conn, route_id):
+        raise Invalid(f"{candidate['label']} is a {candidate['season']} route's candidate: a route takes pieces of "
+                      "its own season only")
     _refer(conn, route_id, candidate)
-    legs = _add_legs(conn, route_id, _edges_of(conn, candidate_id, author))
+    legs = _add_legs(conn, route_id, _edges_of(conn, candidate, author))
     _event(conn, author, "route.piece_added", route_id,
            {"candidate": candidate["label"], "legs": legs})
     _inherit(conn, route_id, candidate_id, author)
@@ -2559,12 +2634,15 @@ def add_crossing(conn, route_id: str, version: int, from_node: str, to_node: str
     metres = round(math.dist(on_route[from_node], on_route[to_node]))
     # A crossing of that kind between the same two junctions, which another route uses: the ice is crossed
     # once, by both. A second one would lie on top of the first, and the two would be signed apart.
+    # Of the route's season: a winter route crosses the ice as the winter does, apart from the summer's crossing.
+    season = season_of(conn, route_id)
     there = conn.execute("""
         SELECT e.id::text FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
-        WHERE e.status = 'active' AND r.kind = %(kind)s
+        WHERE e.status = 'active' AND e.season = %(season)s AND r.kind = %(kind)s
           AND (r.a_node, r.b_node) IN ((%(a)s::uuid, %(b)s::uuid), (%(b)s::uuid, %(a)s::uuid))
           AND NOT EXISTS (SELECT 1 FROM core.route_leg l WHERE l.route_id = %(route)s AND l.edge_id = e.id)
-        ORDER BY e.created_at LIMIT 1""", {"kind": kind, "a": from_node, "b": to_node, "route": route_id}).fetchone()
+        ORDER BY e.created_at LIMIT 1""",
+        {"kind": kind, "a": from_node, "b": to_node, "route": route_id, "season": season}).fetchone()
     if there:
         _add_legs(conn, route_id, [there[0]])
         _event(conn, author, "route.crossing_added", route_id, {"kind": kind, "metres": metres, "shared": there[0]})
@@ -2575,7 +2653,7 @@ def add_crossing(conn, route_id: str, version: int, from_node: str, to_node: str
         conn, author,
         """(SELECT ST_MakeLine(a.geom, b.geom) FROM core.node a, core.node b
             WHERE a.id = %(a)s AND b.id = %(b)s)""", {}, from_node, to_node, kind, "drawn",
-        marked, signed)
+        marked, signed, season=season)
     _add_legs(conn, route_id, [edge])
     _event(conn, author, "route.crossing_added", route_id, {"kind": kind, "metres": metres})
     _touch(conn, route_id, author)
@@ -2713,6 +2791,9 @@ def update(conn, route_id: str, version: int, author: str, *, code: str | None =
         code = code.strip()
         if not code:
             raise Invalid("a route needs a code")
+        unfit = seasons.code_fits(code.split("/")[0], season_of(conn, route_id))
+        if unfit:
+            raise Invalid(unfit)
         if conn.execute(
                 """SELECT 1 FROM core.route WHERE lower(code) = lower(%s) AND status = 'active'
                    AND id <> %s""", (code, route_id)).fetchone():
@@ -2820,7 +2901,7 @@ def _twigs(conn, route_id: str) -> list[dict]:
 
 
 def detail(conn, route_id: str) -> dict:
-    found = _rows(conn, """SELECT id, code, code_provisional, name, version, reviewed,
+    found = _rows(conn, """SELECT id, code, code_provisional, name, version, reviewed, season,
                                   maintainers AS maintained_by, grading, special_type,
                                   discontinued_since, discontinued_why, description, description_back, unpublished_why, utno_id
                            FROM core.route WHERE id = %(id)s AND status = 'active'""",
@@ -2947,23 +3028,25 @@ _ON_THE_MAP = """
                               'routes', jsonb_agg(jsonb_build_object('id', rt.id, 'code', rt.code,
                                   'in_use', rt.discontinued_since IS NULL AND rt.unpublished_why IS NULL)
                                                   ORDER BY length(rt.code), rt.code)) AS said
-    FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active'
+    FROM core.route_leg l JOIN core.route rt ON rt.id = l.route_id AND rt.status = 'active' AND rt.season = %(season)s
     JOIN core.edge e ON e.id = l.edge_id
     JOIN core.edge_revision r ON r.id = e.current_revision_id
     {where}
     GROUP BY e.id, r.id"""
 
 
-def collection(conn, edges: list[str] | None = None) -> dict:
-    """Every edge used by an active owned route, as GeoJSON lines for the map. Or only some of them, by id."""
+def collection(conn, edges: list[str] | None = None, *, season: str = seasons.SUMMER) -> dict:
+    """Every edge used by an active owned route of a season, as GeoJSON lines for the map. Or only some of them,
+    by id."""
     rows = conn.execute(_ON_THE_MAP.format(
         geom="ST_AsGeoJSON(ST_Transform(r.geom, 4326), 6)::json",
-        where="" if edges is None else "WHERE e.id = ANY(%(e)s::uuid[])"), {"e": edges}).fetchall()
+        where="" if edges is None else "WHERE e.id = ANY(%(e)s::uuid[])"),
+        {"e": edges, "season": seasons.known(season)}).fetchall()
     return {"type": "FeatureCollection",
             "features": [{"type": "Feature", "geometry": g, "properties": p} for _, g, p in rows]}
 
 
-def marks(conn) -> dict[str, str]:
+def marks(conn, *, season: str = seasons.SUMMER) -> dict[str, str]:
     """For every stretch on the map, a mark that is another when anything the map says of it has changed.
 
     A page that holds the lines asks for the marks after a change and reads
@@ -2971,4 +3054,5 @@ def marks(conn) -> dict[str, str]:
     is a new mark), what it is, and which routes use it and what they are.
     """
     return dict(conn.execute(
-        f"SELECT edge, md5(said::text) FROM ({_ON_THE_MAP.format(geom='NULL', where='')}) x").fetchall())
+        f"SELECT edge, md5(said::text) FROM ({_ON_THE_MAP.format(geom='NULL', where='')}) x",
+        {"season": seasons.known(season)}).fetchall())

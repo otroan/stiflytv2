@@ -163,14 +163,15 @@ def of_route(conn, route_id: str) -> dict:
         SELECT n.id::text AS id, p.name, p.kind FROM core.node n
         JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
         WHERE n.id = ANY(%(nodes)s::uuid[])""", {"nodes": nodes})}
-    touching: dict[str, set[str]] = {}
+    touching: dict[str, set[str]] = {}     # the routes of its own season at its junctions: a hut is where both arrive
     for r in _rows(conn, """
             SELECT DISTINCT nd::text AS node, t.code FROM unnest(%(nodes)s::uuid[]) nd
             JOIN core.edge_revision r ON r.a_node = nd OR r.b_node = nd
             JOIN core.edge e ON e.current_revision_id = r.id AND e.status = 'active'
             JOIN core.route_leg o ON o.edge_id = e.id
             JOIN core.route t ON t.id = o.route_id AND t.status = 'active' AND t.id <> %(id)s
-                 AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL""", {"nodes": nodes, "id": route_id}):
+                 AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL
+                 AND t.season = (SELECT season FROM core.route WHERE id = %(id)s)""", {"nodes": nodes, "id": route_id}):
         touching.setdefault(r["node"], set()).add(r["code"])
 
     points: list[dict] = []

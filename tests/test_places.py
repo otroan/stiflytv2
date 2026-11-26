@@ -192,7 +192,7 @@ def test_a_link_that_a_route_walks_is_not_retired_with_the_access_point(conn):
     walked = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(a.geom, b.geom) FROM core.node a, core.node b
                                                WHERE a.id = %(a)s AND b.id = %(b)s)""",
                               {"a": str(node), "b": str(primary)}, str(node), str(primary),
-                              "connector", "drawn", None, None)
+                              "connector", "drawn", None, None, season="summer")
     routes._add_legs(conn, route, [walked])
     places.remove_access_point(conn, place_id, str(node), AUTHOR)
     assert conn.execute("SELECT status FROM core.edge WHERE id = %s", (walked,)).fetchone() == ("active",)
@@ -279,7 +279,8 @@ def test_two_places_that_are_one_are_made_one_and_what_lies_round_a_place_is_lis
     found = places.around(conn, hut)
     there = next(e for e in found["ends"] if e["id"] == end["id"])
     assert (there["metres"], there["place"], there["routes"]) == (
-        120, None, [{"id": route, "code": "bre18", "version": routes.detail(conn, route)["version"], "ends_here": True}])
+        120, None, [{"id": route, "code": "bre18", "version": routes.detail(conn, route)["version"], "season": "summer",
+                     "ends_here": True}])
     # Somebody makes a place of that end, by the same name: now the hut is there twice.
     by_hand = places.at_node(conn, end["id"], AUTHOR, "Hytta ved veien")
     found = places.around(conn, hut)

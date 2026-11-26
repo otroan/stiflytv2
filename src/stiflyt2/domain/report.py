@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from stiflyt2 import seasons
 from stiflyt2.domain import mapdata, worklist
 
 PROBLEMS = {  # in the order of the to-do list
@@ -16,10 +17,11 @@ PROBLEMS = {  # in the order of the to-do list
 }
 
 
-def report(conn, area: str) -> dict:
-    """Numbers for one area, with its to-do list. Lengths are in metres."""
-    todo = worklist.worklist(conn, area)
-    mine = worklist.routes_of(conn, area)
+def report(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
+    """Numbers for one area, of the season asked for, with its to-do list. Lengths are in metres."""
+    season = seasons.known(season)
+    todo = worklist.worklist(conn, area, season=season)
+    mine = worklist.routes_of(conn, area, season=season)
     routes_on_foot, = conn.execute("""
         SELECT coalesce(sum(ST_Length(ST_Transform(r.geom, 4326)::geography)), 0)
         FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
@@ -121,8 +123,9 @@ def as_text(r: dict) -> str:
 _GROUND = "ST_Length(ST_Transform(v.geom, 4326)::geography)"
 
 
-def areas(conn, maintainer: str | None = None) -> dict:
-    """Every area side by side: how much ground its routes cover, and how much of that is marked.
+def areas(conn, maintainer: str | None = None, *, season: str = seasons.SUMMER) -> dict:
+    """Every area side by side: how much ground its routes of the season asked for cover, and how much of that is
+    marked.
 
     Ground, not route length: a stretch that several routes share is counted
     once in an area. Two sets of numbers per area: what Turrutebasen has, and
@@ -133,7 +136,13 @@ def areas(conn, maintainer: str | None = None) -> dict:
     """
     from stiflyt2.domain import whose
 
-    who = {"who": maintainer, **whose.params(conn, maintainer)}
+    season = seasons.known(season)
+    tables = seasons.CANDIDATES[season]
+    who = {"who": maintainer, **whose.params(conn, maintainer), "season": season}
+    # Turrutebasen's candidates of the season, by their segments. A winter segment is marked, or staked for the season.
+    candidates = (f"source_index.{tables.route} r JOIN source_index.{tables.route_segment} rs ON rs.route_id = r.id "
+                  f"JOIN source_index.{tables.segment} t ON t.id = rs.segment_id")
+    marked = "t.marked" if season == seasons.SUMMER else "t.marking IN ('JA', 'SM')"
     rows: dict[str, dict] = {}
 
     def row(area: str) -> dict:
@@ -143,9 +152,9 @@ def areas(conn, maintainer: str | None = None) -> dict:
 
     theirs = """
         WITH seg AS (
-            SELECT DISTINCT {area} AS area, t.id, t.length_m AS m, t.marked, t.attrs->>'rutefolger' = 'VV' AS water
-            FROM source_index.route r JOIN source_index.route_segment rs ON rs.route_id = r.id
-            JOIN source_index.trail_segment t ON t.id = rs.segment_id
+            SELECT DISTINCT {area} AS area, t.id, t.length_m AS m, """ + marked + """ AS marked,
+                   t.attrs->>'rutefolger' = 'VV' AS water
+            FROM """ + candidates + """
             WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers", "rs.route_id") + """)
         SELECT area, coalesce(sum(m) FILTER (WHERE water IS NOT TRUE), 0),
                coalesce(sum(m) FILTER (WHERE water IS NOT TRUE AND marked), 0),
@@ -157,8 +166,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
                                          water_m=round(water))
     for area, n, metres in conn.execute("""
             SELECT r.area_prefix, count(DISTINCT r.id), coalesce(sum(t.length_m), 0)
-            FROM source_index.route r JOIN source_index.route_segment rs ON rs.route_id = r.id
-            JOIN source_index.trail_segment t ON t.id = rs.segment_id
+            FROM """ + candidates + """
             WHERE r.area_prefix IS NOT NULL AND """ + whose.sql("rs.maintainers", "rs.route_id") + """
             GROUP BY 1""", who):
         row(area)["turrutebasen"].update(routes=n, route_m=round(metres))
@@ -169,7 +177,7 @@ def areas(conn, maintainer: str | None = None) -> dict:
                 SELECT substring(lower(r.code) from '^([a-z]{{3}})[0-9]') AS area
                 UNION SELECT substring(lower(sr.external_id) from '^([a-z]{{3}})[0-9]')
                       FROM core.source_reference sr WHERE sr.subject_type = 'route' AND sr.subject_id = r.id) a
-            WHERE r.status = 'active' AND r.discontinued_since IS NULL AND a.area IS NOT NULL),
+            WHERE r.status = 'active' AND r.season = %(season)s AND r.discontinued_since IS NULL AND a.area IS NOT NULL),
         legs AS (
             SELECT {area} AS area, m.id AS route, m.reviewed, e.id AS edge, v.kind, v.marked, """ + _GROUND + """ AS m
             FROM mine m JOIN core.route_leg l ON l.route_id = m.id JOIN core.route t ON t.id = l.route_id

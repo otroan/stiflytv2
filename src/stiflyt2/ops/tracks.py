@@ -43,7 +43,7 @@ import numpy as np
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from stiflyt2 import features
+from stiflyt2 import features, seasons
 from stiflyt2.config import settings
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import areas as areas_of
@@ -528,16 +528,19 @@ def _said(row: dict) -> dict:
     return row
 
 
-def listing(conn, area: str | None = None, route: str | None = None) -> list[dict]:
-    """The tracks of an area (or that come within 100 m of one of its routes), or those that come within 100 m of a
-    route: the latest walked first."""
+def listing(conn, area: str | None = None, route: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
+    """The tracks of an area (or that come within 100 m of one of its routes of the season asked for), or those that
+    come within 100 m of a route: the latest walked first."""
+    season = seasons.known(season)
     where, params = [], {}
     near = """EXISTS (SELECT 1 FROM core.route_leg rl JOIN core.route r ON r.id = rl.route_id AND r.status = 'active'
                       JOIN core.edge e ON e.id = rl.edge_id JOIN core.edge_revision v ON v.id = e.current_revision_id
                       WHERE {which} AND ST_DWithin(v.geom, l.geom, %(near)s))"""
     if area:
-        where.append(f"(t.area = %(area)s OR {near.format(which='(lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))')})")
-        params.update(area=area.lower(), added=areas_of.added_to(conn, area), near=NEAR_ROUTE_M)
+        which = "r.season = %(season)s AND (lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))"
+        where.append(f"(t.area = %(area)s OR {near.format(which=which)})")
+        params.update(area=area.lower(), added=areas_of.added_to(conn, area, season=season), near=NEAR_ROUTE_M,
+                      season=season)
     if route:
         if not _uuid(route):
             raise NotFound("no such route")
@@ -547,9 +550,10 @@ def listing(conn, area: str | None = None, route: str | None = None) -> list[dic
     return [_said(r) for r in _rows(conn, sql, params)]
 
 
-def lines(conn, area: str) -> dict:
-    """The tracks of an area as lines to draw (simplified to a few metres): GeoJSON, longitude and latitude."""
-    ids = [t["id"] for t in listing(conn, area)]
+def lines(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
+    """The tracks of an area (by its routes of the season asked for) as lines to draw (simplified to a few metres):
+    GeoJSON, longitude and latitude."""
+    ids = [t["id"] for t in listing(conn, area, season=season)]
     found = _rows(conn, """
         SELECT t.id::text, t.name, l.started_at, l.length_m,
                ST_AsGeoJSON(ST_Transform(ST_Force2D(ST_Simplify(l.geom, 3)), 4326), 6)::json AS geometry
@@ -837,10 +841,11 @@ def unchecked(conn) -> list[str]:
         WHERE r.has_time AND r.has_height AND l.geom IS NOT NULL AND l.checked IS NULL ORDER BY t.made_at""").fetchall()]
 
 
-def compared(conn, area: str | None = None) -> dict:
-    """What the checked tracks of an area (or all of them) come to together: the time walking against Naismith's
-    rule, and the device's climb against the height model's, each over all of them and track by track."""
-    rows = [t for t in (listing(conn, area) if area else listing(conn)) if t.get("checked")]
+def compared(conn, area: str | None = None, *, season: str = seasons.SUMMER) -> dict:
+    """What the checked tracks of an area (by its routes of the season asked for; or all of them) come to together:
+    the time walking against Naismith's rule, and the device's climb against the height model's, each over all of
+    them and track by track."""
+    rows = [t for t in (listing(conn, area, season=season) if area else listing(conn)) if t.get("checked")]
     if not rows:
         return {"tracks": 0}
     c = [t["checked"] for t in rows]

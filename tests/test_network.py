@@ -33,7 +33,7 @@ def drawn(conn, route_id, edge, start_m, end_m):
         f"SELECT {end}(ST_GeomFromEWKT(%s))", (wkt,)).fetchone()[0])
         for end in ("ST_StartPoint", "ST_EndPoint"))
     new = routes._new_edge(conn, AUTHOR, "ST_GeomFromEWKT(%(wkt)s)", {"wkt": wkt}, a, b,
-                           "trail", "drawn", True, True)
+                           "trail", "drawn", True, True, season="summer")
     routes._add_legs(conn, route_id, [new])
     return new
 
@@ -125,7 +125,7 @@ def test_ends_that_stop_short_touch_or_cross_are_found(conn):
             f"SELECT {pt}(ST_GeomFromEWKT(%s))", (end,)).fetchone()[0])
             for pt in ("ST_StartPoint", "ST_EndPoint"))
         routes._add_legs(conn, route, [routes._new_edge(
-            conn, AUTHOR, "ST_GeomFromEWKT(%(wkt)s)", {"wkt": end}, a, b, "trail", "drawn", True, True)])
+            conn, AUTHOR, "ST_GeomFromEWKT(%(wkt)s)", {"wkt": end}, a, b, "trail", "drawn", True, True, season="summer")])
         found = network.validate(conn, [route])
         assert found["parts"] == 1 and not {"near", "touch", "crossing", "island"} & set(kinds(found))
 

@@ -8,6 +8,7 @@ own id, which stays the same from one export to the next.
 """
 from __future__ import annotations
 
+from stiflyt2 import seasons
 from stiflyt2.domain import corrections, routes, worklist
 
 
@@ -36,11 +37,14 @@ def routes_geojson(conn, area: str | None = None, changed_only: bool = False, sr
     its `state`. Asked for, only the routes in use (False) or only the
     discontinued ones (True) are given. With `changed_only`, the routes that
     differ from Turrutebasen and the discontinued ones: what there is to act on.
+
+    The summer's routes (foot routes) only, for now: what UT.no is handed is what it has from Turrutebasen.
     """
-    ids = worklist.routes_of(conn, area, discontinued) if area else [
+    ids = worklist.routes_of(conn, area, discontinued, season=seasons.SUMMER) if area else [
         str(r) for (r,) in conn.execute(
-            """SELECT id FROM core.route WHERE status = 'active'
-               AND (%(d)s::boolean IS NULL OR (discontinued_since IS NOT NULL) = %(d)s)""", {"d": discontinued})]
+            """SELECT id FROM core.route WHERE status = 'active' AND season = %(summer)s
+               AND (%(d)s::boolean IS NULL OR (discontinued_since IS NOT NULL) = %(d)s)""",
+            {"d": discontinued, "summer": seasons.SUMMER})]
     lines = dict(conn.execute("""
         SELECT l.route_id::text,
                ST_AsGeoJSON(ST_Transform(ST_LineMerge(ST_Collect(

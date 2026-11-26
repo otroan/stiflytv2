@@ -9,16 +9,18 @@ from __future__ import annotations
 import heapq
 from collections import defaultdict
 
+from stiflyt2 import seasons
+
 NEAR_M = 50   # a loose end this close to another stretch was probably meant to meet it
 TOUCH_M = 1   # as near as two points may be and still count as the same spot
 APART_M = 1000   # a part of the network further than this from the rest is told as a whole, not as a spot
 
-# Every stretch in use: on an active route, or a connector of a place.
+# Every stretch in use: on an active route of the season (%(season)s), or a connector of a place, whatever its season.
 _USED = """(SELECT e.id, r.a_node, r.b_node, r.kind, r.geom
             FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
             WHERE e.status = 'active' AND (r.kind = 'connector' OR EXISTS (
                 SELECT 1 FROM core.route_leg l JOIN core.route t ON t.id = l.route_id
-                WHERE l.edge_id = e.id AND t.status = 'active')))"""
+                WHERE l.edge_id = e.id AND t.status = 'active' AND t.season = %(season)s)))"""
 
 
 def _listed(codes) -> str:
@@ -32,8 +34,8 @@ def _metres(d: float) -> str:
     return f"{d:.0f} m" if round(d, 1) >= 10 else f"{d:.1f} m"
 
 
-def validate(conn, route_ids: list[str]) -> dict:
-    """Check the part of the network these routes use, against everything owned.
+def validate(conn, route_ids: list[str], *, season: str = seasons.SUMMER) -> dict:
+    """Check the part of the network these routes use, against everything owned of the season asked for.
 
     Findings, each with a position:
     - touch: a route meets another at a point where the other is not divided
@@ -43,14 +45,15 @@ def validate(conn, route_ids: list[str]) -> dict:
     - open end: a route ends where a candidate that is not yours carries on
     - dead end: a route ends at no place and no other route
     """
+    season = seasons.known(season)
     edges = {}                       # id -> (a, b, kind, metres, codes)
     reach = defaultdict(list)        # node -> [(other node, metres, edge)]
     for edge, a, b, kind, metres, codes in conn.execute(f"""
             SELECT u.id::text, u.a_node::text, u.b_node::text, u.kind, ST_Length(u.geom),
                    (SELECT array_agg(t.code) FROM core.route_leg l
-                    JOIN core.route t ON t.id = l.route_id AND t.status = 'active'
+                    JOIN core.route t ON t.id = l.route_id AND t.status = 'active' AND t.season = %(season)s
                     WHERE l.edge_id = u.id)
-            FROM {_USED} u"""):
+            FROM {_USED} u""", {"season": season}):
         edges[edge] = (a, b, kind, metres, codes or [])
         reach[a].append((b, metres, edge))
         reach[b].append((a, metres, edge))
@@ -97,7 +100,7 @@ def validate(conn, route_ids: list[str]) -> dict:
                 WHERE ST_DWithin(u.geom, n.geom, %(near)s) AND u.kind <> 'connector'
                   AND n.id NOT IN (u.a_node, u.b_node)
                 ORDER BY 2 LIMIT 4) near
-            WHERE n.id = ANY(%(nodes)s::uuid[]) ORDER BY 1, 3""", {"nodes": nodes, "near": NEAR_M}):
+            WHERE n.id = ANY(%(nodes)s::uuid[]) ORDER BY 1, 3""", {"nodes": nodes, "near": NEAR_M, "season": season}):
         close[node].append((edge, d, along))
     flagged, pairs = set(), set()
     for d, node, edge, along in sorted((d, node, edge, along) for node, found in close.items()
@@ -148,7 +151,7 @@ def validate(conn, route_ids: list[str]) -> dict:
               AND m.kind NOT IN ('connector', 'water') AND u.kind NOT IN ('connector', 'water')
               AND least(ST_Distance(x.pt, ma.geom), ST_Distance(x.pt, mb.geom),
                         ST_Distance(x.pt, ua.geom), ST_Distance(x.pt, ub.geom)) > %(touch)s
-            ORDER BY 1, 2, 5""", {"edges": mine, "touch": TOUCH_M}):
+            ORDER BY 1, 2, 5""", {"edges": mine, "touch": TOUCH_M, "season": season}):
         if frozenset((one, two)) in pairs:
             continue        # already said as an end that stops short or touches
         (a1, b1, _, m1, _), (a2, b2, _, m2, _) = edges[one], edges[two]
@@ -211,14 +214,15 @@ def validate(conn, route_ids: list[str]) -> dict:
             finding.update(lon=mid_lon, lat=mid_lat, whole=True, bbox=[round(v, 6) for v in box])
         findings.append(finding)
 
-    # Ends at nothing. Where Turrutebasen has a candidate carrying on from the
+    # Ends at nothing. Where Turrutebasen has a candidate of the season carrying on from the
     # spot, the end is open only until that candidate is made yours.
     ends = [n for n in nodes if len(reach[n]) == 1 and not where[n][2] and n not in flagged]
-    onward = dict(conn.execute("""
+    tables = seasons.CANDIDATES[season]
+    onward = dict(conn.execute(f"""
         SELECT n.id::text, array_agg(DISTINCT rt.label)
         FROM core.node n
-        JOIN source_index.trail_segment t ON ST_DWithin(t.geom, n.geom, %(touch)s)
-        JOIN source_index.route rt ON rt.id = ANY(t.route_ids)
+        JOIN source_index.{tables.segment} t ON ST_DWithin(t.geom, n.geom, %(touch)s)
+        JOIN source_index.{tables.route} rt ON rt.id = ANY(t.route_ids)
         WHERE n.id = ANY(%(nodes)s::uuid[]) AND NOT EXISTS (
             SELECT 1 FROM core.source_reference sr
             JOIN core.edge e ON e.id = sr.subject_id AND e.status = 'active'

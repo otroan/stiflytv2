@@ -31,7 +31,7 @@ import uuid
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from stiflyt2 import features
+from stiflyt2 import features, seasons
 from stiflyt2.domain.places import Invalid, NotFound
 from stiflyt2.ops import along as on_route
 from stiflyt2.ops import anchor
@@ -168,8 +168,9 @@ def change(conn, author, entry: str, said: dict) -> dict:
             raise Invalid(f"say where on the route it is: {'the spot' if about == 'spot' else 'the parts'}")
         route = now["route_now"]
         if not route and about == "spot" and (said.get("spot") or {}).get("point"):
-            # Adrift: put on whichever route in use is clicked.
-            route = on_route.on(conn, None, *said["spot"]["point"])["route"]
+            # Adrift: put on whichever route in use is clicked, of the season of the route it was said on.
+            was_of = conn.execute("SELECT season FROM core.route WHERE id = %s", (row["route_id"],)).fetchone()
+            route = on_route.on(conn, None, *said["spot"]["point"], season=was_of[0] if was_of else seasons.SUMMER)["route"]
             sets["area"] = conn.execute("SELECT lower(left(code, 3)) FROM core.route WHERE id = %s", (route,)).fetchone()[0]
         if not route:
             raise Invalid("its route is gone: say where it is by clicking a route in use")
@@ -310,14 +311,27 @@ def _order(e: dict) -> tuple:
     return (not e["open"], not e["active"], -e["made_at"].timestamp())
 
 
-def listing(conn, area: str | None = None, route: str | None = None) -> list[dict]:
+def listing(conn, area: str | None = None, route: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
     """The entries of an area (on its routes now, or said there and on none now), or of one route: open first,
-    notices in force first among them, then the newest."""
-    told = _shown(conn, _rows(conn, "SELECT * FROM ops.entry ORDER BY made_at"))
+    notices in force first among them, then the newest.
+
+    An area's are those on its routes of the season asked for; of one on none now, the season of the route it was
+    said on.
+    """
+    season = seasons.known(season)
+    kept = _rows(conn, "SELECT * FROM ops.entry ORDER BY made_at")
+    said_on = {str(k["id"]): str(k["route_id"]) for k in kept}
+    told = _shown(conn, kept)
     if area:
-        area, more = area.lower(), set(areas_of.added_to(conn, area))
-        told = [e for e in told if any(r["code"] and r["code"][:3].lower() == area or r["id"] in more for r in e["routes"])
-                or (not e["routes"] and e["area"] == area)]
+        area, more = area.lower(), set(areas_of.added_to(conn, area, season=season))
+        ids = {r["id"] for e in told for r in e["routes"]} | set(said_on.values())
+        season_of = dict(conn.execute("SELECT id::text, season FROM core.route WHERE id = ANY(%s::uuid[])",
+                                      (list(ids),)).fetchall())
+        told = [e for e in told
+                if any((r["code"] and r["code"][:3].lower() == area or r["id"] in more)
+                       and season_of.get(r["id"], seasons.SUMMER) == season for r in e["routes"])
+                or (not e["routes"] and e["area"] == area
+                    and season_of.get(said_on.get(e["id"]), seasons.SUMMER) == season)]
     if route:
         told = [e for e in told if any(r["id"] == route for r in e["routes"])]
     return sorted(told, key=_order)

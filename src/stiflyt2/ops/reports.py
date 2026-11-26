@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from stiflyt2 import features
+from stiflyt2 import features, seasons
 from stiflyt2.config import settings
 from stiflyt2.domain import whose
 from stiflyt2.domain.places import Invalid, NotFound
@@ -233,23 +233,34 @@ def _coverage(conn, parts: list[dict]) -> list[dict]:
     return told
 
 
-def _routes_of(conn, area: str | None) -> list[dict]:
-    """The routes in use of an area (those added to it from another too), with their stretches."""
+def _routes_of(conn, area: str | None, *, season: str = seasons.SUMMER) -> list[dict]:
+    """The routes in use of the season asked for of an area (those added to it from another too), or of every area,
+    with their stretches."""
+    season = seasons.known(season)
     found = _rows(conn, """
         SELECT r.id::text, r.code, coalesce(r.name, '') AS name, array_agg(DISTINCT l.edge_id::text) AS edges
         FROM core.route r JOIN core.route_leg l ON l.route_id = r.id
-        WHERE r.status = 'active' AND r.discontinued_since IS NULL AND r.unpublished_why IS NULL
+        WHERE r.status = 'active' AND r.season = %(season)s AND r.discontinued_since IS NULL AND r.unpublished_why IS NULL
           AND (%(area)s::text IS NULL OR lower(left(r.code, 3)) = %(area)s OR r.id = ANY(%(added)s::uuid[]))
         GROUP BY r.id ORDER BY length(r.code), r.code""",
-                  {"area": (area or "").lower() or None, "added": areas_of.added_to(conn, area) if area else []})
+                  {"area": (area or "").lower() or None, "season": season,
+                   "added": areas_of.added_to(conn, area, season=season) if area else []})
     return found
 
 
-def _in_area(conn, area: str | None, told: list[dict]) -> list[dict]:
-    """The reports said in an area, or on a route added to it from another."""
+def _in_area(conn, area: str | None, told: list[dict], *, season: str = seasons.SUMMER) -> list[dict]:
+    """The reports of the season asked for said in an area, or on a route added to it from another; of every area
+    where none is asked for. A report is of the seasons of the routes it was said on (the summer's, if none)."""
+    season = seasons.known(season)
+    said_of: dict[str, set[str]] = {}
+    for report, of in conn.execute("""
+            SELECT DISTINCT p.report_id::text, r.season FROM ops.report_part p JOIN core.route r ON r.id = p.route_id
+            WHERE p.report_id = ANY(%s::uuid[])""", ([t["id"] for t in told],)):
+        said_of.setdefault(report, set()).add(of)
+    told = [t for t in told if season in said_of.get(t["id"], {seasons.SUMMER})]
     if not area:
         return told
-    more = set(areas_of.added_to(conn, area))
+    more = set(areas_of.added_to(conn, area, season=season))
     return [t for t in told if t["area"] == area.lower() or any(c["route"] and c["route"]["id"] in more for c in t["covers"])]
 
 
@@ -269,12 +280,15 @@ def _shown(conn, reports: list[dict]) -> list[dict]:
     return told
 
 
-def listing(conn, area: str | None = None, route: str | None = None) -> list[dict]:
-    """The reports of an area, or of a route (those that cover some of it now): the latest done first."""
+def listing(conn, area: str | None = None, route: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
+    """The reports of an area, of the season asked for, or of a route (those that cover some of it now): the latest
+    done first."""
     rows = _rows(conn, "SELECT * FROM ops.report ORDER BY done_on DESC, made_at DESC")
-    told = _shown(conn, rows) if route else _in_area(conn, area, _shown(conn, rows))
+    told = _shown(conn, rows) if route else _in_area(conn, area, _shown(conn, rows), season=season)
     if route:
-        legs = {e for r in _routes_of(conn, None) if r["id"] == route for e in r["edges"]}
+        of = conn.execute("SELECT season FROM core.route WHERE id::text = %s", (route,)).fetchone()     # its own
+        legs = {e for r in _routes_of(conn, None, season=of[0] if of else seasons.SUMMER) if r["id"] == route
+                for e in r["edges"]}
         told = [t for t in told if legs & set(t["edges"])]
     return told
 
@@ -289,12 +303,12 @@ def one(conn, report: str) -> dict:
     return told
 
 
-def status(conn, area: str | None = None, maintainer: str | None = None) -> list[dict]:
-    """Each route in use of an area: when it was last inspected and last had a work party, whether that covered all
-    of it or part, and whether it is due. Those due longest first. Each says who looks after it, and whether that is
-    the maintainer asked for (`ours`; the home maintainer when none is asked for): another association's routes are
-    in the tool, and are not theirs to report on."""
-    routes = _routes_of(conn, area)
+def status(conn, area: str | None = None, maintainer: str | None = None, *, season: str = seasons.SUMMER) -> list[dict]:
+    """Each route in use of an area, of the season asked for: when it was last inspected and last had a work party,
+    whether that covered all of it or part, and whether it is due. Those due longest first. Each says who looks after
+    it, and whether that is the maintainer asked for (`ours`; the home maintainer when none is asked for): another
+    association's routes are in the tool, and are not theirs to report on."""
+    routes = _routes_of(conn, area, season=season)
     whom = whose.looks_after(conn, [r["id"] for r in routes], maintainer or settings.home_maintainer)
     reports = _shown(conn, _rows(conn, "SELECT * FROM ops.report WHERE kind IN ('inspection', 'work') ORDER BY done_on DESC"))
     today = dt.date.today()
@@ -313,10 +327,11 @@ def status(conn, area: str | None = None, maintainer: str | None = None) -> list
     return sorted(told, key=lambda x: (x["inspection"]["done_on"] if x["inspection"] else dt.date.min, x["code"]))
 
 
-def coverage(conn, area: str | None, kind: str) -> list[dict]:
-    """What the reports of a kind cover, as lines with the day each was done: for a map that shows how long since,
-    stretch by stretch. The latest are last, to be drawn on top."""
+def coverage(conn, area: str | None, kind: str, *, season: str = seasons.SUMMER) -> list[dict]:
+    """What the reports of a kind and of the season asked for cover, as lines with the day each was done: for a map
+    that shows how long since, stretch by stretch. The latest are last, to be drawn on top."""
     if kind not in ("inspection", "work"):
         raise Invalid("coverage is of inspections or work parties")
     rows = _rows(conn, "SELECT * FROM ops.report WHERE kind = %(k)s ORDER BY done_on", {"k": kind})
-    return [{"report": t["id"], "done_on": t["done_on"], "line": line} for t in _in_area(conn, area, _shown(conn, rows)) for line in t["lines"]]
+    return [{"report": t["id"], "done_on": t["done_on"], "line": line}
+            for t in _in_area(conn, area, _shown(conn, rows), season=season) for line in t["lines"]]

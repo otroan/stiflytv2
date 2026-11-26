@@ -188,7 +188,7 @@ def test_a_hole_at_a_junction_and_two_places_with_one_name_are_found(conn):
         "SELECT ST_Translate(geom, 0, 300) FROM core.node WHERE id = %s", (end["id"],)).fetchone()[0])
     short = routes._new_edge(conn, AUTHOR, """(SELECT ST_MakeLine(ST_Translate(a.geom, 0, 3), b.geom) FROM core.node a,
                                                 core.node b WHERE a.id = %(a)s AND b.id = %(b)s)""",
-                             {"a": end["id"], "b": far}, end["id"], far, "trail", "drawn", True, True)
+                             {"a": end["id"], "b": far}, end["id"], far, "trail", "drawn", True, True, season="summer")
     routes._add_legs(conn, route, [short])
     hole, = [f for f in lookup.checks(conn, "bre")["checks"] if f["kind"] == "gap at a junction"]
     assert hole["text"] == "A stretch of bre18 stops 3.0 m short of the junction it hangs in: the line has a hole there"

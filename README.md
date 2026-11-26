@@ -1004,6 +1004,31 @@ overlay, and `overlay reset` leaves it. A database from before this needs
 the two statements at the top of `migrations/import/versions/0005_feedback.py`
 run by its owner before `alembic upgrade head`.
 
+## Seasons: DNT's winter routes
+
+DNT's winter routes are routes of their own, of the winter: the code of the
+summer route they go with and a v (jot11v goes with jot11), staked anew each
+winter over frozen lakes and bogs (ADR-006). Turrutebasen keeps them among its
+ski trails, which are taken in with the foot routes; the winter routes among
+them (a code with a v) are indexed apart (`source_index.winter_route`,
+`winter_segment`), and shown in the route editor as a layer of their own,
+"Turrutebasen, winter route", off until asked for. The assistant's
+`turrutebasen` says what a winter code carries, segment by segment, with when
+each was drawn.
+
+A route and a stretch each have a season, and a winter route never runs over a
+summer stretch, nor a summer route over a winter one: the database refuses it
+(domain migration `d0019`). Junctions and places are shared: a hut is where
+both arrive. Made ours (`make_yours jot11v`, or laid out with a code with a v),
+a winter route is of winter stretches; its way is found over the winter's
+stretches and Turrutebasen's winter routes only. What lists routes takes the
+season asked for, the summer unless the winter is (`?season=winter`, an
+assistant's `season`, `stiflyt2 report jot --season winter`); what is handed to
+Kartverket and UT.no, the planner's and the trips' network, and the signs are
+the summer's. Still to come: the two seasons side by side in the pages, each
+winter's track from those who stake the routes, the opening period, and signs
+for the winter routes.
+
 ## The front door: areas and routes
 
 `/` is where everybody comes in, whatever their role (`static/drift.html`).

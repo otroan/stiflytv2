@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 from psycopg.types.json import Jsonb
 
-from stiflyt2 import terrain
+from stiflyt2 import seasons, terrain
 
 log = logging.getLogger(__name__)
 
@@ -164,7 +164,8 @@ MADE = """INSERT INTO walk.edge_next (id, source, target, origin, osm_id, kind, 
            ST_X(ST_EndPoint(t)), ST_Y(ST_EndPoint(t))
     FROM walk.edge_load, LATERAL ST_Transform(g, 25833) t"""
 
-# The marked routes: Turrutebasen's, and our own stretches of routes in use (not those over water).
+# The marked routes: Turrutebasen's, and our own stretches of routes in use (not those over water). The summer's
+# routes only (%(summer)s): a winter route runs over frozen lakes and bogs, which are not walked.
 MARKED = f"""CREATE UNLOGGED TABLE walk.marked_load AS
     SELECT row_number() OVER () AS gid, * FROM (
         SELECT 'turrutebasen' AS origin, s.geom,
@@ -174,11 +175,12 @@ MARKED = f"""CREATE UNLOGGED TABLE walk.marked_load AS
         UNION ALL
         SELECT 'ours', r.geom, true, (SELECT string_agg(DISTINCT t.code, ', ') FROM core.route_leg l
                                       JOIN core.route t ON t.id = l.route_id AND t.status = 'active'
+                                           AND t.season = %(summer)s
                                       WHERE l.edge_id = e.id)
         FROM core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
         WHERE e.status = 'active' AND r.kind <> 'water'
           AND EXISTS (SELECT 1 FROM core.route_leg l JOIN core.route t ON t.id = l.route_id AND t.status = 'active'
-                      WHERE l.edge_id = e.id)) m"""
+                      AND t.season = %(summer)s WHERE l.edge_id = e.id)) m"""
 
 # A stretch is along a marked route where two of three points along it are near one.
 ALONG = f"""WITH near AS (
@@ -580,7 +582,7 @@ def finish(conn, pbf: Path, md5: str, made_at=None, began: float | None = None) 
     conn.execute("UPDATE walk.area_load SET geom = ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(gj), 4326), 25833)")
     said("glaciers and huts read")
 
-    conn.execute(MARKED)
+    conn.execute(MARKED, {"summer": seasons.SUMMER})
     conn.execute("CREATE INDEX ON walk.marked_load USING gist (geom)")
     conn.execute("ANALYZE walk.marked_load")
     conn.execute(ALONG)

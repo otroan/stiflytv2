@@ -65,6 +65,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from stiflyt2 import seasons
 from stiflyt2.domain import identity
 from stiflyt2.domain.places import Conflict, Invalid, NotFound
 from stiflyt2.ops import anchor, undo
@@ -141,15 +142,18 @@ def stands(junction: tuple, leaving: list[float]) -> tuple:
 
 
 class _Network:
-    """Every route in use, as walked: its stretches from junction to junction, and what lies at the junctions."""
+    """Every route in use, as walked: its stretches from junction to junction, and what lies at the junctions.
+
+    The summer's routes only: the signs are the summer's, for now.
+    """
 
     def __init__(self, conn) -> None:
         legs = _rows(conn, f"""
             SELECT t.code, e.id::text AS edge, r.kind, r.a_node::text AS a, r.b_node::text AS b, {_LEN} AS metres
             FROM core.route t JOIN core.route_leg l ON l.route_id = t.id
             JOIN core.edge e ON e.id = l.edge_id JOIN core.edge_revision r ON r.id = e.current_revision_id
-            WHERE t.status = 'active' AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL
-              AND r.a_node <> r.b_node""")
+            WHERE t.status = 'active' AND t.season = %(summer)s AND t.discontinued_since IS NULL
+              AND t.unpublished_why IS NULL AND r.a_node <> r.b_node""", {"summer": seasons.SUMMER})
         self.of_route: dict[str, dict[str, list[dict]]] = {}      # route -> junction -> the stretches of it there
         self.at: dict[str, dict[str, dict]] = {}                  # junction -> stretch -> the stretch
         self.routes_at: dict[str, set[str]] = {}
@@ -700,11 +704,15 @@ def _the_one(kept: dict, key: str, same_way: int) -> dict | None:
 
 
 def areas(conn) -> list[dict]:
-    """The areas that have routes of ours in use: the three letters their codes start with."""
+    """The areas that have routes of ours in use: the three letters their codes start with.
+
+    Of the summer's routes only: the signs are the summer's, for now.
+    """
     return _rows(conn, """
         SELECT lower(left(code, 3)) AS area, count(*)::int AS routes FROM core.route
-        WHERE status = 'active' AND discontinued_since IS NULL AND unpublished_why IS NULL AND code ~* '^[a-z]{3}'
-        GROUP BY 1 ORDER BY 2 DESC, 1""")
+        WHERE status = 'active' AND season = %(summer)s AND discontinued_since IS NULL AND unpublished_why IS NULL
+          AND code ~* '^[a-z]{3}'
+        GROUP BY 1 ORDER BY 2 DESC, 1""", {"summer": seasons.SUMMER})
 
 
 def listing(conn, area: str | None = None) -> dict:
@@ -1013,7 +1021,10 @@ def _next_code(conn, area: str) -> str:
 
 
 def add_site(conn, author, area: str, lon: float, lat: float, name: str | None = None) -> str:
-    """Put a sign site at a spot on a route that is no junction. It has its code from the start."""
+    """Put a sign site at a spot on a route that is no junction. It has its code from the start.
+
+    On a summer route: the signs are the summer's, for now.
+    """
     found = _rows(conn, """
         SELECT e.id::text AS edge, l.f * ST_Length(r.geom) AS from_a, (1 - l.f) * ST_Length(r.geom) AS from_b,
                ST_AsEWKT(ST_LineInterpolatePoint(r.geom, l.f)) AS at
@@ -1022,8 +1033,9 @@ def add_site(conn, author, area: str, lon: float, lat: float, name: str | None =
              LATERAL (SELECT ST_LineLocatePoint(r.geom, p.g) AS f) l
         WHERE e.status = 'active' AND r.kind <> 'water' AND ST_DWithin(r.geom, p.g, %(near)s)
           AND EXISTS (SELECT 1 FROM core.route_leg g JOIN core.route t ON t.id = g.route_id AND t.status = 'active'
-                      AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL WHERE g.edge_id = e.id)
-        ORDER BY ST_Distance(r.geom, p.g) LIMIT 1""", {"lon": lon, "lat": lat, "near": ON_ROUTE_M})
+                      AND t.season = %(summer)s AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL
+                      WHERE g.edge_id = e.id)
+        ORDER BY ST_Distance(r.geom, p.g) LIMIT 1""", {"lon": lon, "lat": lat, "near": ON_ROUTE_M, "summer": seasons.SUMMER})
     if not found:
         raise Invalid(f"a sign site stands on a route: that spot is more than {ON_ROUTE_M} m from every route in use")
     if min(found[0]["from_a"], found[0]["from_b"]) < OFF_JUNCTION_M:
@@ -1222,14 +1234,17 @@ def add_destination(conn, author, post: str, *, place: str | None = None, lon: f
             raise Invalid("that is the place the post stands at")
     else:
         text = (name or "").strip()
+        # A spot on a summer route: the signs are the summer's, for now.
         found = _rows(conn, """
             SELECT e.id::text AS edge, ST_AsEWKT(ST_LineInterpolatePoint(r.geom, ST_LineLocatePoint(r.geom, p.g))) AS at
             FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326), 25833) AS g) p,
                  core.edge e JOIN core.edge_revision r ON r.id = e.current_revision_id
             WHERE e.status = 'active' AND ST_DWithin(r.geom, p.g, %(near)s)
               AND EXISTS (SELECT 1 FROM core.route_leg g JOIN core.route t ON t.id = g.route_id AND t.status = 'active'
-                          AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL WHERE g.edge_id = e.id)
-            ORDER BY ST_Distance(r.geom, p.g) LIMIT 1""", {"lon": lon, "lat": lat, "near": ON_ROUTE_M})
+                          AND t.season = %(summer)s AND t.discontinued_since IS NULL AND t.unpublished_why IS NULL
+                          WHERE g.edge_id = e.id)
+            ORDER BY ST_Distance(r.geom, p.g) LIMIT 1""",
+            {"lon": lon, "lat": lat, "near": ON_ROUTE_M, "summer": seasons.SUMMER})
         if not found:
             raise Invalid(f"a sign points to a place of yours or to a spot on a route: that is more than {PLACE_M} m "
                           f"from every place and more than {ON_ROUTE_M} m from every route in use")

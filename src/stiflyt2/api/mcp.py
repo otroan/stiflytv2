@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from stiflyt2 import access, feedback, utno
+from stiflyt2 import access, feedback, seasons, utno
 from stiflyt2.api import auth
 from stiflyt2.domain import (
     corrections,
@@ -112,6 +112,8 @@ Area = Annotated[str, Field(pattern="^[A-Za-z]{3}$", description="Area: the thre
 Stretch = Annotated[str, Field(pattern=UUID.pattern, description="The id of a stretch, from `route`")]
 DryRun = Annotated[bool, Field(description="True (the default): say what it would do and change nothing. "
                                            "False: do it.")]
+Season = Annotated[seasons.Season, Field(description="summer (the default), or winter: DNT's winter routes, routes of "
+                                                     "their own (jot11v goes with jot11)")]
 
 
 @dataclass
@@ -240,6 +242,7 @@ def route(c: Call, a: OneRoute) -> dict:
 class Areas(Args):
     maintainer: str | None = Field(None, max_length=120, description="Only the ground this maintainer looks after, "
                                                                      "e.g. 'DNT | DNT Oslo og omegn'")
+    season: Season = seasons.SUMMER
 
 
 @tool("Every area side by side")
@@ -247,18 +250,19 @@ def areas(c: Call, a: Areas) -> dict:
     """Every area side by side: kilometres of ground its routes cover and how much of it is marked, a stretch
     that routes share counted once. For Turrutebasen as it is and for what is ours. Use for 'how many km of
     marked route'."""
-    return report.areas(c.conn, a.maintainer)
+    return report.areas(c.conn, a.maintainer, season=a.season)
 
 
 class OneArea(Args):
     area: Area
+    season: Season = seasons.SUMMER
 
 
 @tool("Where an area stands")
 def area(c: Call, a: OneArea) -> dict:
     """Where one area stands: how many routes are ours and done, lengths, who maintains what, the network, and
     the to-do list (what is asked of which route), with every route of the area and its status."""
-    found = report.report(c.conn, a.area)
+    found = report.report(c.conn, a.area, season=a.season)
     for heavy in ("yours", "accepted", "map_data"):
         found.pop(heavy, None)
     found["all"] = [{k: r.get(k) for k in ("code", "kind", "name", "km", "done", "withdrawn", "discontinued",
@@ -272,14 +276,14 @@ def checks(c: Call, a: OneArea) -> dict:
     """What looks odd in an area and is otherwise only seen on a map: two numbers on one line, a route of a
     few metres, a number that looks misspelt, a maintainer that is none, a line that goes out and the same way
     back, ice not said to be ice. Each is a place to look, not an error."""
-    return lookup.checks(c.conn, a.area)
+    return lookup.checks(c.conn, a.area, season=a.season)
 
 
 @tool("Repairs proposed for an area", writes=True)
 def proposed(c: Call, a: OneArea) -> list:
     """Repairs simple enough to approve one by one: a short extra end, pieces lying close, a place where a
     route ends at something with a name. Each has an `action` to give to `approve_proposal`."""
-    return _lean(proposals.proposals(c.conn, a.area))
+    return _lean(proposals.proposals(c.conn, a.area, season=a.season))
 
 
 class Numbered(Args):
@@ -298,13 +302,15 @@ class Here(Args):
     lon: Lon
     lat: Lat
     radius_m: float = Field(200, gt=0, le=lookup.HERE_MAX_M)
+    season: seasons.Season | None = Field(None, description="Only what is ours of this season; left out, all of it, "
+                                                            "each stretch saying its season")
 
 
 @tool("What lies around a point")
 def what_is_here(c: Call, a: Here) -> dict:
     """What lies around a point, nearest first: place names, mapped paths and roads, Turrutebasen segments,
     stretches and junctions of ours with the routes on them, and places."""
-    return lookup.here(c.conn, a.lon, a.lat, a.radius_m)
+    return lookup.here(c.conn, a.lon, a.lat, a.radius_m, season=a.season)
 
 
 class Way(Args):
@@ -336,6 +342,8 @@ def shared_line(c: Call, a: Two) -> dict:
 class Points(Args):
     points: list[Point] = Field(min_length=2, max_length=50, description="[lon, lat] of each point, in order")
     reach_m: float | None = Field(None, ge=1, le=500, description="How near a junction a point must lie to mean it")
+    season: seasons.Season = Field(seasons.SUMMER, description="summer, or winter: a winter route's way is found "
+                                   "over the winter's stretches and Turrutebasen's winter routes only")
 
 
 @tool("What a route laid through points would be", writes=True)
@@ -343,7 +351,7 @@ def plan_way(c: Call, a: Points) -> dict:
     """What a route laid out through the points would be, as `lay_out` and `lay_out_again` would lay it: over
     our stretches and Turrutebasen's segments where they lead, along mapped paths and roads where they do not,
     and straight where nothing is mapped. Says how much of each. Makes nothing."""
-    return _lean(routes.plan(c.conn, a.points, a.reach_m))
+    return _lean(routes.plan(c.conn, a.points, a.reach_m, season=a.season))
 
 
 class RouteOnly(Args):
@@ -406,13 +414,18 @@ def changes(c: Call, a: RouteOnly) -> list:
 
 class Make(Args):
     turrutebasen: str = Field(min_length=1, max_length=40, description="The label of a candidate in Turrutebasen "
-                                                                       "(from `find` or `turrutebasen`), e.g. ron2 or jot91/1")
+                                                                       "(from `find` or `turrutebasen`), e.g. ron2, "
+                                                                       "jot91/1, or a winter route such as jot11v")
 
 
 @tool("Take a route in from Turrutebasen", changes=True)
 def make_yours(c: Call, a: Make) -> dict:
-    """Make a route in Turrutebasen ours, as it is there. It is then not done: a person looks at it."""
-    found = c.conn.execute("SELECT id FROM source_index.route WHERE lower(label) = lower(%s)", (a.turrutebasen.strip(),)).fetchone()
+    """Make a route in Turrutebasen ours, as it is there. It is then not done: a person looks at it. A label
+    with a v after the number (jot11v) is one of DNT's winter routes: it is made a winter route, of stretches of
+    its own, which no summer route shares."""
+    label = a.turrutebasen.strip()
+    table = seasons.CANDIDATES[seasons.of_code(label.split("/")[0])].route
+    found = c.conn.execute(f"SELECT id FROM source_index.{table} WHERE lower(label) = lower(%s)", (label,)).fetchone()
     if not found:
         raise places.NotFound(f"Turrutebasen has no candidate labelled {a.turrutebasen}")
     return _told(c.conn, routes.make(c.conn, found[0], c.author))
@@ -457,14 +470,16 @@ def send_via(c: Call, a: Via) -> dict:
 
 class LayOut(Args):
     points: list[Point] = Field(min_length=2, max_length=50, description="[lon, lat] of each point, in order")
-    code: str = Field(min_length=1, max_length=40, description="The code of the new route")
+    code: str = Field(min_length=1, max_length=40, description="The code of the new route: a winter route's is the "
+                                                              "summer route's with a v after it (jot11v)")
     name: str | None = Field(None, max_length=160)
     reach_m: float | None = Field(None, ge=1, le=500)
 
 
 @tool("Make a new route through points", changes=True)
 def lay_out(c: Call, a: LayOut) -> dict:
-    """Make a new route of ours through the points. Look at it with `plan_way` first: this has no dry run."""
+    """Make a new route of ours through the points. Look at it with `plan_way` first (with the same season): this
+    has no dry run. Its code says its season."""
     return _told(c.conn, routes.lay_out(c.conn, c.author, a.points, a.code, a.name, a.reach_m))
 
 

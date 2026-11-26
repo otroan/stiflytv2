@@ -70,7 +70,7 @@ def test_dnts_winter_routes_are_tables_of_their_own_from_the_ski_trails(loaded):
     assert q("SELECT count(*), count(*) FILTER (WHERE seasonal), count(*) FILTER (WHERE codes @> '{bre8v,bre12v}') "
              "FROM source_index.winter_segment") == [(5, 5, 1)]
     assert q("SELECT count(*) FROM source_index.route WHERE code LIKE '%%v'") == [(0,)]
-    with psycopg.connect(settings.import_dsn) as conn:
+    with psycopg.connect(role_dsn("stiflyt2_api")) as conn:
         from stiflyt2.domain import lookup
         told = lookup.turrutebasen(conn, "BRE8V")
         assert told["winter"] and [c["label"] for c in told["candidates"]] == ["bre8v"] and len(told["segments"]) == 3
