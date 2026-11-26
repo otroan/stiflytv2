@@ -20,6 +20,7 @@ from psycopg.rows import dict_row
 
 from stiflyt2.domain import routes, worklist
 from stiflyt2.domain.places import Invalid, NotFound
+from stiflyt2.index.tables import WINTER_CODE
 
 HERE_M = 200            # how far around a point is looked, unless said
 HERE_MAX_M = 2000
@@ -69,6 +70,8 @@ def turrutebasen(conn, code: str) -> dict:
     the routes of yours that run over it.
     """
     code = code.strip().lower()
+    if re.match(WINTER_CODE, code):
+        return _winter(conn, code)
     candidates = _rows(conn, """
         SELECT r.id, r.label, r.name, r.maintainers, round(r.length_m)::int AS length_m,
                r.segment_count AS segments, s.shape, s.pieces, s.ends
@@ -105,6 +108,27 @@ def turrutebasen(conn, code: str) -> dict:
         s["follows"] = FOLLOWS.get(s["rutefolger"])
     return {"code": code, "candidates": candidates, "segments": segments,
             "length_m": sum(s["length_m"] for s in segments)}
+
+
+def _winter(conn, code: str) -> dict:
+    """A winter route of DNT's in Turrutebasen (among its ski trails): its candidates and its segments, with when
+    each was drawn. The line is where it was staked when it was drawn: it is staked anew each winter."""
+    candidates = _rows(conn, """
+        SELECT r.id, r.label, r.name, r.maintainers, round(r.length_m)::int AS length_m, r.segment_count AS segments,
+               extract(year FROM r.captured_from)::int AS drawn_from, extract(year FROM r.captured_to)::int AS drawn_to
+        FROM source_index.winter_route r WHERE r.code = %(c)s ORDER BY r.label""", {"c": code})
+    if not candidates:
+        raise NotFound(f"nothing in the loaded Turrutebasen carries the number {code}, among the winter routes either")
+    segments = _rows(conn, """
+        SELECT t.id, r.label AS candidate, round(t.length_m)::int AS length_m, t.codes, t.marking, t.preparation,
+               t.maintainers, extract(year FROM t.captured)::int AS drawn, t.updated,
+               ST_X(ST_Transform(ST_ClosestPoint(t.geom, ST_Centroid(t.geom)), 4326)) AS lon,
+               ST_Y(ST_Transform(ST_ClosestPoint(t.geom, ST_Centroid(t.geom)), 4326)) AS lat
+        FROM source_index.winter_route r JOIN source_index.winter_route_segment rs ON rs.route_id = r.id
+        JOIN source_index.winter_segment t ON t.id = rs.segment_id
+        WHERE r.code = %(c)s ORDER BY r.label, ST_XMin(t.geom)""", {"c": code})
+    return {"code": code, "winter": True, "marking": {"SM": "staked for the season", "JA": "marked"},
+            "candidates": candidates, "segments": segments, "length_m": sum(s["length_m"] for s in segments)}
 
 
 def here(conn, lon: float, lat: float, radius_m: float = HERE_M) -> dict:

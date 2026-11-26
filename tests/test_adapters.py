@@ -48,7 +48,7 @@ def changes(snapshot_id: str) -> set:
 
 def test_turrutebasen(small, tmp_path):
     r = turrutebasen.run(TUR)
-    assert r.counts == {"fotrute": 11, "fotruteinfo": 27, "ruteinfopunkt": 4}
+    assert r.counts == {"fotrute": 11, "fotruteinfo": 27, "ruteinfopunkt": 4, "skiloype": 6, "skiloypeinfo": 8}
 
     segments = members(r.snapshot_id, "fotrute")
     assert all(uuid.UUID(lokalid) for lokalid in segments)
@@ -74,7 +74,7 @@ def test_turrutebasen(small, tmp_path):
         f"UPDATE fotruteinfo_tabell SET rutenavn = 'Nytt navn' WHERE fotrute_fk = '{RENAMED}'",
     )
     r2 = turrutebasen.run(later)
-    assert r2.counts == {"fotrute": 10, "fotruteinfo": 23, "ruteinfopunkt": 4}
+    assert r2.counts == {"fotrute": 10, "fotruteinfo": 23, "ruteinfopunkt": 4, "skiloype": 6, "skiloypeinfo": 8}
     # A route-info row has no id of its own, so an edited one is a missing and a created.
     assert changes(r2.snapshot_id) == {
         ("fotrute", "updated", RETAGGED),

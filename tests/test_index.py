@@ -9,7 +9,7 @@ from stiflyt2.config import settings
 from stiflyt2.importer.adapters import stedsnavn
 from stiflyt2.index import build, query, tables
 
-TABLES = ("route_segment", "trail_segment", "route", "info_point", "path", "path_box", "road", "road_area", "osm_way", "osm_box", "place", "heritage",
+TABLES = ("route_segment", "trail_segment", "route", "info_point", "winter_route_segment", "winter_segment", "winter_route", "path", "path_box", "road", "road_area", "osm_way", "osm_box", "place", "heritage",
           "parcel", "anchor", "route_end", "route_shape")
 SOURCES = {"turrutebasen", "fkb_wfs", "vegnett", "osm", "stedsnavn", "kulturminner", "teig", "anchors"}
 ARENTZBU = 799507
@@ -58,6 +58,25 @@ def test_index_holds_the_active_snapshots(loaded):
     assert q("SELECT units->0->>'gnr', units->0->>'bnr' FROM source_index.parcel WHERE id = %s",
              "230985469") == [("178", "1")]
     assert {s: state for s, state, *_ in build.status()} == dict.fromkeys(SOURCES, "current")
+
+
+def test_dnts_winter_routes_are_tables_of_their_own_from_the_ski_trails(loaded):
+    """A winter route is the summer code with a v. The other ski trails are not DNT's routes, and none of it is a
+    summer candidate or segment."""
+    assert q("SELECT label, segment_count, maintainers, length_m > 0 FROM source_index.winter_route ORDER BY label") == [
+        ("bre11v", 1, ["DNT | DNT Oslo og Omegn"], True),
+        ("bre12v", 3, ["DNT | DNT Oslo og Omegn"], True),
+        ("bre8v", 3, ["DNT", "DNT | DNT Oslo og Omegn"], True)]
+    assert q("SELECT count(*), count(*) FILTER (WHERE seasonal), count(*) FILTER (WHERE codes @> '{bre8v,bre12v}') "
+             "FROM source_index.winter_segment") == [(5, 5, 1)]
+    assert q("SELECT count(*) FROM source_index.route WHERE code LIKE '%%v'") == [(0,)]
+    with psycopg.connect(settings.import_dsn) as conn:
+        from stiflyt2.domain import lookup
+        told = lookup.turrutebasen(conn, "BRE8V")
+        assert told["winter"] and [c["label"] for c in told["candidates"]] == ["bre8v"] and len(told["segments"]) == 3
+        assert all(s["marking"] == "SM" for s in told["segments"]) and told["segments"][0]["drawn"] >= 1800
+        tile = query.tile(conn, "winter", 10, 538, 287)
+    assert isinstance(tile, bytes)
 
 
 def test_places_and_routes_can_be_searched(loaded):

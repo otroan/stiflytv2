@@ -223,6 +223,10 @@ TILE_LAYERS = {
         "t.id, t.marked, array_to_string(t.codes, ', ') AS codes, round(t.length_m)::int AS length_m,"
         " coalesce(t.attrs->>'rutefolger' = 'VV', false) AS water",
         7, overview_below=10, overview_columns="t.marked"),
+    # DNT's winter routes in Turrutebasen (the ski trails with a v in their code), staked anew each winter.
+    "winter": TileLayer(
+        "winter_segment", "t.id, array_to_string(t.codes, ', ') AS codes, t.marking, round(t.length_m)::int AS length_m,"
+        " extract(year FROM t.captured)::int AS captured", 7, overview_below=10, overview_columns="t.seasonal"),
     "paths": TileLayer("path", "t.id, t.kind, round(t.length_m)::int AS length_m", 11),
     "roads": TileLayer("road", "t.id, t.kind, t.category, t.name, round(t.length_m)::int AS length_m", 11),
     "osm": TileLayer("osm_way", "t.id, t.kind, t.name, t.sac_scale, t.visibility, t.surface, t.on_foot,"

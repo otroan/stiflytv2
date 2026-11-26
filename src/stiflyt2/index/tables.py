@@ -58,11 +58,15 @@ class Group:
 # stretch: it can change along a route and can be shared, so it is kept per
 # segment, as a list.
 SPLIT_M = 1000
+# DNT's winter routes among the ski trails: the summer code with a v (jot11v, har116v). The other ski trails
+# (prepared tracks, mostly the municipalities') are not routes of DNT's.
+WINTER_CODE = "^[a-z]{3}[0-9]+[a-z]*v$"
 
 TURRUTEBASEN = Group(
     source="turrutebasen",
-    version=6,
-    tables=("route_segment", "trail_segment", "route", "info_point"),
+    version=7,
+    tables=("route_segment", "trail_segment", "route", "info_point",
+            "winter_route_segment", "winter_segment", "winter_route"),
     statements=(
         f"""CREATE TEMP TABLE seg ON COMMIT DROP AS
             SELECT s.external_id AS id, s.version_id, s.p,
@@ -178,6 +182,74 @@ TURRUTEBASEN = Group(
         f"CREATE INDEX ON {BUILD}.route USING gist (geom)",
         f"ALTER TABLE {BUILD}.info_point ADD PRIMARY KEY (id)",
         f"CREATE INDEX ON {BUILD}.info_point USING gist (geom)",
+        # DNT's winter routes, from the ski trails: tables of their own, so that nothing made for the summer (the
+        # candidates, the corrections, the planner) meets a line drawn over a frozen lake. A route is a code and a
+        # group of segments lying together, as in the summer; its marking is mostly SM, staked for the season.
+        f"""CREATE TEMP TABLE wseg ON COMMIT DROP AS
+            SELECT s.external_id AS id, s.version_id, s.p,
+                   {SIMPLE.format(g="s.geom")} AS geom, {LENGTH.format(g="s.geom")} AS length_m
+            FROM {active("turrutebasen", "skiloype")} s""",
+        "CREATE INDEX ON wseg (id)",
+        f"""CREATE TEMP TABLE winfo ON COMMIT DROP AS
+            SELECT * FROM (
+                SELECT lower(btrim(p->>'rutenummer')) AS code,
+                       coalesce(btrim(p->>'vedlikeholdsansvarlig'), '') AS maintainer,
+                       p->>'skiloype_fk' AS segment_id,
+                       nullif(btrim(p->>'rutenavn'), '') AS name
+                FROM {active("turrutebasen", "skiloypeinfo")} i) x
+            WHERE code ~ '{WINTER_CODE}' AND segment_id IN (SELECT id FROM wseg)""",
+        f"""CREATE TEMP TABLE wpart ON COMMIT DROP AS
+            SELECT code, segment_id,
+                   ST_ClusterDBSCAN(geom, eps := {SPLIT_M}, minpoints := 1) OVER (PARTITION BY code) AS piece
+            FROM (SELECT DISTINCT i.code, i.segment_id, s.geom FROM winfo i JOIN wseg s ON s.id = i.segment_id) x""",
+        """CREATE TEMP TABLE wroute_key ON COMMIT DROP AS
+            SELECT code, piece,
+                   substr(md5(code || CASE WHEN count(*) OVER (PARTITION BY code) > 1
+                                           THEN chr(31) || first_segment ELSE '' END), 1, 12) AS route_id
+            FROM (SELECT code, piece, min(segment_id) AS first_segment FROM wpart GROUP BY 1, 2) x""",
+        """CREATE TEMP TABLE wroute_info ON COMMIT DROP AS
+            SELECT k.route_id, i.* FROM winfo i JOIN wpart p USING (code, segment_id) JOIN wroute_key k USING (code, piece)""",
+        f"""CREATE TABLE {BUILD}.winter_route_segment AS
+            SELECT route_id, segment_id,
+                   coalesce(array_agg(DISTINCT maintainer) FILTER (WHERE maintainer <> ''), '{{}}') AS maintainers
+            FROM wroute_info GROUP BY 1, 2""",
+        f"""CREATE TABLE {BUILD}.winter_segment AS
+            SELECT s.id, s.version_id, s.geom, s.length_m,
+                   nullif(s.p->>'merking', '') AS marking, (s.p->>'merking') = 'SM' AS seasonal,
+                   nullif(s.p->>'preparering', '') AS preparation,
+                   (s.p->>'oppdateringsdato')::timestamptz AS updated,
+                   (s.p->>'datafangstdato')::timestamptz AS captured,
+                   r.route_ids, r.codes, coalesce(r.maintainers, '{{}}') AS maintainers, s.p AS attrs
+            FROM wseg s
+            JOIN (SELECT segment_id, array_agg(DISTINCT route_id) AS route_ids, array_agg(DISTINCT code) AS codes,
+                         array_agg(DISTINCT maintainer) FILTER (WHERE maintainer <> '') AS maintainers
+                  FROM wroute_info GROUP BY 1) r ON r.segment_id = s.id""",
+        f"""CREATE TABLE {BUILD}.winter_route AS
+            SELECT id, code, CASE WHEN n = 1 THEN code ELSE code || '/' || rank END AS label,
+                   array_to_string(maintainers, '; ') AS maintainer, maintainers, area_prefix, name,
+                   segment_count, length_m, captured_from, captured_to, geom
+            FROM (SELECT i.route_id AS id, i.code, i.maintainers,
+                         substring(i.code from '^([a-z]{{3}})[0-9]') AS area_prefix, i.name,
+                         g.segment_count, g.length_m, g.captured_from, g.captured_to, g.geom,
+                         count(*) OVER (PARTITION BY i.code) AS n,
+                         row_number() OVER (PARTITION BY i.code ORDER BY round(ST_X(ST_Centroid(g.geom))),
+                                            round(ST_Y(ST_Centroid(g.geom))), i.route_id) AS rank
+                  FROM (SELECT route_id, code,
+                               coalesce(array_agg(DISTINCT maintainer) FILTER (WHERE maintainer <> ''), '{{}}') AS maintainers,
+                               mode() WITHIN GROUP (ORDER BY name) FILTER (WHERE name IS NOT NULL) AS name
+                        FROM wroute_info GROUP BY 1, 2) i
+                  JOIN (SELECT rs.route_id, count(*)::int AS segment_count, sum(t.length_m)::real AS length_m,
+                               min(t.captured) AS captured_from, max(t.captured) AS captured_to,
+                               ST_Collect(t.geom ORDER BY t.id) AS geom
+                        FROM {BUILD}.winter_route_segment rs JOIN {BUILD}.winter_segment t ON t.id = rs.segment_id
+                        GROUP BY 1) g ON g.route_id = i.route_id) x""",
+        f"ALTER TABLE {BUILD}.winter_route_segment ADD PRIMARY KEY (route_id, segment_id)",
+        f"ALTER TABLE {BUILD}.winter_segment ADD PRIMARY KEY (id)",
+        f"CREATE INDEX ON {BUILD}.winter_segment USING gist (geom)",
+        f"ALTER TABLE {BUILD}.winter_route ADD PRIMARY KEY (id)",
+        f"CREATE INDEX ON {BUILD}.winter_route (code text_pattern_ops)",
+        f"CREATE INDEX ON {BUILD}.winter_route (area_prefix)",
+        f"CREATE INDEX ON {BUILD}.winter_route USING gist (geom)",
     ),
 )
 

@@ -213,6 +213,7 @@
 
 <script>
 "use strict";
+const WINTER = "#5e35b1";       // a winter route: violet, apart from the summer's colours and the water's blue
 const C = { trail: css("--trail"), path: css("--path"), road: css("--road"), heritage: css("--heritage"),
             parcel: css("--parcel"), selected: css("--selected"), together: css("--together"),
             apart: css("--apart"), meeting: css("--meeting"), sign: css("--sign"), osm: css("--osm"),
@@ -247,7 +248,7 @@ const map = new maplibregl.Map({
     glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: {
       ...baseSources(),
-      trails: vector("trails", 7), paths: vector("paths", 11), roads: vector("roads", 11), osm: vector("osm", 11), info_points: vector("info_points", 10),
+      trails: vector("trails", 7), winter: vector("winter", 7), paths: vector("paths", 11), roads: vector("roads", 11), osm: vector("osm", 11), info_points: vector("info_points", 10),
       heritage: vector("heritage", 12), parcels: vector("parcels", 13),
       anchors: vector("anchors", 8), meetings: vector("meetings", 11), end_links: vector("end_links", 12),
       selected: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
@@ -278,6 +279,9 @@ const map = new maplibregl.Map({
         paint: { "line-color": C.selected, "line-width": width(9, 16), "line-opacity": 0.75 } },
       // The route is a wide translucent band and the mapped path a thin line on
       // top of it, so that where the two coincide both can still be seen.
+      // DNT's winter routes in Turrutebasen: a line staked for the season, over lakes and bogs as the ice lies.
+      { id: "winter-trails", type: "line", source: "winter", "source-layer": "winter", layout: { "line-cap": "round" },
+        paint: { "line-color": WINTER, "line-width": width(1.4, 2.8), "line-opacity": 0.85, "line-dasharray": [2, 1.2] } },
       { id: "trails-water", type: "line", source: "trails", "source-layer": "trails",
         filter: ["==", ["get", "water"], true],
         paint: { "line-color": C.water, "line-width": width(1.5, 3), "line-opacity": 0.8, "line-dasharray": [0.6, 1.6] } },
@@ -409,6 +413,7 @@ const GROUPS = [
   { name: "Turrutebasen, marked", ids: ["trails-marked"], swatch: "", color: C.trail, from: 7 },
   { name: "Turrutebasen, not marked", ids: ["trails-unmarked"], swatch: "dash", color: C.trail, from: 7 },
   { name: "Turrutebasen, over water", ids: ["trails-water"], swatch: "dash", color: C.water, from: 10 },
+  { name: "Turrutebasen, winter route (staked each winter)", ids: ["winter-trails"], swatch: "dash", color: WINTER, from: 7, off: true },
   { name: "Mapped path (FKB)", ids: ["paths"], swatch: "", color: C.path, from: 11 },
   { name: "Mapped tractor road (FKB)", ids: [], swatch: "", color: C.road, from: 11 },
   { name: "Road centre line (NVDB)", ids: ["roads"], swatch: "dash", color: C.road, from: 11 },

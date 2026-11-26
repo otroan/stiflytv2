@@ -44,6 +44,13 @@ points="'20cb5bc2-a1f3-466a-a6d8-df43f796bcb9','2cc94277-de3a-4598-b5de-b936f9a3
 cut "$tur" "$work/tur.gdb" fotrute_senterlinje "lokalid IN ($segments)"
 cut "$tur" "$work/tur.gdb" fotruteinfo_tabell "fotrute_fk IN ($segments)"
 cut "$tur" "$work/tur.gdb" ruteinfopunkt_posisjon "lokalid IN ($points)"
+# Winter routes: bre8v and bre12v (and the one segment of bre11v they share), and a ski trail that is no
+# winter route of DNT's.
+ski="'d20c81ac-e44b-43d5-99f9-844e4688dd7b','4a43f765-bcd5-4194-a658-831b10852550',
+'1e142aec-bda8-40d9-97d6-a1416ac7a6c8','064be9e8-bf82-438e-b42b-da040dcec873',
+'7aee45fa-c455-4dde-83f7-b403d0c7afd6','ea788a5a-122d-4883-9e6c-6c77b9666945'"
+cut "$tur" "$work/tur.gdb" skiloype_senterlinje "lokalid IN ($ski)"
+cut "$tur" "$work/tur.gdb" skiloypeinfo_tabell "skiloype_fk IN ($ski)"
 pack "$work/tur.gdb" "$here/turrutebasen.zip"
 
 # Stedsnavn: seven places in the same area, covering every geometry layer, a
