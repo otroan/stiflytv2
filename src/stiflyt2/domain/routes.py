@@ -2711,14 +2711,33 @@ def named_after(shape: str, places: list[str | None]) -> str | None:
     return " – ".join(places) if shape == "line" and all(places) and places[0] != places[1] else None
 
 
-def name_from_ends(conn, route_id: str) -> str | None:
-    """The name a route gets from the places at its ends, worked out without the rest of what is said of it."""
+def twin(conn, route_id: str) -> dict | None:
+    """The route of the other season that goes with this one, by its code (jot11v with jot11), if there is one in
+    use: its id, code and season, and the places at its ends."""
+    me = conn.execute("SELECT code FROM core.route WHERE id = %s", (route_id,)).fetchone()
+    if not me:
+        raise NotFound("no such route")
+    found = _rows(conn, """SELECT id::text, code, season FROM core.route
+                           WHERE status = 'active' AND lower(code) = lower(%(code)s) AND id <> %(id)s""",
+                  {"code": seasons.twin(me[0]), "id": route_id})
+    if not found:
+        return None
+    return {**found[0], "places": ends_named(conn, found[0]["id"])}
+
+
+def ends_named(conn, route_id: str) -> list[str | None]:
+    """The places at a route's ends, as named (None where an end is at no place), in walking order."""
     graph = _graph(conn, route_id)
     place = dict(conn.execute("""
         SELECT n.id::text, p.name FROM core.node n
         JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
         WHERE n.id = ANY(%s::uuid[])""", (graph["ends"],)).fetchall())
-    return named_after(graph["shape"], [place.get(n) for n in graph["ends"]])
+    return [place.get(n) for n in graph["ends"]]
+
+
+def name_from_ends(conn, route_id: str) -> str | None:
+    """The name a route gets from the places at its ends, worked out without the rest of what is said of it."""
+    return named_after(_graph(conn, route_id)["shape"], ends_named(conn, route_id))
 
 
 def called(conn, route_ids: list[str]) -> dict[str, str | None]:
@@ -2791,17 +2810,28 @@ def update(conn, route_id: str, version: int, author: str, *, code: str | None =
         code = code.strip()
         if not code:
             raise Invalid("a route needs a code")
-        unfit = seasons.code_fits(code.split("/")[0], season_of(conn, route_id))
+        season = season_of(conn, route_id)
+        unfit = seasons.code_fits(code.split("/")[0], season)
         if unfit:
             raise Invalid(unfit)
-        if conn.execute(
-                """SELECT 1 FROM core.route WHERE lower(code) = lower(%s) AND status = 'active'
-                   AND id <> %s""", (code, route_id)).fetchone():
-            raise Conflict(f"the code {code} is already used by another of your routes")
+        # A summer route's winter route has its number: it follows (jot11 to jot12, and jot11v to jot12v).
+        follows = twin(conn, route_id) if season == seasons.SUMMER else None
+        for wanted, owner in ((code, route_id), *(((seasons.twin(code), follows["id"]),) if follows else ())):
+            if conn.execute(
+                    """SELECT 1 FROM core.route WHERE lower(code) = lower(%s) AND status = 'active'
+                       AND id <> %s""", (wanted, owner)).fetchone():
+                raise Conflict(f"the code {wanted} is already used by another of your routes"
+                               + (f": {follows['code']} would follow {code} to it" if owner != route_id else ""))
         conn.execute("UPDATE core.route SET code = %s, code_provisional = %s WHERE id = %s",
                      (code, "/" in code, route_id))
         identity.remember(conn, "route", route_id, "code", route["code"])
         _event(conn, author, "route.code_changed", route_id, {"from": route["code"], "to": code})
+        if follows:
+            conn.execute("UPDATE core.route SET code = %s, code_provisional = %s, version = version + 1, "
+                         "updated_at = now() WHERE id = %s", (seasons.twin(code), "/" in code, follows["id"]))
+            identity.remember(conn, "route", follows["id"], "code", follows["code"])
+            _event(conn, author, "route.code_changed", follows["id"],
+                   {"from": follows["code"], "to": seasons.twin(code), "following": code})
     if code_provisional is not None:
         conn.execute("UPDATE core.route SET code_provisional = %s WHERE id = %s",
                      (code_provisional, route_id))
@@ -2986,6 +3016,7 @@ def detail(conn, route_id: str) -> dict:
         gaps.append({"from_node": a, "to_node": b, "metres": round(metres)})
     route["gaps"] = gaps
     route["twigs"] = _twigs(conn, route_id) if graph["shape"] == "branched" else []
+    route["twin"] = twin(conn, route_id)
     route["doubles"] = doubles(conn, route_id) if graph["shape"] == "doubled" else []
     route["sources"] = _rows(conn, """
         SELECT sr.external_id AS code, sr.detail->>'label' AS label, sr.detail->>'name' AS name,

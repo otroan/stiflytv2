@@ -104,10 +104,13 @@ function drawMap() {
     map.setLayoutProperty("sites-small", "visibility", among ? "visible" : "none");
     // The routes of the area stand out; those of other areas are there to be seen past.
     for (const id of ["routes", "routes-ice"]) map.setPaintProperty(id, "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
+    // A winter route is violet: another season's line, staked over lakes and bogs.
+    const routeColour = season === "winter" ? WINTER_COLOUR : css("--sign");
+    map.setPaintProperty("routes", "line-color", routeColour);
     const walked = route && over && over.routes.find(r => r.code === route), mine = ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]];
     // Among the reports the open route is an outline, ice and all: the colour of how long since it was done is in it.
     const outline = view === "reports";
-    map.setPaintProperty("route-open", "line-color", outline ? css("--ink") : css("--sign"));
+    map.setPaintProperty("route-open", "line-color", outline ? css("--ink") : routeColour);
     map.setPaintProperty("route-open", "line-width", outline ? 2.5 : OPEN_WIDTH);
     map.setPaintProperty("route-open", "line-gap-width", outline ? SINCE_WIDTH : 0);
     map.setFilter("route-open", outline ? mine : ["all", mine, ["!=", ["get", "kind"], "glacier"]]);

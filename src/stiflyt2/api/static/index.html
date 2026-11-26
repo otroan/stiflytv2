@@ -178,6 +178,7 @@
   <header>
     <h1><svg class="tstone" width="32" height="30" viewBox="0 0 32 30" aria-hidden="true"><path d="M3.6 10.2C4.8 4.9 9.9 2.4 16 2.6c6.6.2 11.5 2.5 12.6 8.1 1 5.1.4 10.4-2.6 14.2-2.8 3.5-7.6 4.6-12.3 4.2-5-.4-8.9-2.4-10.4-6.6C2 18.8 2.8 14.3 3.6 10.2z" fill="#ebe7de"/><path d="M3.6 10.2C4.8 4.9 9.9 2.4 16 2.6c6.6.2 11.5 2.5 12.6 8.1" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="1"/><path d="M8.4 8.9c5-.6 10-.7 15-.1l-.2 4.3c-1.6-.1-3.2-.1-4.8-.1l.3 10.6-4.7.1-.2-10.6c-1.8 0-3.5.1-5.2.3z" fill="#d3161b"/></svg><a href="/" title="To the front page: the areas, the routes and the signs">Stiflyt <small>v2</small></a><span class="where">Route editor</span><a class="home" href="/">‹ Front page</a></h1>
     <input id="q" type="search" placeholder="Search place or route (e.g. Arentzbu, bre18)" autocomplete="off">
+    <div id="season" style="margin-top:8px"></div>
   </header>
   <div id="scroll">
     <section id="results" hidden></section>
@@ -435,10 +436,12 @@ for (const g of GROUPS) {
   const box = g.ids.length ? el("input", { type: "checkbox", checked: !g.off, onchange: e => {
     for (const id of g.ids) map.setLayoutProperty(id, "visibility", e.target.checked ? "visible" : "none");
   } }) : el("span", { style: "width:13px;margin:0 3px 0 4px" });
+  if (g.ids.length) g.box = box;
   layersBox.append(el("label", { class: "layer" }, box, sw, g.name, el("span", { class: "zoomnote" }, g.from ? `zoom ${g.from}+` : "")));
 }
 map.on("load", () => {
   for (const g of GROUPS) if (g.off) for (const id of g.ids) map.setLayoutProperty(id, "visibility", "none");
+  showSeason();
 });
 
 // One row in any route list.
@@ -543,6 +546,33 @@ function showPlace(p) {
   go([p.lon, p.lat], 13);
 }
 
+// The season: the summer's routes, or DNT's winter routes, which are routes of their own (ADR-006). What is listed,
+// drawn, made and laid out is of it; Turrutebasen's own lines of the season are the ones shown.
+let season = seasonAsked();
+function showSeason() {
+  document.body.classList.toggle("winter", season === "winter");
+  document.getElementById("season").replaceChildren(seasonSwitch(season, chooseSeason));
+  whenStyled(() => {
+    for (const id of ["yours-marked", "yours-unmarked"]) map.setPaintProperty(id, "line-color", season === "winter" ? WINTER_COLOUR : C.sign);
+    for (const g of GROUPS) {
+      const winterLine = g.ids.includes("winter-trails"), summerLine = g.ids.some(id => id.startsWith("trails-"));
+      if (!g.box || !(winterLine || summerLine)) continue;
+      g.box.checked = winterLine === (season === "winter");
+      for (const id of g.ids) map.setLayoutProperty(id, "visibility", g.box.checked ? "visible" : "none");
+    }
+  });
+}
+async function chooseSeason(to) {
+  season = to;
+  seasonChosen(season);
+  if (openRoute || !selected.hidden) clearRoute();
+  ownedMarks = null;             // every line read anew: the season's
+  showSeason();
+  try { everyArea = await get("areas", { season }); } catch { everyArea = []; }
+  await Promise.all([refreshOwned().catch(() => {}), chooseWho(whoSelect.value)]);
+  if (areaSelect.value) loadArea(false);
+}
+
 // Area list.
 const areaSelect = document.getElementById("area"), areaRoutes = document.getElementById("arearoutes");
 // Whose routes: everybody's, or what one maintainer looks after. The choice narrows the list of areas and
@@ -568,7 +598,7 @@ function listAreas() {
 async function chooseWho(name) {
   localStorage.setItem(WHOSE, name);
   for (const s of document.querySelectorAll("select.who, #who")) s.value = name;
-  try { sideBySide = await get("report", name ? { maintainer: name } : {}); } catch { sideBySide = null; }
+  try { sideBySide = await get("report", { ...(name ? { maintainer: name } : {}), season }); } catch { sideBySide = null; }
   listAreas();
   othersToo = false;
   if (areaSelect.value) loadArea(true, true);       // the list of the area that is open follows the choice
@@ -608,7 +638,7 @@ function showReport() {
 document.getElementById("openreport").addEventListener("click", showReport);
 whoSelect.addEventListener("change", e => chooseWho(e.target.value));
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !reportBox.hidden) { e.stopImmediatePropagation(); closeReport(); } }, true);
-Promise.all([get("areas"), get("maintainers")]).then(([areas, who]) => {
+Promise.all([get("areas", { season }), get("maintainers")]).then(([areas, who]) => {
   everyArea = areas;
   const km = m => `${Math.round(m.metres / 1000).toLocaleString("en")} km in ${m.areas} ${m.areas === 1 ? "area" : "areas"}`;
   whoSelect.append(...who.maintainers.map(m => el("option", { value: m.name }, `Only ${m.name} (${km(m)})`)));
@@ -672,7 +702,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
   if (!quiet) areaRoutes.append(el("li", { class: "empty" }, "Working out where the area stands…"));
   try {
     const area = areaSelect.value;
-    const [anchors, report] = again && areaGot && areaGot.area === area ? areaGot.got : await Promise.all([get("anchors", { area }), get(`areas/${area}/report`)]);
+    const [anchors, report] = again && areaGot && areaGot.area === area ? areaGot.got : await Promise.all([get("anchors", { area }), get(`areas/${area}/report`, { season })]);
     areaGot = { area, got: [anchors, report] };
     areaSpots = { area: area.toLowerCase(), found: anchors };
     if (areaSelect.value !== area || seq !== areaSeq) return;
@@ -805,7 +835,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
           EDITOR && open.length > 1 ? el("button", { class: "btn main", title: "One action, which Undo takes back. Stretches of routes you have said are done are left as they are.", onclick: async e => {
             e.target.disabled = true; e.target.textContent = "Laying them… this takes a while";
             try {
-              const did = await send("POST", `areas/${area}/mapped`);
+              const did = await send("POST", `areas/${area}/mapped?season=${season}`);
               mappedSeen = null;
               await afterLaying(`${did.routes} routes laid on the mapped paths and roads beside them: ${km(did.length_m / 1000)}, from ${km(did.was_m / 1000)}.`);
               if (!openRoute) alert(`${did.routes} routes laid on the mapped paths and roads beside them: ${km(did.length_m / 1000)}, from ${km(did.was_m / 1000)}.` + (did.left_done ? ` ${did.left_done} routes that are done were left as they are.` : ""));
@@ -816,7 +846,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     };
     const compareMapped = async () => {
       beside.replaceChildren(el("div", { class: "sub" }, "Comparing every route here with the mapped paths and roads. This takes up to half a minute…"));
-      try { const found = await get(`areas/${area}/mapped`); mappedSeen = { area, found }; if (seq === areaSeq) showMapped(found); }
+      try { const found = await get(`areas/${area}/mapped`, { season }); mappedSeen = { area, found }; if (seq === areaSeq) showMapped(found); }
       catch (err) { beside.replaceChildren(el("div", { class: "error" }, `Could not compare: ${err.message}`)); }
     };
     const againstMapped = el("li", {}, el("details", { ontoggle: e => {
@@ -839,7 +869,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
       whenStyled(() => map.getSource("draft").setData({ type: "FeatureCollection", features: p.geometry ? [{ type: "Feature", properties: {}, geometry: p.geometry }] : [] }));
       showFinding({ lon: p.lon, lat: p.lat, label: p.label, text: p.text });
     };
-    get(`areas/${area}/proposals`).then(found => {
+    get(`areas/${area}/proposals`, { season }).then(found => {
       if (seq !== areaSeq) return;
       const was = wasOpen || new Set();
       if (!found.length) { proposed.replaceChildren(); return; }
@@ -859,7 +889,7 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     }).catch(err => { proposed.replaceChildren(el("div", { class: "error" }, `Could not work out proposals: ${err.message}`)); });
     // The odd things: where to look, not what is wrong. A click shows the spot; the code opens the route.
     const odd = el("li", {});
-    get(`areas/${area}/checks`).then(found => {
+    get(`areas/${area}/checks`, { season }).then(found => {
       if (seq !== areaSeq || !found.checks.length) return;
       const spot = c => { if (c.lon !== null) showFinding({ lon: c.lon, lat: c.lat, label: c.routes.map(r => r.code).join(" and "), text: c.text }); };
       odd.replaceChildren(el("details", { open: (wasOpen || new Set()).has("Odd things to look at") },
@@ -1169,11 +1199,11 @@ async function refreshOwned() {
   // Every stretch has a mark that is another when anything the map says of it has changed. The first time all
   // lines are read; after that the marks, and only the stretches whose mark is new. (The marks first: a change
   // that lands in between leaves a mark that is too old, which the next reading puts right.)
-  const marks = await get("owned/routes.marks"), changed = ownedMarks ? Object.keys(marks).filter(e => ownedMarks[e] !== marks[e]) : null;
+  const marks = await get("owned/routes.marks", { season }), changed = ownedMarks ? Object.keys(marks).filter(e => ownedMarks[e] !== marks[e]) : null;
   let lines;
-  if (!changed || changed.length > 150) lines = await get("owned/routes.geojson");
+  if (!changed || changed.length > 150) lines = await get("owned/routes.geojson", { season });
   else {
-    const fresh = changed.length ? (await get("owned/routes.geojson", { edges: changed.join(",") })).features : [], again = new Set(fresh.map(f => f.properties.edge_id));
+    const fresh = changed.length ? (await get("owned/routes.geojson", { edges: changed.join(","), season })).features : [], again = new Set(fresh.map(f => f.properties.edge_id));
     lines = { type: "FeatureCollection", features: [...ownedLines.features.filter(f => f.properties.edge_id in marks && !again.has(f.properties.edge_id)), ...fresh] };
   }
   ownedMarks = marks;
@@ -1820,7 +1850,9 @@ function startCarryingOn() {
   startPick(`Click the line ${route.code} is to be carried on along: a stretch of another route, or a line of Turrutebasen.`, (at, point) => {
     const box = around(point, 6);
     const stretch = map.queryRenderedFeatures(box, { layers: YOURS }).find(f => !inOpenRoute(f));
-    const segment = !stretch && map.queryRenderedFeatures(box, { layers: ["trails-marked", "trails-unmarked", "trails-water"] }).find(f => f.properties.id);
+    // Turrutebasen's lines of the route's own season: its foot routes, or its winter routes among the ski trails.
+    const theirs = route.season === "winter" ? ["winter-trails"] : ["trails-marked", "trails-unmarked", "trails-water"];
+    const segment = !stretch && map.queryRenderedFeatures(box, { layers: theirs.filter(id => map.getLayoutProperty(id, "visibility") !== "none") }).find(f => f.properties.id);
     if (stretch) carryOn({ edge_id: stretch.properties.edge_id });
     else if (segment) carryOn({ segment_id: segment.properties.id });
     else reloadOpen(null, `there is no line where you clicked that ${route.code} does not use already: nothing was changed`);
@@ -1870,7 +1902,7 @@ async function planRouting() {
   const r = routing, seq = ++r.seq;
   if (r.points.length < 2) return;
   try {
-    const way = await send("POST", "owned/routes/plan", { points: r.points, reach_m: r.reach });
+    const way = await send("POST", "owned/routes/plan", { points: r.points, reach_m: r.reach, season });
     if (routing === r && r.seq === seq) { r.way = way; showRouting(); }
   } catch (err) { if (routing === r && r.seq === seq) showRouting(err.message); }
 }
@@ -1878,7 +1910,7 @@ async function saveRouting() {
   const r = routing;
   try {
     const route = r.again ? await send("POST", `owned/routes/${r.again.id}/between`, { points: r.points, version: r.again.version, reach_m: r.reach })
-      : await send("POST", "owned/routes/between", { points: r.points, code: r.code, reach_m: r.reach });
+      : await send("POST", "owned/routes/between", { points: r.points, code: r.code, reach_m: r.reach, season });
     endRouting();
     await refreshOwned(); refreshEditing();
     renderOwnedRoute(route, null, (r.again ? "Laid out again between the points you clicked." : "Made. Below you can name it and say who maintains it.")
@@ -2257,7 +2289,11 @@ function renderOwnedRoute(route, problem, note) {
     grade ? el("dt", {}, "Grading") : "", grade ? el("dd", {}, GRADING[grade] || grade,
       set ? "" : el("div", { class: "sub" }, "By its length and climb: nobody has set a grading. The ground can make it harder.")) : "",
     route.utno_id ? el("dt", {}, "On UT.no") : "", route.utno_id ? el("dd", {}, el("a", { href: `https://ut.no/rutebeskrivelse/${route.utno_id}`, target: "_blank", rel: "noopener" }, "Its page there")) : "",
-    el("dt", {}, "Made from"), el("dd", {}, route.sources.map(s => s.label === s.code ? s.code : `${s.label} (Turrutebasen ${s.code})`).join(", ") || "laid out between points, from no Turrutebasen route"));
+    el("dt", {}, "Made from"), el("dd", {}, route.sources.map(s => s.label === s.code ? s.code : `${s.label} (Turrutebasen ${s.code})`).join(", ") || "laid out between points, from no Turrutebasen route"),
+    // The route of the other season with its number (jot11v goes with jot11): opened in its season.
+    route.twin ? el("dt", {}, route.twin.season === "winter" ? "In the winter" : "In the summer") : "",
+    route.twin ? el("dd", {}, el("button", { class: "link", onclick: async () => { const id = route.twin.id; await chooseSeason(route.twin.season); openOwnedRoute(id); } }, route.twin.code),
+      route.twin.places.every(Boolean) ? el("span", { class: "sub" }, ` ${[...new Set(route.twin.places)].join(" – ")}`) : "") : "");
 
   // Against the mapped paths and roads: worked out after the panel is shown.
   const mapped = el("div", { class: "sub", style: "margin-top:8px" }, "Comparing with the mapped paths and roads…");

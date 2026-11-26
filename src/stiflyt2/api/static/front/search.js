@@ -26,7 +26,7 @@ async function searchFor(q) {
   if (q.trim().length < 2) { searchClose(); return; }
   const c = map.getCenter(), low = q.trim().toLowerCase();
   const [found, named] = await Promise.all([
-    get("search/routes", { q, limit: 8 }).catch(() => []),
+    get("search/routes", { q, limit: 8, season }).catch(() => []),
     get("placenames", { q, lon: c.lng.toFixed(5), lat: c.lat.toFixed(5), limit: 6 }).catch(() => [])]);
   if (asked !== searchAsked) return;
   const typeOf = t => (t || "").replace(/([A-ZÆØÅ])/g, " $1").toLowerCase();

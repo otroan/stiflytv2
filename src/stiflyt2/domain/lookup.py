@@ -401,6 +401,20 @@ def checks(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
         if twin and "".join(twin.groups()) in codes:
             tell("code", f"{r['code']} looks like a misspelling of {''.join(twin.groups())}, which is a route too",
                  about, lonlat(*parts[0][0][:2]))
+        # A winter route goes with the summer route of its number: there is one, and the two go between the same
+        # places. Where they do not, one of the numbers may be wrong.
+        if season == seasons.WINTER:
+            other = routes.twin(conn, r["id"])
+            if other is None:
+                tell("twin", f"{r['code']} has no summer route {seasons.twin(r['code'])} of ours: a winter route has "
+                             "the number of the summer route it goes with", about, lonlat(*parts[0][0][:2]))
+            else:
+                mine_at, theirs_at = routes.ends_named(conn, r["id"]), other["places"]
+                if None not in mine_at + theirs_at and set(mine_at) != set(theirs_at):
+                    tell("twin", f"{r['code']} goes between {' and '.join(sorted(set(mine_at)))}, and "
+                                 f"{other['code']} between {' and '.join(sorted(set(theirs_at)))}",
+                         [*about, {"id": other["id"], "code": other["code"], "yours": True}],
+                         lonlat(*parts[0][0][:2]))
     for c in waiting:
         about, at = [{"id": c["id"], "code": c["label"], "yours": False}], (c["lon"], c["lat"])
         if c["length_m"] < SHORT_M:
@@ -468,6 +482,6 @@ def checks(conn, area: str, *, season: str = seasons.SUMMER) -> dict:
             ORDER BY lower(h.name), h.id""", {"ids": mine}):
         tell("place name", f"Two places are called {row['name']}, {row['metres']} m apart: one place made twice, "
                            "or two to tell apart by name?", [], (row["lon"], row["lat"]))
-    order = ("same line", "short", "code", "maintainer", "out and back", "glacier", "gap at a junction", "place name")
+    order = ("same line", "short", "code", "twin", "maintainer", "out and back", "glacier", "gap at a junction", "place name")
     found.sort(key=lambda f: order.index(f["kind"]))
     return {"area": area, "checks": found, "counts": {k: sum(f["kind"] == k for f in found) for k in order}}

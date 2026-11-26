@@ -34,8 +34,8 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoB
     document.getElementById("tab-plan").hidden = !hasPlanner() && !(me.features || []).includes("trips");
     const out = me.sign_in ? el("button", { class: "link", onclick: async () => { await send("POST", "auth/logout"); location.reload(); } }, "Sign out") : "";
     document.getElementById("who").replaceChildren(me.name ? (me.operates ? `Signed in as ${me.name}. What you decide about signs is kept under that name. ` : `Signed in as ${me.name}, to look. Changing signs needs the operations role. `) : "Read-only. ", out);
-    areas = await get("owned/areas");
-    const drawn = get("owned/routes.geojson").then(all => { lines = inUse(all); whenLoaded(() => map.getSource("routes").setData(lines)); }).catch(() => {});
+    areas = await get("owned/areas", { season });
+    const drawn = get("owned/routes.geojson", { season }).then(all => { lines = inUse(all); whenLoaded(() => map.getSource("routes").setData(lines)); }).catch(() => {});
     get("places.geojson").then(all => whenLoaded(() => map.getSource("places").setData({ type: "FeatureCollection", features: all.features.filter(f => f.properties.type === "place") }))).catch(() => {});
     // The address says where to start. With none, the area last looked at; with no such, the areas.
     const at = here();

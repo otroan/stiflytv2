@@ -70,13 +70,13 @@ def test_what_the_tool_refuses_is_kept_with_what_was_asked_and_about_which_route
 def test_an_error_and_a_question_that_took_too_long_are_kept_as_failures(client, conn, monkeypatch):
     start = latest(conn)
 
-    def broken(conn):
+    def broken(conn, *_):
         raise RuntimeError("the index is on fire")
 
     monkeypatch.setattr(query, "areas", broken)
     assert client.get(f"{V1}/areas").status_code == 500
 
-    def slow(conn):
+    def slow(conn, *_):
         raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
 
     monkeypatch.setattr(query, "areas", slow)

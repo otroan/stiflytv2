@@ -110,13 +110,14 @@ def test_the_map_and_the_area_show_the_season_asked_for(loaded, monkeypatch):
     from stiflyt2.domain import undo as routes_undo
 
     monkeypatch.setattr(settings, "editor", "Test Editor")
+    tester = "Season Tester"        # not the page's editor: what is taken back here is nothing the pages could bring back
     with psycopg.connect(role_dsn("stiflyt2_api"), autocommit=True) as c:
         start = c.execute("SELECT coalesce(max(txid), 0) FROM core.undo_log").fetchone()[0]
         try:
             with c.transaction():
-                routes.make(c, candidate(c, "bre18"), AUTHOR)
+                routes.make(c, candidate(c, "bre18"), tester)
             with c.transaction():
-                routes.make(c, candidate(c, "bre8v", "winter_route"), AUTHOR)
+                routes.make(c, candidate(c, "bre8v", "winter_route"), tester)
             summer_lines = {f["properties"]["edge_id"] for f in routes.collection(c)["features"]}
             winter_lines = {f["properties"]["edge_id"] for f in routes.collection(c, season="winter")["features"]}
             assert summer_lines and winter_lines and not summer_lines & winter_lines
@@ -129,4 +130,30 @@ def test_the_map_and_the_area_show_the_season_asked_for(loaded, monkeypatch):
         finally:
             while (latest := routes_undo.last(c)) and latest["txid"] > start:
                 with c.transaction():
-                    routes_undo.undo(c, AUTHOR)
+                    routes_undo.undo(c, tester)
+
+
+def test_a_winter_route_goes_with_the_summer_route_of_its_number_and_follows_its_code(conn):
+    from stiflyt2.domain import lookup
+
+    summer = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    winter = routes.make(conn, candidate(conn, "bre8v", "winter_route"), AUTHOR)
+    lone = routes.make(conn, candidate(conn, "bre12v", "winter_route"), AUTHOR)
+    assert routes.detail(conn, winter)["twin"] is None
+    # Given the number bre8, the summer route has bre8v as its winter route, and the other way round.
+    routes.update(conn, summer, routes.detail(conn, summer)["version"], AUTHOR, code="bre8")
+    assert routes.detail(conn, winter)["twin"]["code"] == "bre8"
+    assert (routes.detail(conn, summer)["twin"]["code"], routes.detail(conn, summer)["twin"]["season"]) == ("bre8v", "winter")
+    # Its number changed, the winter route follows; where the winter's number is taken, neither changes.
+    routes.update(conn, summer, routes.detail(conn, summer)["version"], AUTHOR, code="bre9")
+    assert routes.detail(conn, winter)["code"] == "bre9v"
+    assert conn.execute("""SELECT payload->>'following' FROM history.event WHERE subject_id = %s
+                           AND type = 'route.code_changed' ORDER BY seq DESC LIMIT 1""", (winter,)).fetchone()[0] == "bre9"
+    routes.update(conn, lone, routes.detail(conn, lone)["version"], AUTHOR, code="bre13v")
+    with pytest.raises(places.Conflict, match="bre9v would follow bre13 to it"):
+        routes.update(conn, summer, routes.detail(conn, summer)["version"], AUTHOR, code="bre13")
+    assert routes.detail(conn, summer)["code"] == "bre9"
+    # Among the winter's checks: a winter route with no summer route of its number.
+    found = [c for c in lookup.checks(conn, "bre", season="winter")["checks"] if c["kind"] == "twin"]
+    assert any("bre13v has no summer route bre13" in c["text"] for c in found)
+    assert not any("bre9v has no summer route" in c["text"] for c in found)

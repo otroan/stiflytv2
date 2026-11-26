@@ -1,6 +1,7 @@
 // The front page: where one is in it, what has been fetched, and what the side shows.
 let me = { operates: false }, areas = [], area = null, found = null, shown = "all", open = null, problem = null;
 let view = "routes";             // what the side shows of the area: its routes, or its signs
+let season = seasonAsked();      // the summer's routes, or the winter's: everything listed and drawn is of it
 let route = null;                // the code of the route that is open: among the routes, or in a part that says something of it
 // A route opens in the part one is in, where that part has something of its own to say of it (its reports, its issues),
 // so that its list, its colours on the map and its back button stay that part's.
@@ -26,19 +27,20 @@ const panel = document.getElementById("panel"), hint = document.getElementById("
 // So a view can be linked to, and the browser's back goes back.
 function here() {
   const q = new URLSearchParams(location.search);
-  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner", "tracks"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report"), track: q.get("track") };
+  return { view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner", "tracks"].includes(q.get("view")) ? q.get("view") : "routes", area: (q.get("area") || "").toLowerCase() || null, route: q.get("route"), site: q.get("site"), entry: q.get("issue"), report: q.get("report"), track: q.get("track"),
+           season: q.get("season") in SEASONS ? q.get("season") : season };
 }
 function addressOf(at) {
   const url = new URL(location.href);
   for (const [k, v] of Object.entries({ area: at.area, view: ["signs", "trips", "issues", "photos", "reports", "landowners", "planner", "tracks"].includes(at.view) ? at.view : null,
       route: ROUTE_VIEWS.includes(at.view) && at.area ? at.route : null, site: at.view === "signs" && at.area ? at.site : null,
       issue: at.view === "issues" && at.area ? at.entry : null, report: at.view === "reports" && at.area ? at.report : null,
-      track: at.view === "tracks" && at.area ? at.track : null }))
+      track: at.view === "tracks" && at.area ? at.track : null, season: (at.season || season) === "winter" ? "winter" : null }))
     if (v) url.searchParams.set(k, v); else url.searchParams.delete(k);
   return url;
 }
 function visit(next, sure) {
-  const to = { view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen, ...next };
+  const to = { view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen, season, ...next };
   // Leaving a sign site with decisions that are not saved: it is asked first what is to become of them.
   if (!sure && view === "signs" && open && pending.changes.length && (to.view !== "signs" || to.area !== area || (to.site || null) !== open)) {
     beforeLeavingSite(() => visit(next, true));
@@ -53,7 +55,20 @@ function visit(next, sure) {
 // arrival and those before it: a lens chosen while the area is still coming waits for the area.
 let arriving = Promise.resolve();
 function arrive(to, fitting = true) {
-  return (arriving = Promise.all([arriving, arriveAt(to, fitting)]).then(() => {}));
+  const there = (to.season || season) !== season ? seasonLoaded(to.season).then(() => arriveAt(to, fitting)) : arriveAt(to, fitting);
+  return (arriving = Promise.all([arriving, there]).then(() => {}));
+}
+// Another season: its areas and its lines, before arriving in it. The area one was in is arrived in anew (its routes
+// are others now), or is no area of the season's, and the areas are shown.
+async function seasonLoaded(to) {
+  const [list, all] = await Promise.all([get("owned/areas", { season: to }), get("owned/routes.geojson", { season: to })]);
+  // The season is the new one only once its areas and lines are here: what is asked meanwhile is of the one shown.
+  season = to;
+  seasonChosen(season);
+  area = null;
+  areas = list;
+  lines = inUse(all);
+  whenLoaded(() => map.getSource("routes").setData(lines));
 }
 function arriveAt(to, fitting) {
   // The planner is of no area: anywhere in Norway. The area one was in is remembered, for the other parts.
@@ -83,12 +98,12 @@ function arriveAt(to, fitting) {
 }
 async function loadArea() {
   const asked = area;
-  try { const got = await get(`owned/areas/${asked}`); if (asked !== area) return; over = got; }
+  try { const got = await get(`owned/areas/${asked}`, { season }); if (asked !== area) return; over = got; }
   catch (err) { if (asked !== area) return; overProblem = err.message; }
   render();
 }
 async function load() {
-  if (!area) return;
+  if (!area || season === "winter") return;      // the signs are the summer's, for now
   const asked = area;
   let got;
   try { got = await get("signs", { area: asked }); }
@@ -161,6 +176,10 @@ const placeFor = v => ({ view: v, area: v === "planner" ? null : area || localSt
                          route: ROUTE_VIEWS.includes(v) && ROUTE_VIEWS.includes(view) ? route : null });
 function renderParts() {
   const part = partOf(view);
+  // The season: the summer's routes or the winter's. The planner is of neither: it walks the paths there are.
+  const seasonBox = document.getElementById("season");
+  seasonBox.hidden = view === "planner";
+  seasonBox.replaceChildren(seasonSwitch(season, k => visit({ season: k, route: null, site: null, entry: null, report: null, track: null })));
   if (part !== "signs") localStorage.setItem(`stiflyt2.lens.${part}`, view);
   for (const [id, p, to] of [["tab-routes", "routes", lastOf("routes")], ["tab-signs", "signs", "signs"], ["tab-plan", "plan", lastOf("plan")]]) {
     const tab = document.getElementById(id);
@@ -176,10 +195,19 @@ function renderParts() {
   document.getElementById("lenses").hidden = part !== "routes" || PARTS.routes.filter(v => partShown(PART_TABS[v])).length < 2;
   document.getElementById("plans").hidden = part !== "plan" || PARTS.plan.filter(v => partShown(PART_TABS[v])).length < 2;
 }
+// What is only of the summer (the signs, for now; the trips for work), asked for among the winter's routes.
+function summerOnly(what) {
+  panel.replaceChildren(el("h2", {}, what), el("div", { class: "sub", style: "margin:6px 0 10px" },
+      what === "Signs" ? "The signs are worked out from the summer's routes. Signs for the winter routes, which stand at other junctions, are not built yet."
+                       : "A trip for work is planned over the summer's routes."),
+    el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => visit({ season: "summer" }) }, "Show the summer's")));
+}
 function render() {
   document.body.dataset.view = view;
+  document.body.classList.toggle("winter", season === "winter");
   renderParts();
   if (view === "planner") renderPlanner();
+  else if (season === "winter" && (view === "signs" || view === "trips")) summerOnly(view === "signs" ? "Signs" : "A trip for work");
   else if (!area) renderAreas();
   else if (route) renderRoute();
   else if (view === "routes") renderArea();
@@ -203,6 +231,6 @@ function render() {
   drawTracks();
   drawReports();
   drawLandowners();
-  const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen });       // what a change of yours led to is in the address too
+  const url = addressOf({ view, area, route, site: open, entry: entryOpen, report: reportOpen, track: trackOpen, season });       // what a change of yours led to is in the address too
   if (url.href !== location.href) history.replaceState(null, "", url);
 }

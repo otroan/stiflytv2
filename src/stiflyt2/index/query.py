@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from psycopg.rows import dict_row
 
+from stiflyt2 import seasons
+
 WEB_MERCATOR_WIDTH = 40075016.686
 
 
@@ -127,37 +129,43 @@ def anchor_detail(conn, anchor_id: str) -> dict | None:
     return anchor
 
 
-def areas(conn) -> list[dict]:
-    return _rows(conn, """
+def areas(conn, season: str = seasons.SUMMER) -> list[dict]:
+    """The areas Turrutebasen has routes of, of a season (its winter routes among the ski trails): how many, how far."""
+    t = seasons.CANDIDATES[seasons.known(season)]
+    return _rows(conn, f"""
         SELECT area_prefix AS prefix, count(*)::int AS routes,
                round(sum(length_m) / 1000)::int AS km
-        FROM source_index.route WHERE area_prefix IS NOT NULL GROUP BY 1 ORDER BY 1""", {})
+        FROM source_index.{t.route} WHERE area_prefix IS NOT NULL GROUP BY 1 ORDER BY 1""", {}) if _has(conn, t.route) else []
 
 
 def route_detail(conn, route_id: str) -> dict | None:
-    """One route candidate with its geometry (WGS 84) and what lies along it."""
-    found = _rows(conn, """
-        SELECT r.id, r.code, r.label, r.name, r.names, r.maintainer, r.grading, r.special_type,
-               r.segment_count, round(r.length_m)::int AS length_m,
-               (SELECT count(*)::int FROM source_index.route_segment rs
-                JOIN source_index.trail_segment t ON t.id = rs.segment_id
-                WHERE rs.route_id = r.id AND t.marked IS NOT TRUE) AS unmarked_segments,
-               (SELECT coalesce(round(sum(t.length_m)), 0)::int FROM source_index.route_segment rs
-                JOIN source_index.trail_segment t ON t.id = rs.segment_id
-                WHERE rs.route_id = r.id AND t.attrs->>'rutefolger' = 'VV') AS water_m,
-               ST_AsGeoJSON(ST_Transform(r.geom, 4326), 6)::json AS geometry,
-               ARRAY[ST_XMin(b.box), ST_YMin(b.box), ST_XMax(b.box), ST_YMax(b.box)] AS bbox
-        FROM source_index.route r,
-             LATERAL (SELECT Box2D(ST_Transform(r.geom, 4326)) AS box) b
-        WHERE r.id = %(id)s""", {"id": route_id})
+    """One route candidate, of either season (a winter route among the ski trails: its id says which), with its
+    geometry (WGS 84) and what lies along it."""
+    for season, t in seasons.CANDIDATES.items():
+        found = _rows(conn, f"""
+            SELECT r.id, r.code, r.label, r.name, {"r.names" if season == seasons.SUMMER else "NULL::text[] AS names"},
+                   r.maintainer, {t.graded}, r.segment_count, round(r.length_m)::int AS length_m,
+                   (SELECT count(*)::int FROM source_index.{t.route_segment} rs
+                    JOIN source_index.{t.segment} t ON t.id = rs.segment_id
+                    WHERE rs.route_id = r.id AND ({t.marked}) IS NOT TRUE) AS unmarked_segments,
+                   (SELECT coalesce(round(sum(t.length_m)), 0)::int FROM source_index.{t.route_segment} rs
+                    JOIN source_index.{t.segment} t ON t.id = rs.segment_id
+                    WHERE rs.route_id = r.id AND t.attrs->>'rutefolger' = 'VV') AS water_m,
+                   ST_AsGeoJSON(ST_Transform(r.geom, 4326), 6)::json AS geometry,
+                   ARRAY[ST_XMin(b.box), ST_YMin(b.box), ST_XMax(b.box), ST_YMax(b.box)] AS bbox
+            FROM source_index.{t.route} r,
+                 LATERAL (SELECT Box2D(ST_Transform(r.geom, 4326)) AS box) b
+            WHERE r.id = %(id)s""", {"id": route_id}) if _has(conn, t.route) else []
+        if found:
+            break
     if not found:
         return None
-    route = found[0]
+    route = {**found[0], "season": season}
     # Who maintains it, stretch by stretch: a stretch shared by two counts for both.
-    route["maintainers"] = _rows(conn, """
+    route["maintainers"] = _rows(conn, f"""
         SELECT m AS name, round(sum(t.length_m))::int AS length_m
-        FROM source_index.route_segment rs
-        JOIN source_index.trail_segment t ON t.id = rs.segment_id,
+        FROM source_index.{t.route_segment} rs
+        JOIN source_index.{t.segment} t ON t.id = rs.segment_id,
              unnest(CASE WHEN cardinality(t.maintainers) = 0 THEN ARRAY['not stated']
                          ELSE t.maintainers END) AS m
         WHERE rs.route_id = %(id)s GROUP BY 1 ORDER BY 2 DESC, 1""", {"id": route_id})
@@ -165,34 +173,34 @@ def route_detail(conn, route_id: str) -> dict | None:
     if _has(conn, "path"):
         # Share of the route lying within 20 m of a mapped path. None where no
         # paths are loaded around the route at all.
-        route["near_path_share"] = conn.execute("""
+        route["near_path_share"] = conn.execute(f"""
             SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM source_index.path p
                                          WHERE ST_DWithin(p.geom, r.geom, 2000)) THEN NULL
                         ELSE coalesce(ST_Length(ST_Intersection(r.geom, (
                                  SELECT ST_Union(ST_Buffer(p.geom, 20)) FROM source_index.path p
                                  WHERE ST_DWithin(p.geom, r.geom, 20)))), 0)
                              / nullif(ST_Length(r.geom), 0) END
-            FROM source_index.route r WHERE r.id = %s""", (route_id,)).fetchone()[0]
+            FROM source_index.{t.route} r WHERE r.id = %s""", (route_id,)).fetchone()[0]
     route["shape"], route["ends"] = None, []
-    if _has(conn, "route_end"):
+    if _has(conn, "route_end") and season == seasons.SUMMER:      # the shape and ends are worked out for the summer's
         route["shape"] = _rows(conn, """SELECT shape, pieces, ends FROM source_index.route_shape
                                         WHERE route_id = %(id)s""", {"id": route_id})[0]
         route["ends"] = _rows(conn, f"""
             SELECT {_ANCHOR_COLUMNS}, round(e.offset_m)::int AS offset_m
             FROM source_index.route_end e JOIN source_index.anchor a ON a.id = e.anchor_id
             WHERE e.route_id = %(id)s ORDER BY e.id""", {"id": route_id})
-    route["heritage"] = _rows(conn, """
+    route["heritage"] = _rows(conn, f"""
         SELECT h.kind, h.id, h.name, h.category, h.protection, h.url,
                round(ST_Distance(h.geom, r.geom))::int AS distance_m
-        FROM source_index.route r
+        FROM source_index.{t.route} r
         JOIN source_index.heritage h ON ST_DWithin(h.geom, r.geom, 50)
         WHERE r.id = %(id)s AND h.kind <> 'sikringssone'
         ORDER BY distance_m, h.kind, h.id LIMIT 200""", {"id": route_id}
     ) if _has(conn, "heritage") else []
-    route["parcels"] = _rows(conn, """
+    route["parcels"] = _rows(conn, f"""
         SELECT p.id, p.matrikkel, p.municipality_no,
                round(ST_Length(ST_Intersection(ST_MakeValid(p.geom), r.geom)))::int AS length_m
-        FROM source_index.route r
+        FROM source_index.{t.route} r
         JOIN source_index.parcel p ON ST_Intersects(p.geom, r.geom)
         WHERE r.id = %(id)s ORDER BY length_m DESC, p.id LIMIT 200""", {"id": route_id}
     ) if _has(conn, "parcel") else []

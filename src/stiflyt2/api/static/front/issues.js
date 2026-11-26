@@ -36,7 +36,7 @@ const noticeBox = e => el("div", { class: `notice-box ${e.kind}`, role: "note", 
 async function loadEntries() {
   if (!hasIssues() || !area) { entries = null; entriesFor = null; return; }
   const asked = area;
-  try { const got = await get("issues", { area: asked }); if (asked !== area) return; entries = got; entriesFor = asked; entriesProblem = null; }
+  try { const got = await get("issues", { area: asked, season }); if (asked !== area) return; entries = got; entriesFor = asked; entriesProblem = null; }
   catch (err) { if (asked !== area) return; entriesProblem = err.message; }
   try { entryUndo = (await get("issues/undo")).last; } catch { entryUndo = null; }
   if (entryOpen && entryShown && entryShown.id === entryOpen && (entries || []).some(e => e.id === entryOpen)) fetchEntry(entryOpen);

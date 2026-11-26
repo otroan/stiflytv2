@@ -658,6 +658,22 @@ if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   await until(`Boolean(over)`);
 } else console.log("    (asked with a token, or by one with no lesser role to look as: the role switch is not checked)");
 
+// The seasons: the winter's routes are routes of their own, chosen at the top; the address says which is shown.
+{
+  check("a switch at the top shows the summer's routes", await js(`[...document.querySelectorAll("#season button")].map(b => b.textContent + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" ") === "Summer* Winter"`), await text("#season"));
+  await clickOn(`[...document.querySelectorAll("#season button")].find(b => b.textContent === "Winter")`);
+  check("chosen, the winter: the address says so, and the areas and the lines are the winter's",
+    await until(`season === "winter" && location.search.includes("season=winter") && document.body.classList.contains("winter") && Array.isArray(areas)
+      && areas.every(a => a.routes >= 0) && /Areas, in the winter/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel"));
+  check("and the winter's lines on the map are none of the summer's", await js(`lines.features.every(f => !/(^|, )bre1[89]\\b/.test(f.properties.codes || ""))`));
+  await clickOn(`document.getElementById("tab-signs")`);
+  check("the signs are the summer's: among the winter's they say so", await until(`view === "signs" && /The signs are worked out from the summer's routes/.test(document.getElementById("panel").textContent)`, 10), await text("#panel"));
+  await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Show the summer's")`);
+  check("and back to the summer, the summer's signs", await until(`season === "summer" && !location.search.includes("season=") && view === "signs"`, 20), await js("location.search"));
+  await js("arriving.then(() => true)");
+  await js(`visit({ view: "routes", area: "bre", route: null, site: null })`);
+  check("and the summer's routes again", await until(`view === "routes" && area === "bre" && Boolean(over) && over.routes.length > 0`, 20), await js("location.search"));
+}
 // The route editor.
 const yours = await js(`over.routes[0].id`);
 await open("ruter");
@@ -706,6 +722,20 @@ if (EDIT && await js(`myFeatures.includes("tracks") && Boolean(EDITOR) && Boolea
     await js(`(async () => { closePopups(); setFixing(false); await fetch(new URL("tracks/" + ${JSON.stringify(tid)}, API), { method: "DELETE", headers: THROUGH }); })()`);
     editing = false;
   }
+}
+// The winter in the route editor: Turrutebasen's winter routes are the candidates, and its winter line is shown.
+{
+  const wasOpen = await js("openRoute ? openRoute.id : null");     // the route open before, opened again after
+  await js(`(async () => { closePopups(); await chooseSeason("winter"); })()`);
+  check("in the route editor, the winter: its switch says so, and Turrutebasen's winter routes are shown",
+    await until(`season === "winter" && document.querySelector("#season button[aria-pressed=true]").textContent === "Winter"
+      && map.getLayoutProperty("winter-trails", "visibility") === "visible" && map.getLayoutProperty("trails-marked", "visibility") === "none"`, 20), await text("#season"));
+  check("and the areas are those with winter routes in Turrutebasen", await until(`[...areaSelect.options].some(o => o.value === "bre")`, 15));
+  await js(`(() => { areaSelect.value = "bre"; areaSelect.dispatchEvent(new Event("change")); })()`);
+  check("an area's winter routes are listed, to be made yours", await until(`[...document.querySelectorAll("#routelist li.hit .code")].some(c => c.textContent === "bre8v")`, 30), await text("#routelist"));
+  await js(`(async () => { await chooseSeason("summer"); })()`);
+  check("and back to the summer", await until(`season === "summer" && map.getLayoutProperty("trails-marked", "visibility") === "visible"`, 20));
+  if (wasOpen) { await js(`openOwnedRoute(${JSON.stringify(wasOpen)})`); await until(`Boolean(openRoute) && openRoute.id === ${JSON.stringify(wasOpen)}`, 20); }
 }
 // Choosing an area shows it on the map.
 // Both an area with routes of yours and one with none yet, where only the spots its routes end at say where it is.
@@ -776,7 +806,9 @@ if (EDIT) {
   await until(`document.querySelectorAll("#latest li button").length >= 3`);
   await clickOn(`document.querySelectorAll("#latest li button")[2]`);
   check("and the route is left as it was found", await until(`Boolean(openRoute) && openRoute.name === ${JSON.stringify(was)}`), await js("openRoute && openRoute.name"));
-  const fullReads = asked.filter(u => u.endsWith("/owned/routes.geojson")).length, markReads = asked.filter(u => u.endsWith("/owned/routes.marks")).length;
+  // Every line of the season (no edges asked for), and the marks: whatever season the address names.
+  const allLines = u => /\/owned\/routes\.geojson(\?season=\w+)?$/.test(u), theMarks = u => /\/owned\/routes\.marks(\?season=\w+)?$/.test(u);
+  const fullReads = asked.filter(allLines).length, markReads = asked.filter(theMarks).length;
   // An end dragged with the mouse to the junction before it: what that would give is shown while it is held,
   // it is done when let go, and Undo takes it back.
   const several = await js(`(() => { const n = {}; for (const f of ownedLines.features) for (const r of f.properties.routes) n[r.id] = (n[r.id] || 0) + 1;
@@ -806,7 +838,7 @@ if (EDIT) {
     await mouse("mouseReleased", to.x, to.y);
     check("let go, the route is cut back to there", await until(`Boolean(openRoute) && openRoute.length.legs < ${legs}`, 20), await js("openRoute && openRoute.length.legs"));
     // (Stretches that only went out of use are dropped by their marks alone: then nothing more is read.)
-    check("after the change the marks were read, and not every line anew", asked.filter(u => u.endsWith("/owned/routes.marks")).length > markReads && asked.filter(u => u.endsWith("/owned/routes.geojson")).length === fullReads, `${asked.filter(u => u.endsWith("/owned/routes.geojson")).length} readings of all lines, ${fullReads} before`);
+    check("after the change the marks were read, and not every line anew", asked.filter(theMarks).length > markReads && asked.filter(allLines).length === fullReads, `${asked.filter(allLines).length} readings of all lines, ${fullReads} before`);
     await until(`/end of .* moved/.test(document.getElementById("undo").textContent)`, 10);
     await clickOn(`document.getElementById("undo")`);
     check("and Undo puts the end back", await until(`Boolean(openRoute) && openRoute.length.legs === ${legs}`, 20), await text("#undobar"));
@@ -885,7 +917,8 @@ if (EDIT) {
     const wasA = await js("openRoute.name");
     await js(`(async () => { await send("PATCH", "owned/routes/${a.id}", { version: openRoute.version, name: ${JSON.stringify(trial)} }); await reloadOpen(); return true; })()`);
     check("what is changed on the next route belongs to the same item of work", await until(`unsaved.changes.length === 2 && unsaved.routes.length === 2 && /^2 changes not saved, to .+ and .+/.test(document.getElementById("unsaved").textContent)`, 15), await text("#unsaved"));
-    check("and it is kept on the server, not in the browser", await js(`get("work").then(w => w.changes.length === 2 && w.routes.length === 2)`));
+    check("and it is kept on the server, not in the browser", await js(`get("work").then(w => w.changes.length === 2 && w.routes.length === 2)`),
+      await js(`get("work").then(w => JSON.stringify({ changes: w.changes.map(c => c.what), routes: w.routes.map(r => r.code), in_the_way: w.in_the_way }))`));
     await clickOn(`[...document.querySelectorAll("#selected .backbar button")].find(x => x.textContent.includes("All routes"))`);
     check("back to the list asks the same", await until(`document.getElementById("leave").open`, 10), await text("#leave"));
     await clickOn(`${asks}.find(x => x.textContent.startsWith("Stay on "))`);

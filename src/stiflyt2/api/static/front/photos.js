@@ -25,7 +25,7 @@ map.addControl(photoControl, "top-right");
 async function loadPhotos() {
   if (!hasPhotos() || !area) { photosAll = null; photosFor = null; return; }
   const asked = area;
-  try { const got = await get("photos", { area: asked }); if (asked !== area) return; photosAll = got; photosFor = asked; } catch { /* the map is drawn without them */ }
+  try { const got = await get("photos", { area: asked, season }); if (asked !== area) return; photosAll = got; photosFor = asked; } catch { /* the map is drawn without them */ }
   render();
 }
 // Photos sent from the page as they are: each its own request, so that one that fails does not stop the rest.

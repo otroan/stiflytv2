@@ -38,7 +38,7 @@ async function loadTracks() {
   if (!hasTracks() || !area) { tracksAll = trackLines = tracksFor = null; return; }
   const asked = area;
   try {
-    const [list, drawn, together] = await Promise.all([get("tracks", { area: asked }), get("tracks.geojson", { area: asked }), get("tracks/compared", { area: asked })]);
+    const [list, drawn, together] = await Promise.all([get("tracks", { area: asked, season }), get("tracks.geojson", { area: asked, season }), get("tracks/compared", { area: asked, season })]);
     if (asked !== area) return;
     tracksAll = list; trackLines = drawn; tracksFor = asked; trackCompared = together;
   } catch { /* the map is drawn without them */ }

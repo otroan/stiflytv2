@@ -122,7 +122,7 @@ def test_a_line_that_goes_out_and_the_same_way_back_is_found():
 
 def test_routes_on_one_line_and_the_other_odd_things_of_an_area(conn, monkeypatch):
     before = lookup.checks(conn, "bre")
-    assert set(before["counts"]) == {"same line", "short", "code", "maintainer", "out and back", "glacier",
+    assert set(before["counts"]) == {"same line", "short", "code", "twin", "maintainer", "out and back", "glacier",
                                      "gap at a junction", "place name"}
     route = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
     assert lookup.same_line(conn, "bre") == [p for p in lookup.same_line(conn, "bre") if p["of"] == "turrutebasen"]

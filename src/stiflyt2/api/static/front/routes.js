@@ -39,9 +39,11 @@ function renderAreas() {
     renderAreas();
   };
   panel.replaceChildren(
-    el("h2", {}, "Areas"),
-    areas.length ? el("div", { class: "sub" }, view === "signs" ? "Choose an area for its signs." : "Where there are routes of yours in use. Choose an area for its routes and what they add up to.")
-      : el("div", { class: "sub" }, "There are no routes of yours in use yet. They are made yours in the route editor."),
+    el("h2", {}, season === "winter" ? "Areas, in the winter" : "Areas"),
+    areas.length ? el("div", { class: "sub" }, view === "signs" ? "Choose an area for its signs." : `Where there are ${season === "winter" ? "winter routes" : "routes"} of yours in use. Choose an area for its routes and what they add up to.`)
+      : el("div", { class: "sub" }, season === "winter"
+          ? "No winter route is yours yet. In the route editor, with Winter chosen, DNT's winter routes in Turrutebasen are made yours as the summer's are."
+          : "There are no routes of yours in use yet. They are made yours in the route editor."),
     problem ? el("div", { class: "error" }, problem) : "",
     me.name ? el("div", { class: "actions" }, ...(choosingAreas
       ? [el("button", { class: "btn main", onclick: save }, "Save your areas"), el("button", { class: "btn", onclick: () => { choosingAreas = null; renderAreas(); } }, "Cancel"),
@@ -61,7 +63,7 @@ function addedRoutes() {
   const code = el("input", { type: "text", placeholder: "Its code, as sun27", maxlength: 20, style: "width:9em", "aria-label": "The code of a route of another area" });
   const change = async request => {
     // What the area's routes are changes its lists: its routes, and its issues, reports and photos, are asked for again.
-    try { await request(); problem = null; areas = await get("owned/areas"); if (rawLines) lines = inUse(rawLines); whenLoaded(() => map.getSource("routes").setData(lines));
+    try { await request(); problem = null; areas = await get("owned/areas", { season }); if (rawLines) lines = inUse(rawLines); whenLoaded(() => map.getSource("routes").setData(lines));
           await Promise.all([loadArea(), loadEntries(), loadPhotos(), loadReports()]); }
     catch (err) { problem = err.message; render(); }
   };
@@ -155,7 +157,11 @@ function renderRoute() {
         r.water_m ? el("div", { class: "sub" }, `And ${km(r.water_m / 1000)} over water, not counted as walking.`) : ""),
       el("dt", {}, "Climbs"), el("dd", {}, ...(D ? climbs(D, H || D.height) : [el("span", { class: "sub" }, "…")])),
       r.grading ? el("dt", {}, "Grading") : "", r.grading ? el("dd", {}, grade(r.grading), GRADING[r.grading] || r.grading,
-        r.grading_from === "set" ? "" : el("div", { class: "sub" }, "By its length and climb: nobody has set a grading. The ground can make it harder.")) : ""),
+        r.grading_from === "set" ? "" : el("div", { class: "sub" }, "By its length and climb: nobody has set a grading. The ground can make it harder.")) : "",
+      // The route of the other season with its number: jot11v goes with jot11.
+      ...(D && D.twin ? [el("dt", {}, D.twin.season === "winter" ? "In the winter" : "In the summer"),
+        el("dd", {}, el("button", { class: "link", title: "The same number in the other season", onclick: () => visit({ season: D.twin.season, route: D.twin.code, site: null, entry: null, report: null, track: null }) }, D.twin.code),
+          D.twin.places.every(Boolean) ? el("span", { class: "sub" }, ` ${[...new Set(D.twin.places)].join(" – ")}`) : "")] : [])),
     ...(own[view] || []),
     profile,
     el("h2", {}, "Description"),

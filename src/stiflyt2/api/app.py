@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
 
+from stiflyt2 import seasons
 from stiflyt2.api import auth as auth_api
 from stiflyt2.api import feedback as feedback_api
 from stiflyt2.api import issues as issues_api
@@ -36,6 +37,7 @@ from stiflyt2.api import routecard as routecard_api
 from stiflyt2.api import signs as signs_api
 from stiflyt2.api import tracks as tracks_api
 from stiflyt2.api import trips as trips_api
+from stiflyt2.api.params import Season
 from stiflyt2.config import settings
 from stiflyt2.domain import routes as owned_routes
 from stiflyt2.index import query
@@ -120,10 +122,10 @@ def create_app() -> FastAPI:
             return query.search_places(conn, q, limit=limit, near=near, near_srid=4326)
 
     @app.get(f"{V1}/areas")
-    def areas() -> list[dict]:
-        """The three-letter route code prefixes in use, with route counts."""
+    def areas(season: Season = seasons.SUMMER) -> list[dict]:
+        """The three-letter route code prefixes in use, with route counts: of Turrutebasen's routes of the season."""
         with pool.connection() as conn:
-            return query.areas(conn)
+            return query.areas(conn, season)
 
     @app.get(f"{V1}/routes")
     def routes(q: Annotated[str | None, Query(min_length=1, max_length=80)] = None,

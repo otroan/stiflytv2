@@ -25,7 +25,7 @@ async function loadReports() {
   if (!hasReports() || !area) { reportsAll = upkeep = sinceLines = null; reportsFor = null; return; }
   const asked = area;
   try {
-    const [all, status, lines] = await Promise.all([get("reports", { area: asked }), get("reports/status", { area: asked, maintainer: (me.profile && me.profile.maintainer) || null }), get("reports/coverage", { area: asked, kind: sinceKind })]);
+    const [all, status, lines] = await Promise.all([get("reports", { area: asked, season }), get("reports/status", { area: asked, maintainer: (me.profile && me.profile.maintainer) || null, season }), get("reports/coverage", { area: asked, kind: sinceKind, season })]);
     if (asked !== area) return;
     reportsAll = all; upkeep = status; sinceLines = lines; reportsFor = asked;
   } catch { /* the part says it could not */ }
@@ -98,7 +98,7 @@ function renderReports() {
   if (reportAsk) { panel.replaceChildren(back, told, reportForm()); return; }
   if (reportOpen) { renderReport(told); return; }
   if (!upkeep) { panel.replaceChildren(back, el("h2", { class: "area" }, `Reports in ${area}`), el("div", { class: "sub" }, reportsFor === null ? "Loading…" : "Could not get the reports.")); return; }
-  const chip = (key, label) => el("button", { "aria-pressed": String(sinceKind === key), onclick: () => { sinceKind = key; sinceLines = null; render(); get("reports/coverage", { area, kind: key }).then(l => { sinceLines = l; render(); }).catch(() => {}); } }, label);
+  const chip = (key, label) => el("button", { "aria-pressed": String(sinceKind === key), onclick: () => { sinceKind = key; sinceLines = null; render(); get("reports/coverage", { area, kind: key, season }).then(l => { sinceLines = l; render(); }).catch(() => {}); } }, label);
   const half = DUE[sinceKind] / 2;
   const legend = el("div", { class: "since-legend" }, ...[["recent", `under ${half} years`], ["ageing", `${half}–${DUE[sinceKind]} years`], ["due", `over ${DUE[sinceKind]} years: due`], ["never", "never, or not reported"]]
     .map(([age, says]) => el("span", {}, el("i", { style: `background:${AGE_COLOURS[age]}` }), says)));
@@ -164,7 +164,7 @@ function reportPhotoDays(d) {
   const routes = d.covers.map(c => c.route).join(","), key = `${area}|${routes}`;
   if (photoDaysFor !== key) {
     photoDaysFor = key; photoDays = null;
-    get("photos/days", { area, routes: routes || null }).then(l => { if (photoDaysFor === key) { photoDays = l; render(); } }).catch(() => { if (photoDaysFor === key) { photoDays = []; render(); } });
+    get("photos/days", { area, routes: routes || null, season }).then(l => { if (photoDaysFor === key) { photoDays = l; render(); } }).catch(() => { if (photoDaysFor === key) { photoDays = []; render(); } });
   }
   if (!photoDays) return el("div", { class: "field sub" }, "Looking for photos from there…");
   if (!photoDays.length) return el("div", { class: "field sub" }, d.covers.length ? "No photos were taken near these routes." : "No photos with a day and a place from this area.");

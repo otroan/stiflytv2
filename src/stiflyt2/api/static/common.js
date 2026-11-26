@@ -39,6 +39,22 @@ function roleSwitch(me, footer) {
         el("label", {}, "Show the pages as ", choose));
   footer.parentNode.insertBefore(bar, footer);
 }
+// The season the pages show: the summer's routes, or DNT's winter routes, which are routes of their own (ADR-006).
+// The address says it where it says one (?season=winter); else the one last chosen, on either page.
+const SEASONS = { summer: "Summer", winter: "Winter" };
+const WINTER_COLOUR = "#5e35b1";         // a winter route on the map: violet, apart from the summer's colours
+function seasonAsked() {
+  const q = new URLSearchParams(location.search).get("season");
+  return q in SEASONS ? q : localStorage.getItem("stiflyt2.season") === "winter" ? "winter" : "summer";
+}
+function seasonChosen(season) { localStorage.setItem("stiflyt2.season", season); }
+// Two buttons, the season shown pressed; a click on the other chooses it.
+function seasonSwitch(now, choose) {
+  return el("div", { class: "season-switch", role: "group", "aria-label": "Which routes: the summer's or the winter's" },
+    ...Object.entries(SEASONS).map(([k, says]) => el("button", { type: "button", "aria-pressed": String(now === k),
+      title: k === "winter" ? "DNT's winter routes: staked each winter, routes of their own" : "The routes of the summer",
+      onclick: () => { if (k !== now) choose(k); } }, says)));
+}
 // Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
 let leaving = false;
 function signIn() { if (!leaving) { leaving = true; location.href = new URL(`auth/login?next=${encodeURIComponent(location.pathname)}`, API).href; } }
