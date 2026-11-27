@@ -157,3 +157,21 @@ def test_a_winter_route_goes_with_the_summer_route_of_its_number_and_follows_its
     found = [c for c in lookup.checks(conn, "bre", season="winter")["checks"] if c["kind"] == "twin"]
     assert any("bre13v has no summer route bre13" in c["text"] for c in found)
     assert not any("bre9v has no summer route" in c["text"] for c in found)
+
+
+def test_a_winter_route_made_from_turrutebasen_ends_at_the_huts_its_line_stops_short_of(conn):
+    # A hut 60 m off one end of bre8v's line in Turrutebasen, where the summer's routes would end.
+    end = conn.execute("""SELECT ST_X(p), ST_Y(p) FROM (SELECT (ST_DumpPoints(ST_Boundary(ST_LineMerge(geom)))).geom AS p
+                          FROM source_index.winter_route WHERE label = 'bre8v') x ORDER BY ST_X(p) LIMIT 1""").fetchone()
+    node = conn.execute("INSERT INTO core.node (geom) VALUES (ST_SetSRID(ST_MakePoint(%s, %s), 25833)) RETURNING id::text",
+                        (end[0] + 60, end[1])).fetchone()[0]
+    hut = places.at_node(conn, node, AUTHOR, name="Trial hut")
+    made = routes.detail(conn, routes.make(conn, candidate(conn, "bre8v", "winter_route"), AUTHOR))
+    at = [e["place"] for e in made["ends"]]
+    assert "Trial hut" in at and made["shape"] == "line"
+    assert conn.execute("SELECT place_id::text FROM core.node WHERE id = %s", (node,)).fetchone()[0] == hut
+    assert any(e["id"] == node for e in made["ends"])                # the hut's own arrival point, not a spot beside it
+    moved = [h for h in made["history"] if h["type"] == "route.end_moved"]
+    assert moved and moved[0]["payload"]["to"] == "Trial hut" and moved[0]["payload"]["as_made"] is True
+    # The other end, with no place within 200 m, is left where Turrutebasen's line ends.
+    assert None in at

@@ -482,6 +482,9 @@ def make(conn, candidate_id: str, author: str, code: str | None = None) -> str:
     legs = _add_legs(conn, route_id, _edges_of(conn, candidate, author))
     _event(conn, author, "route.made", route_id,
            {"candidate": candidate["label"], "code": code, "legs": legs})
+    # A winter route ends at the huts, where Turrutebasen's line stops short of them.
+    if candidate["season"] == seasons.WINTER:
+        _to_places(conn, route_id, author)
     _inherit(conn, route_id, candidate_id, author)
     return route_id
 
@@ -2360,16 +2363,48 @@ def move_end(conn, route_id: str, version: int, author: str, end_node: str, lon:
     told = _two_phase(conn, not dry_run, lambda only: _end(
         conn, route_id, AUTOMATIC if only is None else author, end_node, lon, lat, reach_m, only))
     if not dry_run:
-        _event(conn, author, "route.end_moved", route_id,
-               {"to": told["stops"][-1]["place"] or [round(told["stops"][-1]["lon"], 5),
-                                                     round(told["stops"][-1]["lat"], 5)],
-                "added": told["added"], "dropped": told["dropped"], "metres": told["length_m"],
-                **({"along_mapped_m": told["mapped_m"]} if told["mapped_m"] else {}),
-                **({"straight_m": told["straight_m"]} if told.get("straight_m") else {}),
-                **({"joined": True} if told.get("joined") else {}),
-                **({"round_trip": True} if told.get("round_trip") else {})})
+        _end_moved(conn, author, route_id, told)
         _touch(conn, route_id, author)
     return {k: v for k, v in told.items() if k != "edges"}
+
+
+def _end_moved(conn, author: str, route_id: str, told: dict, **more) -> None:
+    _event(conn, author, "route.end_moved", route_id,
+           {"to": told["stops"][-1]["place"] or [round(told["stops"][-1]["lon"], 5), round(told["stops"][-1]["lat"], 5)],
+            "added": told["added"], "dropped": told["dropped"], "metres": told["length_m"],
+            **({"along_mapped_m": told["mapped_m"]} if told["mapped_m"] else {}),
+            **({"straight_m": told["straight_m"]} if told.get("straight_m") else {}),
+            **({"joined": True} if told.get("joined") else {}),
+            **({"round_trip": True} if told.get("round_trip") else {}), **more})
+
+
+TO_A_PLACE_M = 200      # a winter route made from Turrutebasen is carried on to a place's arrival point this near an end
+
+
+def _to_places(conn, route_id: str, author: str) -> list[str]:
+    """Carry each end of a route that is no place's on to the arrival point of a place near it (within
+    TO_A_PLACE_M), the nearest, along the mapped path there or straight. Turrutebasen's winter routes stop some
+    metres short of the huts, where the summer's routes end and the winter's are to end too. An end that cannot be
+    carried there is left as it is. Returns the places it went to."""
+    went = []
+    for end in _graph(conn, route_id)["ends"]:
+        found = conn.execute("""
+            SELECT n.id::text, ST_X(ST_Transform(n.geom, 4326)), ST_Y(ST_Transform(n.geom, 4326)), p.name
+            FROM core.node e, core.node n JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed'
+            WHERE e.id = %s AND e.place_id IS NULL AND n.status = 'active' AND n.id <> e.id
+              AND ST_DWithin(n.geom, e.geom, %s)
+            ORDER BY n.geom <-> e.geom LIMIT 1""", (end, TO_A_PLACE_M)).fetchone()
+        if not found:
+            continue
+        try:
+            with conn.transaction():
+                told = _two_phase(conn, True, lambda only, end=end, at=found: _end(
+                    conn, route_id, AUTOMATIC if only is None else author, end, at[1], at[2], 10, only))
+                _end_moved(conn, author, route_id, told, as_made=True)
+            went.append(found[3])
+        except Invalid:
+            continue
+    return went
 
 
 JOINS_M = 30       # a mapped way this near the route has come back to it, where the way round is a wide one

@@ -1021,7 +1021,10 @@ summer stretch, nor a summer route over a winter one: the database refuses it
 (domain migration `d0019`). Junctions and places are shared: a hut is where
 both arrive. Made ours (`make_yours jot11v`, or laid out with a code with a v),
 a winter route is of winter stretches; its way is found over the winter's
-stretches and Turrutebasen's winter routes only. What lists routes takes the
+stretches and Turrutebasen's winter routes only. Turrutebasen's winter lines
+stop some metres short of the huts: made ours, an end within 200 m of a
+place's arrival point is carried on to it, along the mapped path or
+straight, so that the winter route ends where the summer's do. What lists routes takes the
 season asked for, the summer unless the winter is (`?season=winter`, an
 assistant's `season`, `stiflyt2 report jot --season winter`); what is handed to
 Kartverket and UT.no, the planner's and the trips' network, and the signs are
