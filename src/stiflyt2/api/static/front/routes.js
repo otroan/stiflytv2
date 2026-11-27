@@ -42,7 +42,7 @@ function renderAreas() {
     el("h2", {}, season === "winter" ? "Areas, in the winter" : "Areas"),
     areas.length ? el("div", { class: "sub" }, view === "signs" ? "Choose an area for its signs." : `Where there are ${season === "winter" ? "winter routes" : "routes"} of yours in use. Choose an area for its routes and what they add up to.`)
       : el("div", { class: "sub" }, season === "winter"
-          ? "No winter route is yours yet. In the route editor, with Winter chosen, DNT's winter routes in Turrutebasen are made yours as the summer's are."
+          ? "No winter route is yours yet. In the route editor, with the winter chosen (\u2744\uFE0E at the top), DNT's winter routes in Turrutebasen are made yours as the summer's are."
           : "There are no routes of yours in use yet. They are made yours in the route editor."),
     problem ? el("div", { class: "error" }, problem) : "",
     me.name ? el("div", { class: "actions" }, ...(choosingAreas

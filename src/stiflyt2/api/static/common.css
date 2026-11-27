@@ -1,0 +1,12 @@
+/* What both pages draw alike. */
+
+/* The season, in the red band at the top: a sun for the summer's routes, a snowflake for DNT's winter routes. The
+   one shown is pressed, white, with the colour of its routes on the map. */
+.season-switch { display: inline-flex; flex: none; border: 1px solid #ffffffa6; border-radius: 999px; overflow: hidden; }
+.season-switch button { width: 32px; height: 24px; padding: 0; border: 0; background: transparent; color: #fff; opacity: .8;
+                        font: 15px/24px system-ui, sans-serif; cursor: pointer; }
+.season-switch button + button { border-left: 1px solid #ffffff59; }
+.season-switch button:hover { opacity: 1; background: #ffffff26; }
+.season-switch button[aria-pressed=true] { opacity: 1; background: #fff; color: #c8161d; cursor: default; }
+.season-switch button[aria-pressed=true][data-season=winter] { color: #5e35b1; }
+.season-switch button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }

@@ -72,8 +72,9 @@ route.
    same day): each shows the other (`routes.twin`); a summer route given
    another number takes its winter route with it; the winter's checks say
    where a winter route has no summer route, or the two go between different
-   places. Both pages have a summer/winter switch, in the address and
-   remembered.
+   places. Both pages have the season in the red band at the top, a sun
+   and a snowflake (☀/❄); the one shown is in the address and kept while
+   the tab is open, and a new visit starts with the summer.
 
 ## What is left
 

@@ -42,18 +42,22 @@ function roleSwitch(me, footer) {
 // The season the pages show: the summer's routes, or DNT's winter routes, which are routes of their own (ADR-006).
 // The address says it where it says one (?season=winter); else the one last chosen, on either page.
 const SEASONS = { summer: "Summer", winter: "Winter" };
+const SEASON_SIGNS = { summer: "\u2600\uFE0E", winter: "\u2744\uFE0E" };     // a sun and a snowflake, drawn as text
 const WINTER_COLOUR = "#5e35b1";         // a winter route on the map: violet, apart from the summer's colours
+// The summer, unless the address asks for the winter or it was chosen earlier in this tab: a new visit starts
+// with the summer.
 function seasonAsked() {
   const q = new URLSearchParams(location.search).get("season");
-  return q in SEASONS ? q : localStorage.getItem("stiflyt2.season") === "winter" ? "winter" : "summer";
+  return q in SEASONS ? q : sessionStorage.getItem("stiflyt2.season") === "winter" ? "winter" : "summer";
 }
-function seasonChosen(season) { localStorage.setItem("stiflyt2.season", season); }
-// Two buttons, the season shown pressed; a click on the other chooses it.
+function seasonChosen(season) { sessionStorage.setItem("stiflyt2.season", season); }
+// A sun and a snowflake in the band at the top, the season shown pressed; a click on the other chooses it.
 function seasonSwitch(now, choose) {
-  return el("div", { class: "season-switch", role: "group", "aria-label": "Which routes: the summer's or the winter's" },
+  return el("span", { class: "season-switch", role: "group", "aria-label": "Which routes: the summer's or the winter's" },
     ...Object.entries(SEASONS).map(([k, says]) => el("button", { type: "button", "aria-pressed": String(now === k),
-      title: k === "winter" ? "DNT's winter routes: staked each winter, routes of their own" : "The routes of the summer",
-      onclick: () => { if (k !== now) choose(k); } }, says)));
+      "aria-label": says, "data-season": k,
+      title: k === "winter" ? "Winter: DNT's winter routes, staked each winter, routes of their own" : "Summer: the routes of the summer",
+      onclick: () => { if (k !== now) choose(k); } }, SEASON_SIGNS[k])));
 }
 // Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
 let leaving = false;

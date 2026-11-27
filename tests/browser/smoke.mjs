@@ -660,8 +660,13 @@ if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
 
 // The seasons: the winter's routes are routes of their own, chosen at the top; the address says which is shown.
 {
-  check("a switch at the top shows the summer's routes", await js(`[...document.querySelectorAll("#season button")].map(b => b.textContent + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" ") === "Summer* Winter"`), await text("#season"));
-  await clickOn(`[...document.querySelectorAll("#season button")].find(b => b.textContent === "Winter")`);
+  check("a sun and a snowflake in the band at the top: the summer's routes are shown",
+    await js(`[...document.querySelectorAll("header .top #season button")].map(b => b.getAttribute("aria-label") + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" ") === "Summer* Winter"
+      && [...document.querySelectorAll("#season button")].map(b => b.textContent).join("") === "\u2600\uFE0E\u2744\uFE0E"`), await js(`document.getElementById("season").outerHTML`));
+  check("the parts, the search and the lenses each on one line",
+    await js(`(() => { const one = sel => { const tops = new Set([...document.querySelectorAll(sel)].filter(e => e.offsetParent).map(e => Math.round(e.getBoundingClientRect().top))); return tops.size === 1; };
+      return one(".partsrow nav a") && one("#lenses a"); })()`), await js(`[...document.querySelectorAll("#lenses a, .partsrow nav a")].filter(e => e.offsetParent).map(e => e.textContent + "@" + Math.round(e.getBoundingClientRect().top)).join(" ")`));
+  await clickOn(`[...document.querySelectorAll("#season button")].find(b => b.dataset.season === "winter")`);
   check("chosen, the winter: the address says so, and the areas and the lines are the winter's",
     await until(`season === "winter" && location.search.includes("season=winter") && document.body.classList.contains("winter") && Array.isArray(areas)
       && areas.every(a => a.routes >= 0) && /Areas, in the winter/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel"));
@@ -728,7 +733,7 @@ if (EDIT && await js(`myFeatures.includes("tracks") && Boolean(EDITOR) && Boolea
   const wasOpen = await js("openRoute ? openRoute.id : null");     // the route open before, opened again after
   await js(`(async () => { closePopups(); await chooseSeason("winter"); })()`);
   check("in the route editor, the winter: its switch says so, and Turrutebasen's winter routes are shown",
-    await until(`season === "winter" && document.querySelector("#season button[aria-pressed=true]").textContent === "Winter"
+    await until(`season === "winter" && document.querySelector("h1 #season button[aria-pressed=true]").dataset.season === "winter"
       && map.getLayoutProperty("winter-trails", "visibility") === "visible" && map.getLayoutProperty("trails-marked", "visibility") === "none"`, 20), await text("#season"));
   check("and the areas are those with winter routes in Turrutebasen", await until(`[...areaSelect.options].some(o => o.value === "bre")`, 15));
   await js(`(() => { areaSelect.value = "bre"; areaSelect.dispatchEvent(new Event("change")); })()`);
