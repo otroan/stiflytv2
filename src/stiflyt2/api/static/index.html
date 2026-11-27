@@ -575,13 +575,15 @@ function showSeason() {
   });
 }
 async function chooseSeason(to) {
+  if (openRoute || !selected.hidden) clearRoute();
+  // The season is the new one once its areas and lines are here (meanwhile its sign turns at the top): the lines on
+  // the map are never of one season in the other's colour.
+  const [areasOf, lines] = await Promise.all([get("areas", { season: to }).catch(() => []), linesOf(to)]);
   season = to;
   seasonChosen(season);
-  if (openRoute || !selected.hidden) clearRoute();
-  ownedMarks = null;             // every line read anew: the season's
+  everyArea = areasOf;
   showSeason();
-  try { everyArea = await get("areas", { season }); } catch { everyArea = []; }
-  await Promise.all([refreshOwned().catch(() => {}), chooseWho(whoSelect.value)]);
+  await Promise.all([refreshOwned(lines).catch(() => {}), chooseWho(whoSelect.value)]);
   if (areaSelect.value) loadArea(false);
 }
 
@@ -607,10 +609,19 @@ function listAreas() {
                                                  : `${a.prefix}  (${a.routes} routes, ${a.km.toLocaleString("en")} km)`); }));
   areaSelect.value = chosen;
 }
+// The areas side by side, per season and maintainer, as last read: coming back to one, shown at once and read anew.
+const reportsKept = {};
 async function chooseWho(name) {
   localStorage.setItem(WHOSE, name);
   for (const s of document.querySelectorAll("select.who, #who")) s.value = name;
-  try { sideBySide = await get("report", { ...(name ? { maintainer: name } : {}), season }); } catch { sideBySide = null; }
+  const key = `${season}|${name}`, kept = reportsKept[key];
+  const reading = get("report", { ...(name ? { maintainer: name } : {}), season }).then(r => (reportsKept[key] = r)).catch(() => null);
+  sideBySide = kept || await reading;
+  if (kept) reading.then(r => {
+    if (!r || `${season}|${whoSelect.value}` !== key) return;
+    sideBySide = r; listAreas();
+    if (!reportBox.hidden) showReport();
+  });
   listAreas();
   othersToo = false;
   if (areaSelect.value) loadArea(true, true);       // the list of the area that is open follows the choice
@@ -1205,23 +1216,12 @@ async function lookAtNight() {
 setInterval(lookAtNight, 30 * 60 * 1000);
 // The map shows what is yours on top, and hides the proposals it was made from.
 let ownedLines = { features: [] };
-let ownedMarks = null;    // the mark of every stretch as it was last read
 let routeNames = {};      // what routes are called, by id: here, before the first reading of the map's lines empties it
-async function refreshOwned() {
+async function refreshOwned(known) {      // known: the season's lines, when they have just been read
   routeNames = {};      // a route may be called something else after a change
-  const data = await get("places.geojson");
+  const [data, lines] = await Promise.all([get("places.geojson"), known || linesOf(season)]);
   adopted = data.features.filter(f => f.properties.type === "place").flatMap(f => [f.properties.adopted_from, ...(f.properties.taken_in || [])]).filter(Boolean);
-  // Every stretch has a mark that is another when anything the map says of it has changed. The first time all
-  // lines are read; after that the marks, and only the stretches whose mark is new. (The marks first: a change
-  // that lands in between leaves a mark that is too old, which the next reading puts right.)
-  const marks = await get("owned/routes.marks", { season }), changed = ownedMarks ? Object.keys(marks).filter(e => ownedMarks[e] !== marks[e]) : null;
-  let lines;
-  if (!changed || changed.length > 150) lines = await get("owned/routes.geojson", { season });
-  else {
-    const fresh = changed.length ? (await get("owned/routes.geojson", { edges: changed.join(","), season })).features : [], again = new Set(fresh.map(f => f.properties.edge_id));
-    lines = { type: "FeatureCollection", features: [...ownedLines.features.filter(f => f.properties.edge_id in marks && !again.has(f.properties.edge_id)), ...fresh] };
-  }
-  ownedMarks = marks;
+  // The season's lines: all of them the first time, after that only the stretches that have changed (linesOf).
   ownedLines = lines;
   whenStyled(() => {
     map.getSource("ownedroutes").setData(lines);

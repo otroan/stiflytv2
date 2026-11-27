@@ -29,6 +29,7 @@ await new Promise(r => ws.addEventListener("open", r));
 let seq = 0;
 const waiting = new Map(), thrown = [], refused = [], stopped = [], failed = [], asked = [], said = [];
 let pretend = null;         // what the service is made to say about who else is here
+let holdBack = null;        // requests to the service that are let through only after a moment
 const send = (method, params = {}) => new Promise(r => { waiting.set(++seq, r); ws.send(JSON.stringify({ id: seq, method, params })); });
 ws.addEventListener("message", m => {
   const d = JSON.parse(m.data);
@@ -46,7 +47,9 @@ ws.addEventListener("message", m => {
     if ((pretend || TOKEN) && /\/api\/v1\/here$/.test(q.url)) { send("Fetch.fulfillRequest", { requestId: d.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(pretend || [])).toString("base64") }); return; }
     // (Planning a trip, and saying where the page is, are asked with POST and keep nothing: they are let through, as a look is.)
     if (q.method !== "GET" && !editing && !/\/api\/v1\/(trips\/plan|planner\/plan|planner\/estimate|planner\/heights|here)$/.test(q.url)) { stopped.push(`${q.method} ${q.url.slice(HOME.length - 1)}`); send("Fetch.failRequest", { requestId: d.params.requestId, errorReason: "BlockedByClient" }); return; }
-    send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
+    const go = () => send("Fetch.continueRequest", { requestId: d.params.requestId, headers: [...Object.entries(q.headers).map(([name, value]) => ({ name, value })), ...(TOKEN ? [{ name: "Authorization", value: `Bearer ${TOKEN}` }] : [])] });
+    // What is held back (holdBack) comes a moment later: to see what a page shows while it waits.
+    if (holdBack && holdBack.test(q.url)) setTimeout(go, 1500); else go();
   }
 });
 const js = async expr => { const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true }); return !r ? undefined : r.exceptionDetails ? `EXCEPTION ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}` : r.result.value; };
@@ -666,9 +669,13 @@ if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
   check("the parts, the search and the lenses each on one line",
     await js(`(() => { const one = sel => { const tops = new Set([...document.querySelectorAll(sel)].filter(e => e.offsetParent).map(e => Math.round(e.getBoundingClientRect().top))); return tops.size === 1; };
       return one(".partsrow nav a") && one("#lenses a"); })()`), await js(`[...document.querySelectorAll("#lenses a, .partsrow nav a")].filter(e => e.offsetParent).map(e => e.textContent + "@" + Math.round(e.getBoundingClientRect().top)).join(" ")`));
+  holdBack = /routes\.marks\?season=winter/;
   await clickOn(`[...document.querySelectorAll("#season button")].find(b => b.dataset.season === "winter")`);
+  check("while the winter is coming, its snowflake turns", await until(`Boolean(document.querySelector(".season-switch button.coming[data-season=winter]"))
+    && document.querySelector(".season-switch").getAttribute("aria-busy") === "true" && season === "summer"`, 3), await js(`document.getElementById("season").outerHTML`));
+  holdBack = null;
   check("chosen, the winter: the address says so, and the areas and the lines are the winter's",
-    await until(`season === "winter" && location.search.includes("season=winter") && document.body.classList.contains("winter") && Array.isArray(areas)
+    await until(`season === "winter" && location.search.includes("season=winter") && document.body.classList.contains("winter") && Array.isArray(areas) && !document.querySelector(".season-switch button.coming")
       && areas.every(a => a.routes >= 0) && /Areas, in the winter/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel"));
   check("and the winter's lines on the map are none of the summer's", await js(`lines.features.every(f => !/(^|, )bre1[89]\\b/.test(f.properties.codes || ""))`));
   check("and they are blue, thicker, on a white edge", await until(`map.getPaintProperty("routes", "line-color") === WINTER_COLOUR

@@ -60,8 +60,16 @@ function arrive(to, fitting = true) {
 }
 // Another season: its areas and its lines, before arriving in it. The area one was in is arrived in anew (its routes
 // are others now), or is no area of the season's, and the areas are shown.
+// A season's areas, as last read: going back to a season seen before, they are shown at once and read anew meanwhile.
+const areasKept = {};
 async function seasonLoaded(to) {
-  const [list, all] = await Promise.all([get("owned/areas", { season: to }), get("owned/routes.geojson", { season: to })]);
+  const kept = areasKept[to], reading = get("owned/areas", { season: to }).then(list => {
+    areasKept[to] = list;
+    if (kept && season === to) areas = list;
+    return list;
+  });
+  if (kept) reading.catch(() => {});
+  const [list, all] = await Promise.all([kept || reading, linesOf(to)]);
   // The season is the new one only once its areas and lines are here: what is asked meanwhile is of the one shown.
   season = to;
   seasonChosen(season);

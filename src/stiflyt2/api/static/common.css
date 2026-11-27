@@ -11,3 +11,12 @@
 .season-switch button[aria-pressed=true] { opacity: 1; background: #fff; color: #c8161d; cursor: default; }
 .season-switch button[aria-pressed=true][data-season=winter] { color: var(--winter); }
 .season-switch button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.season-switch .sign { display: inline-block; }
+/* The season chosen, while it is coming: its sun or snowflake turns. */
+.season-switch button.coming { opacity: 1; background: #ffffff40; cursor: progress; }
+.season-switch button.coming .sign { animation: season-turn 1.2s linear infinite; }
+@keyframes season-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .season-switch button.coming .sign { animation: season-pulse 1.2s ease-in-out infinite alternate; }
+  @keyframes season-pulse { to { opacity: .35; } }
+}

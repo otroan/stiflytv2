@@ -57,13 +57,41 @@ function seasonAsked() {
   return q in SEASONS ? q : sessionStorage.getItem("stiflyt2.season") === "winter" ? "winter" : "summer";
 }
 function seasonChosen(season) { sessionStorage.setItem("stiflyt2.season", season); }
-// A sun and a snowflake in the band at the top, the season shown pressed; a click on the other chooses it.
+// A sun and a snowflake in the band at the top, the season shown pressed; a click on the other chooses it. While the
+// season chosen is coming (`choose` gives a promise), its sign turns: drawn anew meanwhile, the switch still says so.
+let seasonComing = null;
 function seasonSwitch(now, choose) {
-  return el("span", { class: "season-switch", role: "group", "aria-label": "Which routes: the summer's or the winter's" },
+  return el("span", { class: "season-switch", role: "group", "aria-label": "Which routes: the summer's or the winter's",
+                      "aria-busy": String(Boolean(seasonComing)) },
     ...Object.entries(SEASONS).map(([k, says]) => el("button", { type: "button", "aria-pressed": String(now === k),
-      "aria-label": says, "data-season": k,
+      "aria-label": says, "data-season": k, class: seasonComing === k ? "coming" : "",
       title: k === "winter" ? "Winter: DNT's winter routes, staked each winter, routes of their own" : "Summer: the routes of the summer",
-      onclick: () => { if (k !== now) choose(k); } }, SEASON_SIGNS[k])));
+      onclick: async e => {
+        if (k === now || seasonComing) return;
+        seasonComing = k;
+        e.currentTarget.classList.add("coming"); e.currentTarget.parentNode.setAttribute("aria-busy", "true");
+        try { await choose(k); } finally {
+          seasonComing = null;
+          for (const b of document.querySelectorAll(".season-switch button.coming")) { b.classList.remove("coming"); b.parentNode.setAttribute("aria-busy", "false"); }
+        }
+      } }, el("span", { class: "sign" }, SEASON_SIGNS[k]))));
+}
+// The lines of a season's routes of ours, kept in the page for each season: the first time all are read; after that
+// the marks (each stretch has one, another when anything the map says of it has changed) and only the stretches whose
+// mark is new. Going back to a season seen before is then quick. (The marks first: a change that lands in between
+// leaves a mark that is too old, which the next reading puts right.)
+const linesKept = {};
+async function linesOf(season) {
+  const kept = linesKept[season];
+  const marks = await get("owned/routes.marks", { season }), changed = kept ? Object.keys(marks).filter(e => kept.marks[e] !== marks[e]) : null;
+  let lines;
+  if (!changed || changed.length > 150) lines = await get("owned/routes.geojson", { season });
+  else {
+    const fresh = changed.length ? (await get("owned/routes.geojson", { edges: changed.join(","), season })).features : [], again = new Set(fresh.map(f => f.properties.edge_id));
+    lines = { type: "FeatureCollection", features: [...kept.lines.features.filter(f => f.properties.edge_id in marks && !again.has(f.properties.edge_id)), ...fresh] };
+  }
+  linesKept[season] = { marks, lines };
+  return lines;
 }
 // Not signed in any more (the session ran out, or you were taken off the list): to the sign-in, and back here.
 let leaving = false;
