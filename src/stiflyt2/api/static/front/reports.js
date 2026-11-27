@@ -261,7 +261,7 @@ function reportForm() {
 function drawReports() {
   whenLoaded(() => {
     const on = view === "reports" && hasReports() && reportsFor === area;
-    map.setPaintProperty("routes", "line-color", on ? AGE_COLOURS.never : css("--sign"));
+    map.setPaintProperty("routes", "line-color", on ? AGE_COLOURS.never : seasonColour());
     // Another association's routes are faint: a stretch that none of ours walks.
     const ours = on && upkeep ? upkeep.filter(r => r.ours !== false).map(r => r.id) : [];
     if (on && ours.length) map.setPaintProperty("routes", "line-opacity", ["case", ["any", ...ours.map(id => ["in", `|${id}|`, ["get", "ids"]])], 0.85, 0.2]);

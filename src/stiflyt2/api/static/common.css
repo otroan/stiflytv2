@@ -1,4 +1,5 @@
 /* What both pages draw alike. */
+:root { --winter: #1739b8; }    /* a winter route: WINTER_COLOUR in common.js */
 
 /* The season, in the red band at the top: a sun for the summer's routes, a snowflake for DNT's winter routes. The
    one shown is pressed, white, with the colour of its routes on the map. */
@@ -8,5 +9,5 @@
 .season-switch button + button { border-left: 1px solid #ffffff59; }
 .season-switch button:hover { opacity: 1; background: #ffffff26; }
 .season-switch button[aria-pressed=true] { opacity: 1; background: #fff; color: #c8161d; cursor: default; }
-.season-switch button[aria-pressed=true][data-season=winter] { color: #5e35b1; }
+.season-switch button[aria-pressed=true][data-season=winter] { color: var(--winter); }
 .season-switch button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }

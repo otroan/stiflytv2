@@ -216,7 +216,6 @@
 
 <script>
 "use strict";
-const WINTER = "#5e35b1";       // a winter route: violet, apart from the summer's colours and the water's blue
 const C = { trail: css("--trail"), path: css("--path"), road: css("--road"), heritage: css("--heritage"),
             parcel: css("--parcel"), selected: css("--selected"), together: css("--together"),
             apart: css("--apart"), meeting: css("--meeting"), sign: css("--sign"), osm: css("--osm"),
@@ -284,7 +283,7 @@ const map = new maplibregl.Map({
       // top of it, so that where the two coincide both can still be seen.
       // DNT's winter routes in Turrutebasen: a line staked for the season, over lakes and bogs as the ice lies.
       { id: "winter-trails", type: "line", source: "winter", "source-layer": "winter", layout: { "line-cap": "round" },
-        paint: { "line-color": WINTER, "line-width": width(1.4, 2.8), "line-opacity": 0.85, "line-dasharray": [2, 1.2] } },
+        paint: { "line-color": WINTER_COLOUR, "line-width": width(1.4, 2.8), "line-opacity": 0.85, "line-dasharray": [2, 1.2] } },
       { id: "trails-water", type: "line", source: "trails", "source-layer": "trails",
         filter: ["==", ["get", "water"], true],
         paint: { "line-color": C.water, "line-width": width(1.5, 3), "line-opacity": 0.8, "line-dasharray": [0.6, 1.6] } },
@@ -336,12 +335,16 @@ const map = new maplibregl.Map({
       // A route that is discontinued and kept: there, and plainly not one to walk.
       { id: "yours-discontinued", type: "line", source: "ownedroutes", filter: ["==", ["get", "discontinued"], true],
         paint: { "line-color": GONE, "line-width": width(1.4, 2.6), "line-dasharray": [0.8, 2.2] } },
+      // A winter route of yours on a white edge, blue and thicker (showSeason): apart from the rivers and the mapped paths.
+      { id: "yours-edge", type: "line", source: "ownedroutes",
+        filter: ["all", IN_USE, ["!", ["in", ["get", "kind"], ["literal", ["water", "glacier"]]]]],
+        layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 0, "line-opacity": 0.9 } },
       { id: "yours-unmarked", type: "line", source: "ownedroutes",
         filter: ["all", IN_USE, ["!", ["in", ["get", "kind"], ["literal", ["water", "glacier"]]]], ["!=", ["get", "marked"], true]],
-        paint: { "line-color": C.sign, "line-width": width(1.6, 3.2), "line-dasharray": [2, 1.5] } },
+        paint: { "line-color": C.sign, "line-width": ROUTE_WIDTH.summer, "line-dasharray": [2, 1.5] } },
       { id: "yours-marked", type: "line", source: "ownedroutes",
         filter: ["all", IN_USE, ["!", ["in", ["get", "kind"], ["literal", ["water", "glacier"]]]], ["==", ["get", "marked"], true]],
-        layout: { "line-cap": "round" }, paint: { "line-color": C.sign, "line-width": width(1.6, 3.2) } },
+        layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": C.sign, "line-width": ROUTE_WIDTH.summer } },
       { id: "yours-water", type: "line", source: "ownedroutes", filter: ["all", IN_USE, ["==", ["get", "kind"], "water"]],
         paint: { "line-color": C.water, "line-width": width(2, 3.5), "line-dasharray": [0.6, 1.6] } },
       { id: "yours-glacier", type: "line", source: "ownedroutes", filter: ["all", IN_USE, ["==", ["get", "kind"], "glacier"]],
@@ -404,8 +407,8 @@ map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
 
 // Layer switches, with the legend as their labels.
 const GROUPS = [
-  { name: "Your route, marked", ids: ["yours-marked", "yours-unmarked", "yours-water", "yours-glacier"], swatch: "", color: C.sign, from: 0 },
-  { name: "Your route, not marked", ids: [], swatch: "dash", color: C.sign, from: 0 },
+  { name: "Your route, marked", ids: ["yours-edge", "yours-marked", "yours-unmarked", "yours-water", "yours-glacier"], swatch: "", color: C.sign, from: 0, seasonal: true },
+  { name: "Your route, not marked", ids: [], swatch: "dash", color: C.sign, from: 0, seasonal: true },
   { name: "Crossing over water", ids: [], swatch: "dash", color: C.water, from: 0 },
   { name: "Crossing over glacier", ids: [], swatch: "dash", color: C.ice, from: 0 },
   { name: "Your route, discontinued", ids: ["yours-discontinued"], swatch: "dash", color: GONE, from: 0 },
@@ -416,7 +419,7 @@ const GROUPS = [
   { name: "Turrutebasen, marked", ids: ["trails-marked"], swatch: "", color: C.trail, from: 7 },
   { name: "Turrutebasen, not marked", ids: ["trails-unmarked"], swatch: "dash", color: C.trail, from: 7 },
   { name: "Turrutebasen, over water", ids: ["trails-water"], swatch: "dash", color: C.water, from: 10 },
-  { name: "Turrutebasen, winter route (staked each winter)", ids: ["winter-trails"], swatch: "dash", color: WINTER, from: 7, off: true },
+  { name: "Turrutebasen, winter route (staked each winter)", ids: ["winter-trails"], swatch: "dash", color: WINTER_COLOUR, from: 7, off: true },
   { name: "Mapped path (FKB)", ids: ["paths"], swatch: "", color: C.path, from: 11 },
   { name: "Mapped tractor road (FKB)", ids: [], swatch: "", color: C.road, from: 11 },
   { name: "Road centre line (NVDB)", ids: ["roads"], swatch: "dash", color: C.road, from: 11 },
@@ -439,6 +442,7 @@ for (const g of GROUPS) {
     for (const id of g.ids) map.setLayoutProperty(id, "visibility", e.target.checked ? "visible" : "none");
   } }) : el("span", { style: "width:13px;margin:0 3px 0 4px" });
   if (g.ids.length) g.box = box;
+  g.swatch_el = sw;
   layersBox.append(el("label", { class: "layer" }, box, sw, g.name, el("span", { class: "zoomnote" }, g.from ? `zoom ${g.from}+` : "")));
 }
 map.on("load", () => {
@@ -555,7 +559,13 @@ function showSeason() {
   document.body.classList.toggle("winter", season === "winter");
   document.getElementById("season").replaceChildren(seasonSwitch(season, chooseSeason));
   whenStyled(() => {
-    for (const id of ["yours-marked", "yours-unmarked"]) map.setPaintProperty(id, "line-color", season === "winter" ? WINTER_COLOUR : C.sign);
+    // A winter route of yours: blue, thicker, on its white edge. The legend says so too.
+    for (const id of ["yours-marked", "yours-unmarked"]) {
+      map.setPaintProperty(id, "line-color", season === "winter" ? WINTER_COLOUR : C.sign);
+      map.setPaintProperty(id, "line-width", ROUTE_WIDTH[season]);
+    }
+    map.setPaintProperty("yours-edge", "line-width", season === "winter" ? WINTER_EDGE : 0);
+    for (const g of GROUPS) if (g.seasonal) g.swatch_el.style.borderColor = season === "winter" ? WINTER_COLOUR : C.sign;
     for (const g of GROUPS) {
       const winterLine = g.ids.includes("winter-trails"), summerLine = g.ids.some(id => id.startsWith("trails-"));
       if (!g.box || !(winterLine || summerLine)) continue;
@@ -1946,7 +1956,7 @@ function showWould(geometry) {      // the lines a change would give, or null to
   would = Boolean(geometry);
   whenStyled(() => { hold(geometry ? geometry.geometries.map(g => ({ type: "Feature", properties: {}, geometry: g })) : []); fade(would); });
 }
-const fade = on => { for (const id of [...YOURS, "selected-halo"]) map.setPaintProperty(id, "line-opacity", on ? 0.3 : id === "selected-halo" ? 0.75 : 1); };
+const fade = on => { for (const id of [...YOURS, "selected-halo", "yours-edge"]) map.setPaintProperty(id, "line-opacity", on ? 0.3 : id === "selected-halo" ? 0.75 : id === "yours-edge" ? 0.9 : 1); };
 map.on("mousedown", e => {
   if (!openRoute || pick || draft || routing || settling || e.originalEvent.button !== 0) return;
   // Of the dots under the pointer: in route mode an end, which is the only handle there; else the nearest.

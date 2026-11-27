@@ -43,7 +43,13 @@ function roleSwitch(me, footer) {
 // The address says it where it says one (?season=winter); else the one last chosen, on either page.
 const SEASONS = { summer: "Summer", winter: "Winter" };
 const SEASON_SIGNS = { summer: "\u2600\uFE0E", winter: "\u2744\uFE0E" };     // a sun and a snowflake, drawn as text
-const WINTER_COLOUR = "#5e35b1";         // a winter route on the map: violet, apart from the summer's colours
+// A winter route on the map: a strong blue, drawn thicker than a summer route and on a white edge, so that it is not
+// taken for a river or a mapped path. The same blue is --winter in common.css.
+const WINTER_COLOUR = "#1739b8";
+// How wide a route of ours is drawn, by the zoom: a summer route, and a winter route with its white edge under it.
+const ROUTE_WIDTH = { summer: ["interpolate", ["linear"], ["zoom"], 8, 1.8, 15, 4],
+                      winter: ["interpolate", ["linear"], ["zoom"], 8, 2.6, 15, 5.5] };
+const WINTER_EDGE = ["interpolate", ["linear"], ["zoom"], 8, 4.6, 15, 8.5];
 // The summer, unless the address asks for the winter or it was chosen earlier in this tab: a new visit starts
 // with the summer.
 function seasonAsked() {

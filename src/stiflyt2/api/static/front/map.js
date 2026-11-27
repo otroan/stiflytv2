@@ -4,8 +4,10 @@ const GLACIER = "#1f6fc5";      // the blue a route is drawn in over a glacier
 const NOTICE_RED = "#c62828", ISSUE_AMBER = "#ef8f00", ISSUE_DONE = "#9aa5ad";     // an issue: a notice to walkers, work, done
 const PHOTO_BLUE = "#3949ab";   // where a photo was taken
 const OWNED_PURPLE = "#7b3fa0"; // a property: its parcel, and where a route crosses it
-const OPEN_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 3.5, 15, 6];      // the open route
+const OPEN_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 4, 15, 7];        // the open route
 const SINCE_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 6];     // how long since a stretch was done
+// The colour of the routes of the season shown: the summer's red, the winter's blue.
+const seasonColour = () => season === "winter" ? WINTER_COLOUR : css("--sign");
 
 const map = new maplibregl.Map({
   container: "map", hash: true, center: [7.6, 61.7], zoom: 9, maxZoom: 19,
@@ -36,7 +38,10 @@ const map = new maplibregl.Map({
       { id: "owned-fill", type: "fill", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "fill-color": OWNED_PURPLE, "fill-opacity": 0.12 } },
       { id: "owned-edge", type: "line", source: "owned", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "line-color": OWNED_PURPLE, "line-width": 2 } },
       // Over a glacier a route is blue round dots: there is no path there, and it is crossed as the ice lies.
-      { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], paint: { "line-color": css("--sign"), "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 15, 3], "line-opacity": 0.75 } },
+      // A winter route on a white edge: apart from the rivers.
+      { id: "routes-edge", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#fff", "line-width": WINTER_EDGE, "line-opacity": 0.9 } },
+      { id: "routes", type: "line", source: "routes", filter: ["!=", ["get", "kind"], "glacier"], layout: { "line-join": "round" }, paint: { "line-color": css("--sign"), "line-width": ROUTE_WIDTH.summer, "line-opacity": 0.75 } },
       { id: "routes-ice", type: "line", source: "routes", filter: ["==", ["get", "kind"], "glacier"], layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": GLACIER, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 15, 5], "line-dasharray": [0, 2], "line-opacity": 0.75 } },
       // How long since each stretch was inspected, or had a work party (the feature `reports`): the latest on top.
@@ -103,10 +108,14 @@ function drawMap() {
     map.setLayoutProperty("site-names", "visibility", among ? "none" : "visible");
     map.setLayoutProperty("sites-small", "visibility", among ? "visible" : "none");
     // The routes of the area stand out; those of other areas are there to be seen past.
-    for (const id of ["routes", "routes-ice"]) map.setPaintProperty(id, "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75);
-    // A winter route is violet: another season's line, staked over lakes and bogs.
-    const routeColour = season === "winter" ? WINTER_COLOUR : css("--sign");
+    const others = area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.8, 0.25] : 0.75;
+    for (const id of ["routes", "routes-ice"]) map.setPaintProperty(id, "line-opacity", others);
+    // A winter route is blue, thicker, on a white edge: another season's line, staked over lakes and bogs.
+    const winter = season === "winter", routeColour = seasonColour();
     map.setPaintProperty("routes", "line-color", routeColour);
+    map.setPaintProperty("routes", "line-width", ROUTE_WIDTH[winter ? "winter" : "summer"]);
+    map.setLayoutProperty("routes-edge", "visibility", winter ? "visible" : "none");
+    map.setPaintProperty("routes-edge", "line-opacity", area ? ["case", ["in", `|${area}|`, ["get", "areas"]], 0.9, 0.3] : 0.9);
     const walked = route && over && over.routes.find(r => r.code === route), mine = ["in", `|${walked ? walked.id : "none"}|`, ["get", "ids"]];
     // Among the reports the open route is an outline, ice and all: the colour of how long since it was done is in it.
     const outline = view === "reports";

@@ -270,4 +270,4 @@ ul.owners li { padding: 2px 0 2px 10px; border-left: 2px solid #c9b3d6; margin: 
 form.rename { display: flex; gap: 6px; margin: 8px 0; }
 form.rename input { flex: 1; font: inherit; padding: 4px 6px; border: 1px solid #b4bec6; border-radius: 4px; }
 li.cut { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-body.winter .partsrow nav a[aria-current] { border-bottom-color: #5e35b1; }
+body.winter .partsrow nav a[aria-current] { border-bottom-color: var(--winter); }

@@ -671,6 +671,9 @@ if (await js(`Boolean(me.may_look_as && me.may_look_as.length)`)) {
     await until(`season === "winter" && location.search.includes("season=winter") && document.body.classList.contains("winter") && Array.isArray(areas)
       && areas.every(a => a.routes >= 0) && /Areas, in the winter/.test(document.querySelector("#panel h2").textContent)`, 20), await text("#panel"));
   check("and the winter's lines on the map are none of the summer's", await js(`lines.features.every(f => !/(^|, )bre1[89]\\b/.test(f.properties.codes || ""))`));
+  check("and they are blue, thicker, on a white edge", await until(`map.getPaintProperty("routes", "line-color") === WINTER_COLOUR
+    && JSON.stringify(map.getPaintProperty("routes", "line-width")) === JSON.stringify(ROUTE_WIDTH.winter) && map.getLayoutProperty("routes-edge", "visibility") === "visible"`, 10),
+    await js(`JSON.stringify([map.getPaintProperty("routes", "line-color"), map.getLayoutProperty("routes-edge", "visibility")])`));
   await clickOn(`document.getElementById("tab-signs")`);
   check("the signs are the summer's: among the winter's they say so", await until(`view === "signs" && /The signs are worked out from the summer's routes/.test(document.getElementById("panel").textContent)`, 10), await text("#panel"));
   await clickOn(`[...document.querySelectorAll("#panel button")].find(b => b.textContent === "Show the summer's")`);
@@ -735,6 +738,9 @@ if (EDIT && await js(`myFeatures.includes("tracks") && Boolean(EDITOR) && Boolea
   check("in the route editor, the winter: its switch says so, and Turrutebasen's winter routes are shown",
     await until(`season === "winter" && document.querySelector("h1 #season button[aria-pressed=true]").dataset.season === "winter"
       && map.getLayoutProperty("winter-trails", "visibility") === "visible" && map.getLayoutProperty("trails-marked", "visibility") === "none"`, 20), await text("#season"));
+  check("and your winter routes are blue on a white edge, as the legend says", await until(`map.getPaintProperty("yours-marked", "line-color") === WINTER_COLOUR
+    && JSON.stringify(map.getPaintProperty("yours-edge", "line-width")) === JSON.stringify(WINTER_EDGE)
+    && GROUPS.find(g => g.name === "Your route, marked").swatch_el.style.borderColor !== ""`, 10), await js(`String(map.getPaintProperty("yours-marked", "line-color"))`));
   check("and the areas are those with winter routes in Turrutebasen", await until(`[...areaSelect.options].some(o => o.value === "bre")`, 15));
   await js(`(() => { areaSelect.value = "bre"; areaSelect.dispatchEvent(new Event("change")); })()`);
   check("an area's winter routes are listed, to be made yours", await until(`[...document.querySelectorAll("#routelist li.hit .code")].some(c => c.textContent === "bre8v")`, 30), await text("#routelist"));
