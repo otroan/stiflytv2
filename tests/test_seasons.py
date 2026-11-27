@@ -175,3 +175,20 @@ def test_a_winter_route_made_from_turrutebasen_ends_at_the_huts_its_line_stops_s
     assert moved and moved[0]["payload"]["to"] == "Trial hut" and moved[0]["payload"]["as_made"] is True
     # The other end, with no place within 200 m, is left where Turrutebasen's line ends.
     assert None in at
+
+
+def test_a_winter_route_whose_line_passes_beside_a_hut_ends_at_the_hut_itself(conn):
+    # A hut 8 m beside bre8v's line in Turrutebasen, 40 m in from one end of it: the way there stops on the line
+    # first, at the spot nearest the hut. It is carried on from there to the hut's own arrival point.
+    line = conn.execute("""SELECT CASE WHEN ST_X(ST_StartPoint(g)) <= ST_X(ST_EndPoint(g)) THEN g ELSE ST_Reverse(g) END
+                           FROM (SELECT ST_GeometryN(ST_LineMerge(geom), 1) AS g FROM source_index.winter_route
+                                 WHERE label = 'bre8v') x""").fetchone()[0]
+    (x1, y1), (x2, y2) = [conn.execute("SELECT ST_X(p), ST_Y(p) FROM (SELECT ST_LineInterpolatePoint(%s::geometry, %s / ST_Length(%s::geometry)) AS p) x",
+                                       (line, m, line)).fetchone() for m in (35, 45)]
+    d = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+    node = conn.execute("INSERT INTO core.node (geom) VALUES (ST_SetSRID(ST_MakePoint(%s, %s), 25833)) RETURNING id::text",
+                        ((x1 + x2) / 2 - 8 * (y2 - y1) / d, (y1 + y2) / 2 + 8 * (x2 - x1) / d)).fetchone()[0]
+    places.at_node(conn, node, AUTHOR, name="Hut beside the line")
+    made = routes.detail(conn, routes.make(conn, candidate(conn, "bre8v", "winter_route"), AUTHOR))
+    assert any(e["id"] == node for e in made["ends"]), [(e["place"], e["lon"], e["lat"]) for e in made["ends"]]
+    assert made["shape"] == "line" and "Hut beside the line" in [e["place"] for e in made["ends"]]

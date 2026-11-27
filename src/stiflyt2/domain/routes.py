@@ -2385,7 +2385,11 @@ def _to_places(conn, route_id: str, author: str) -> list[str]:
     """Carry each end of a route that is no place's on to the arrival point of a place near it (within
     TO_A_PLACE_M), the nearest, along the mapped path there or straight. Turrutebasen's winter routes stop some
     metres short of the huts, where the summer's routes end and the winter's are to end too. An end that cannot be
-    carried there is left as it is. Returns the places it went to."""
+    carried there is left as it is. Returns the places it went to.
+
+    Where a line of the route's season passes beside the arrival point, the way there stops on it first, at the
+    spot nearest the point (no stretch of the season leads to the point itself yet): from there it is carried on,
+    so that the route ends at the arrival point and not some metres beside it, nor do the routes made after it."""
     went = []
     for end in _graph(conn, route_id)["ends"]:
         found = conn.execute("""
@@ -2396,14 +2400,24 @@ def _to_places(conn, route_id: str, author: str) -> list[str]:
             ORDER BY n.geom <-> e.geom LIMIT 1""", (end, TO_A_PLACE_M)).fetchone()
         if not found:
             continue
-        try:
-            with conn.transaction():
-                told = _two_phase(conn, True, lambda only, end=end, at=found: _end(
-                    conn, route_id, AUTOMATIC if only is None else author, end, at[1], at[2], 10, only))
-                _end_moved(conn, author, route_id, told, as_made=True)
-            went.append(found[3])
-        except Invalid:
-            continue
+        at = end
+        for _ in range(2):
+            before = set(_graph(conn, route_id)["ends"])
+            try:
+                with conn.transaction():
+                    told = _two_phase(conn, True, lambda only, at=at, to=found: _end(
+                        conn, route_id, AUTOMATIC if only is None else author, at, to[1], to[2], 10, only))
+                    _end_moved(conn, author, route_id, told, as_made=True)
+            except Invalid:
+                break
+            now = set(_graph(conn, route_id)["ends"])
+            if found[0] in now:
+                went.append(found[3])
+                break
+            beside = now - before        # the end it stopped at, beside the arrival point: on from there
+            if len(beside) != 1:
+                break
+            at = beside.pop()
     return went
 
 
