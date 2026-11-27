@@ -417,20 +417,23 @@ def register(app: FastAPI, read: ConnectionPool, write: ConnectionPool) -> None:
         return {"done": done, "failed": failed}
 
     @app.get("/api/v1/corrections")
-    def to_turrutebasen(area: AreaOrAll = None) -> list[dict]:
-        """What to ask Kartverket to change in Turrutebasen, by its own segment ids."""
+    def to_turrutebasen(area: AreaOrAll = None, season: Season = seasons.SUMMER) -> list[dict]:
+        """What to ask Kartverket to change in Turrutebasen, by its own segment ids: of the summer's routes in its
+        foot routes, of the winter's in its ski trails (each says its `layer`)."""
         with read.connection() as conn:
-            found = corrections.corrections(conn, area)
+            found = corrections.corrections(conn, area, season=season)
         return [{k: v for k, v in c.items() if k not in ("geometry", "was_geometry")} for c in found]
 
     @app.get("/api/v1/corrections.geojson")
     def to_turrutebasen_file(area: AreaOrAll = None,
-                             srid: Annotated[Literal[4326, 25833], Query()] = 4326) -> JSONResponse:
+                             srid: Annotated[Literal[4326, 25833], Query()] = 4326,
+                             season: Season = seasons.SUMMER) -> JSONResponse:
         """The same as a GeoJSON file to hand over: each line as proposed, and as it is now."""
         with read.connection() as conn:
-            found = corrections.corrections(conn, area, srid)
-        name = f"turrutebasen-corrections-{area.lower() if area else 'all'}.geojson"
-        return JSONResponse(corrections.as_geojson(found, srid), media_type="application/geo+json",
+            found = corrections.corrections(conn, area, srid, season=season)
+        layer = seasons.CANDIDATES[season].layer
+        name = f"turrutebasen-corrections-{area.lower() if area else 'all'}-{layer}.geojson"
+        return JSONResponse(corrections.as_geojson(found, srid, layer=layer), media_type="application/geo+json",
                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/api/v1/routes.geojson")

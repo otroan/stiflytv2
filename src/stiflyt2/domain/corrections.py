@@ -25,27 +25,43 @@ _KIND = {"trail": "path", "tractor_road": "tractor road", "road": "road", "glaci
 _YES = {True: "JA", False: "NEI"}
 
 
+def _merking(marked: bool, marks: tuple[str, ...]) -> str:
+    """What merking is asked for a stretch marked or not: in the winter, staked for the season (SM)."""
+    return marks[0] if marked else "NEI"
+
+
+def _marked_as_said(marked: bool, merking: str | None, marks: tuple[str, ...]) -> bool:
+    """Whether Turrutebasen's merking says what you say: marked by any of the season's values (JA or SM in the
+    winter, a trail marked for good being marked too)."""
+    return merking in marks if marked else merking == "NEI"
+
+
 def _rows(conn, sql: str, params: dict) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(sql, params).fetchall()
 
 
-def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
-    """Every change to Turrutebasen that follows from your routes, for one area prefix or for all.
+def corrections(conn, area: str | None = None, srid: int = 4326, *, season: str = seasons.SUMMER) -> list[dict]:
+    """Every change to Turrutebasen that follows from your routes of a season, for one area prefix or for all.
 
     Kinds of change: geometry, attributes, delete (a segment that is no stretch
     at all), remove from route, add to route, new segment, route attribute (who
     maintains it, grading), route name, route code.
 
-    Turrutebasen's foot routes are the summer's: the summer's routes and stretches only, whatever else is asked.
+    Of the summer's routes, what Turrutebasen's foot routes (fotrute) are to become; of the winter's, what its
+    ski trails (skiloype) are, where DNT's winter routes are: each against its own layer, by that layer's ids, and
+    each correction says which layer it is about. A winter route's line is its normal line: where it is staked
+    in a given winter is not told.
     """
+    season = seasons.known(season)
+    T = seasons.CANDIDATES[season]
     digits = 7 if srid == 4326 else 2
-    params = {"area": (area or "").lower(), "srid": srid, "digits": digits, "summer": seasons.SUMMER}
+    params = {"area": (area or "").lower(), "srid": srid, "digits": digits, "season": season}
     out: list[dict] = []
 
     def add(change, text, *, lokalid=None, versjonid=None, rutenummer=(), was=None, now=None,
             geometry=None, was_geometry=None, at=None, **more):
-        out.append({"change": change, "lokalid": lokalid, "versjonid": versjonid,
+        out.append({"change": change, "layer": T.layer, "lokalid": lokalid, "versjonid": versjonid,
                     "rutenummer": sorted(rutenummer), "text": text, "was": was or {},
                     "now": now or {}, "geometry": geometry, "was_geometry": was_geometry,
                     "lon": at[0] if at else None, "lat": at[1] if at else None, **more})
@@ -76,12 +92,12 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                (array_agg(p.name) FILTER (WHERE p.name IS NOT NULL))[1] AS place
         FROM core.source_reference sr JOIN core.edge e ON e.id = sr.subject_id
         JOIN core.edge_revision r ON r.id = e.current_revision_id
-        JOIN source_index.trail_segment t ON t.id = sr.external_id
+        JOIN source_index.{T.segment} t ON t.id = sr.external_id
         LEFT JOIN core.node n ON n.id = r.b_node
         LEFT JOIN core.place p ON p.id = n.place_id AND p.status = 'confirmed',
              LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(ST_GeometryN(t.geom, 1), 0.5), 4326) AS p) c
         WHERE sr.subject_type = 'edge' AND sr.source_key = 'turrutebasen' AND sr.ref_type = 'adopted_from'
-          AND e.status <> 'undone' AND e.season = %(summer)s
+          AND e.status <> 'undone' AND e.season = %(season)s
           AND (%(area)s = '' OR EXISTS (SELECT 1 FROM unnest(t.codes) code
                                         WHERE code ~ ('^' || %(area)s || '[0-9]')))
         GROUP BY t.id, c.p ORDER BY t.id""", params)
@@ -115,7 +131,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                   AND sr.ref_type = 'adopted_from' AND sr.external_id = %(id)s
                 ORDER BY (sr.detail->>'from')::float8 NULLS FIRST""", {"id": s["lokalid"]})
             told = "; ".join(f"{p['metres']} m {_KIND.get(p['kind'], p['kind'])}"
-                             + ("" if p["marked"] is None else ", merking " + _YES[p["marked"]])
+                             + ("" if p["marked"] is None else ", merking " + _merking(p["marked"], T.marks))
                              + ("" if p["signed"] is None else ", skilting " + _YES[p["signed"]])
                              for p in parts)
             add("attributes", f"Divide the segment, its parts are not alike: {told}",
@@ -123,8 +139,8 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
             continue
         kind, marked, signed = s["kinds"][0], s["marked"][0], s["signed"][0]
         was, now = {}, {}
-        if marked is not None and _YES[marked] != s["merking"]:
-            was["merking"], now["merking"] = s["merking"], _YES[marked]
+        if marked is not None and not _marked_as_said(marked, s["merking"], T.marks):
+            was["merking"], now["merking"] = s["merking"], _merking(marked, T.marks)
         if signed is not None and _YES[signed] != s["skilting"]:
             was["skilting"], now["skilting"] = s["skilting"], _YES[signed]
         follows = _FOLLOWS.get(kind)
@@ -137,16 +153,16 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 geometry=s["geometry"], was=was, now=now, **about)
 
     # Routes: which segments they run over, and what they are called.
-    made = _rows(conn, """
+    made = _rows(conn, f"""
         SELECT r.id::text AS id, r.code, r.code_provisional, r.name, r.reviewed, r.grading,
-               c.grading AS gradering, sr.external_id AS rutenummer,
+               {"c.grading" if T.grades else "NULL::text"} AS gradering, sr.external_id AS rutenummer,
                coalesce(c.id, l.id) AS candidate, coalesce(c.name, l.name, sr.detail->>'name') AS rutenavn
         FROM core.route r
         JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                                      AND sr.source_key = 'turrutebasen'
-        LEFT JOIN source_index.route c ON c.id = sr.detail->>'candidate_id'
-        LEFT JOIN source_index.route l ON c.id IS NULL AND l.label = sr.detail->>'label'
-        WHERE r.status = 'active' AND r.season = %(summer)s AND r.discontinued_since IS NULL
+        LEFT JOIN source_index.{T.route} c ON c.id = sr.detail->>'candidate_id'
+        LEFT JOIN source_index.{T.route} l ON c.id IS NULL AND l.label = sr.detail->>'label'
+        WHERE r.status = 'active' AND r.season = %(season)s AND r.discontinued_since IS NULL
           AND r.unpublished_why IS NULL      -- not published: nothing is added for it; its number is asked off, below
           AND (%(area)s = '' OR lower(sr.external_id) ~ ('^' || %(area)s || '[0-9]'))
         ORDER BY length(r.code), r.code""", params)
@@ -160,7 +176,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
         JOIN core.edge_revision rv ON rv.id = e.current_revision_id
         LEFT JOIN core.source_reference ad ON ad.subject_type = 'edge' AND ad.subject_id = e.id
              AND ad.source_key = 'turrutebasen' AND ad.ref_type = 'adopted_from'
-        LEFT JOIN source_index.trail_segment t ON t.id = ad.external_id,
+        LEFT JOIN source_index.{T.segment} t ON t.id = ad.external_id,
              LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(rv.geom, 0.5), 4326) AS p) c
         WHERE l.route_id = ANY(%(ids)s::uuid[])""", {**params, "ids": ids})
     numbers: dict[str, set] = {}        # route -> the Turrutebasen codes it was made from
@@ -193,7 +209,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
             add("add to route", f"Add rutenummer {', '.join(sorted(codes))} to the segment: the route runs here",
                 lokalid=leg["lokalid"], versjonid=leg["versjonid"], rutenummer=leg["codes"] or [],
                 geometry=leg["geometry"], at=leg["at"], now={"rutenummer": sorted(codes)})
-    dropped = _rows(conn, """
+    dropped = _rows(conn, f"""
         SELECT DISTINCT ON (c.code, t.id) c.code AS rutenummer, t.id AS lokalid, t.codes,
                t.attrs->>'versjonid' AS versjonid, round(t.length_m)::int AS metres,
                ST_AsGeoJSON(ST_Transform(t.geom, %(srid)s), %(digits)s)::json AS geometry,
@@ -204,8 +220,8 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                   AND ST_DWithin(n.geom, ST_StartPoint(ST_GeometryN(t.geom, 1)), %(reach)s)
                   AND ST_DWithin(n.geom, ST_EndPoint(ST_GeometryN(t.geom, 1)), %(reach)s)
                 ORDER BY n.place_id IS NULL LIMIT 1) AS inside
-        FROM source_index.route c JOIN source_index.route_segment rs ON rs.route_id = c.id
-        JOIN source_index.trail_segment t ON t.id = rs.segment_id,
+        FROM source_index.{T.route} c JOIN source_index.{T.route_segment} rs ON rs.route_id = c.id
+        JOIN source_index.{T.segment} t ON t.id = rs.segment_id,
              LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(ST_GeometryN(t.geom, 1), 0.5), 4326) AS p) p
         WHERE c.id = ANY(%(candidates)s)""",
         {**params, "candidates": [m["candidate"] for m in made if m["candidate"]],
@@ -229,13 +245,13 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
     # misspelt number or the same route twice. Its number is one too many on those segments. A
     # route withdrawn that nothing else of yours covers is a route left to others, and says nothing.
     withdrawn: dict[str, list] = {}
-    for w in _rows(conn, """
+    for w in _rows(conn, f"""
             WITH gone AS (
                 SELECT DISTINCT c.id, c.code, NULL::text AS why FROM history.event e
-                JOIN core.route r ON r.id = e.subject_id AND r.status = 'retired' AND r.season = %(summer)s
+                JOIN core.route r ON r.id = e.subject_id AND r.status = 'retired' AND r.season = %(season)s
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
-                JOIN source_index.route c ON c.label = sr.detail->>'label'
+                JOIN source_index.{T.route} c ON c.label = sr.detail->>'label'
                 WHERE e.type = 'route.retired' AND e.author <> %(auto)s
                   AND (%(area)s = '' OR lower(c.code) ~ ('^' || %(area)s || '[0-9]'))
                   AND NOT EXISTS (SELECT 1 FROM core.source_reference x
@@ -248,16 +264,16 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 FROM core.route r
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
-                JOIN source_index.route c ON c.label = sr.detail->>'label'
-                WHERE r.status = 'active' AND r.season = %(summer)s AND r.discontinued_since IS NOT NULL
+                JOIN source_index.{T.route} c ON c.label = sr.detail->>'label'
+                WHERE r.status = 'active' AND r.season = %(season)s AND r.discontinued_since IS NOT NULL
                   AND (%(area)s = '' OR lower(c.code) ~ ('^' || %(area)s || '[0-9]'))
               UNION     -- kept and not published: not to be shown by Turrutebasen either
                 SELECT DISTINCT c.id, c.code, 'not published: ' || r.unpublished_why
                 FROM core.route r
                 JOIN core.source_reference sr ON sr.subject_type = 'route' AND sr.subject_id = r.id
                      AND sr.source_key = 'turrutebasen'
-                JOIN source_index.route c ON c.label = sr.detail->>'label'
-                WHERE r.status = 'active' AND r.season = %(summer)s AND r.unpublished_why IS NOT NULL
+                JOIN source_index.{T.route} c ON c.label = sr.detail->>'label'
+                WHERE r.status = 'active' AND r.season = %(season)s AND r.unpublished_why IS NOT NULL
                   AND r.discontinued_since IS NULL
                   AND (%(area)s = '' OR lower(c.code) ~ ('^' || %(area)s || '[0-9]')))
             SELECT g.code AS rutenummer, g.why, t.id AS lokalid, t.codes, t.attrs->>'versjonid' AS versjonid,
@@ -265,11 +281,11 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                    ARRAY[ST_X(p.p), ST_Y(p.p)] AS at,
                    (SELECT array_agg(DISTINCT y.code ORDER BY y.code) FROM core.source_reference ad
                     JOIN core.route_leg l ON l.edge_id = ad.subject_id
-                    JOIN core.route y ON y.id = l.route_id AND y.status = 'active' AND y.season = %(summer)s
+                    JOIN core.route y ON y.id = l.route_id AND y.status = 'active' AND y.season = %(season)s
                     WHERE ad.subject_type = 'edge' AND ad.source_key = 'turrutebasen'
                       AND ad.ref_type = 'adopted_from' AND ad.external_id = t.id) AS others
-            FROM gone g JOIN source_index.route_segment rs ON rs.route_id = g.id
-            JOIN source_index.trail_segment t ON t.id = rs.segment_id AND g.code = ANY(t.codes),
+            FROM gone g JOIN source_index.{T.route_segment} rs ON rs.route_id = g.id
+            JOIN source_index.{T.segment} t ON t.id = rs.segment_id AND g.code = ANY(t.codes),
                  LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(ST_GeometryN(t.geom, 1), 0.5), 4326) AS p) p
             ORDER BY g.code, t.id""", {**params, "auto": routes.AUTOMATIC}):
         withdrawn.setdefault(w["rutenummer"], []).append(w)
@@ -295,7 +311,7 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
     # all the segments of a route it holds for. Where you say nobody and Turrutebasen names somebody,
     # that is a change too: a route made from Turrutebasen starts with who Turrutebasen has, so nobody
     # is what a person has said.
-    for change in _rows(conn, """
+    for change in _rows(conn, f"""
             SELECT sr.external_id AS rutenummer, rs.maintainers AS was,
                    coalesce(l.maintainers, r.maintainers) AS now,
                    array_agg(rs.segment_id ORDER BY rs.segment_id) AS lokalids,
@@ -307,9 +323,9 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
             JOIN core.route_leg l ON l.route_id = r.id
             JOIN core.source_reference ad ON ad.subject_type = 'edge' AND ad.subject_id = l.edge_id
                  AND ad.source_key = 'turrutebasen' AND ad.ref_type = 'adopted_from'
-            JOIN source_index.route c ON c.code = sr.external_id
-            JOIN source_index.route_segment rs ON rs.route_id = c.id AND rs.segment_id = ad.external_id
-            JOIN source_index.trail_segment t ON t.id = rs.segment_id
+            JOIN source_index.{T.route} c ON c.code = sr.external_id
+            JOIN source_index.{T.route_segment} rs ON rs.route_id = c.id AND rs.segment_id = ad.external_id
+            JOIN source_index.{T.segment} t ON t.id = rs.segment_id
             WHERE r.id = ANY(%(ids)s::uuid[])
               AND (SELECT array_agg(x ORDER BY x) FROM unnest(rs.maintainers) x)
                   IS DISTINCT FROM (SELECT array_agg(x ORDER BY x)
@@ -338,9 +354,9 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
                 rutenummer=[m["rutenummer"]], was={"rutenavn": theirs}, now={"rutenavn": ours})
         # A grading a person has set is asked for as it is. Where nobody has set one, the grading the
         # route's length and climb give is asked for, once a person has looked at the route: worked
-        # out for a line nobody has checked, it is a guess like the name.
-        grading, how = m["grading"], ""
-        if m["candidate"] and m["reviewed"] and (not grading or grading == "I"):
+        # out for a line nobody has checked, it is a guess like the name. The ski trails keep none.
+        grading, how = (m["grading"] if T.grades else None), ""
+        if T.grades and m["candidate"] and m["reviewed"] and (not grading or grading == "I"):
             high = height.of_route(conn, m["id"])
             by_numbers = height.harder(high["there"]["at_least"], high["back"]["at_least"]) if high["there"] else None
             if by_numbers:
@@ -362,11 +378,12 @@ def corrections(conn, area: str | None = None, srid: int = 4326) -> list[dict]:
     return out
 
 
-def as_geojson(found: list[dict], srid: int = 4326) -> dict:
-    """The corrections as features: the line as it should be, and for a moved line also as it is now."""
+def as_geojson(found: list[dict], srid: int = 4326, *, layer: str = seasons.CANDIDATES[seasons.SUMMER].layer) -> dict:
+    """The corrections as features: the line as it should be, and for a moved line also as it is now. All of one
+    layer of Turrutebasen, named in the file and in each feature."""
     features = []
     for c in found:
-        properties = {"change": c["change"], "lokalid": c["lokalid"], "versjonid": c["versjonid"],
+        properties = {"change": c["change"], "layer": c["layer"], "lokalid": c["lokalid"], "versjonid": c["versjonid"],
                       "rutenummer": ", ".join(c["rutenummer"]), "text": c["text"],
                       **{f"was_{k}": v for k, v in c["was"].items()},
                       **{f"now_{k}": v for k, v in c["now"].items()}}
@@ -379,21 +396,21 @@ def as_geojson(found: list[dict], srid: int = 4326) -> dict:
         if c["was_geometry"]:
             features.append({"type": "Feature", "geometry": c["was_geometry"],
                              "properties": {**properties, "state": "in Turrutebasen now"}})
-    collection = {"type": "FeatureCollection", "name": "stiflyt-corrections-to-turrutebasen",
+    collection = {"type": "FeatureCollection", "name": f"stiflyt-corrections-to-turrutebasen-{layer}",
                   "features": features}
     if srid != 4326:
         collection["crs"] = {"type": "name", "properties": {"name": f"urn:ogc:def:crs:EPSG::{srid}"}}
     return collection
 
 
-def as_text(found: list[dict]) -> str:
+def as_text(found: list[dict], *, layer: str = seasons.CANDIDATES[seasons.SUMMER].layer) -> str:
     """The corrections as plain lines, one per change, under a heading per kind of change."""
     headings = {"delete": "Segments to remove", "geometry": "Lines to move",
                 "attributes": "Attributes to change", "remove from route": "Route numbers to take off segments",
                 "add to route": "Route numbers to add to segments", "new segment": "Segments to add",
                 "route attribute": "What is said about a route",
                 "route name": "Route names", "route code": "Route numbers"}
-    lines, change = [f"{len(found)} corrections to Turrutebasen"], None
+    lines, change = [f"{len(found)} corrections to Turrutebasen ({layer})"], None
     for c in found:
         if c["change"] != change:
             change = c["change"]

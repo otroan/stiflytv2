@@ -48,10 +48,15 @@ route.
    route's season where it walks on to other routes (what meets it, what it
    could be laid over).
 
-5. **What is only of the summer stays so, whatever is asked**: what is handed
-   to Kartverket as foot routes (`corrections`), the UT.no export, the walk
-   network the planner and the work trips go by, and (until winter signs are
-   built) the signs.
+5. **What is only of the summer stays so, whatever is asked**: the UT.no
+   export, the walk network the planner and the work trips go by, and (until
+   winter signs are built) the signs. What is handed to Kartverket
+   (`corrections`) is of the season asked for, each against its own layer
+   (built 2026-11-27): the summer's routes against the foot routes, the
+   winter's against the ski trails (`CANDIDATES[season].layer`), never one
+   into the other. How a layer says what it says is the season's
+   (`CANDIDATES`): in the ski trails merking SM (staked for the season) is
+   marked as JA is, and no grading is kept.
 
 6. **Turrutebasen's winter routes are candidates of their own**, indexed apart
    from the summer's (`winter_route`, `winter_segment`, `winter_route_segment`)

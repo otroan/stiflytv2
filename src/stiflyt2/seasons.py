@@ -10,9 +10,10 @@ the other is refused.
 
 What is asked for is of one season: an area's routes, the map's lines, the
 checks and reports are those of the season asked for (the summer unless the
-winter is). What is only of the summer stays so whatever is asked: what is
-handed to Kartverket as foot routes, the walk network the planner and the
-trips go by, and (for now) the signs.
+winter is), and so are the corrections handed to Kartverket: the summer's
+against Turrutebasen's foot routes, the winter's against its ski trails. What
+is only of the summer stays so whatever is asked: the walk network the planner
+and the trips go by, and (for now) the signs.
 
 This module is where a season is named and known; it reads nothing.
 """
@@ -74,11 +75,14 @@ class Candidates:
     layer: str                  # the layer of Turrutebasen they come from, as kept with what is made of them
     graded: str                 # a candidate's grading and special type, over alias r (none in the winter)
     marked: str                 # whether a segment is marked, over alias t (in the winter: staked for it, SM)
+    marks: tuple[str, ...]      # the values of merking that say a segment is marked: the first is what is asked for
+    grades: bool                # whether the layer keeps a route's grading (gradering): the ski trails do not
 
 
 CANDIDATES = {
     SUMMER: Candidates("route", "route_segment", "trail_segment", "fotrute",
-                       "r.grading, r.special_type", "t.marked"),
+                       "r.grading, r.special_type", "t.marked", ("JA",), True),
     WINTER: Candidates("winter_route", "winter_route_segment", "winter_segment", "skiloype",
-                       "NULL::text AS grading, NULL::text AS special_type", "t.marking IN ('JA', 'SM')"),
+                       "NULL::text AS grading, NULL::text AS special_type", "t.marking IN ('JA', 'SM')",
+                       ("SM", "JA"), False),
 }

@@ -360,8 +360,10 @@ class RouteOnly(Args):
 
 @tool("What Kartverket is asked")
 def corrections_for(c: Call, a: OneArea) -> list:
-    """What our changes mean for Turrutebasen, per segment, in an area: what Kartverket is to be asked."""
-    return [{k: x[k] for k in ("change", "lokalid", "rutenummer", "text")} for x in corrections.corrections(c.conn, a.area)]
+    """What our changes mean for Turrutebasen, per segment, in an area: what Kartverket is to be asked. The
+    summer's routes against its foot routes (fotrute), the winter's against its ski trails (skiloype)."""
+    return [{k: x[k] for k in ("change", "layer", "lokalid", "rutenummer", "text")}
+            for x in corrections.corrections(c.conn, a.area, season=a.season)]
 
 
 @tool("A route as it is walked, in facts")

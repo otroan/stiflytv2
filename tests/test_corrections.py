@@ -3,6 +3,7 @@ import psycopg
 import pytest
 from conftest import role_dsn
 
+from stiflyt2 import seasons
 from stiflyt2.domain import corrections, places, routes
 
 AUTHOR = "Test Editor"
@@ -246,3 +247,51 @@ def test_kartverket_is_asked_to_take_a_maintainer_off_where_a_person_says_nobody
     routes.discontinue(conn, route, routes.detail(conn, route)["version"], AUTHOR, "another route runs there")
     assert asked() == []
     assert any("Take rutenummer bre18 off" in c["text"] for c in corrections.corrections(conn, "bre"))
+
+
+def test_the_winters_routes_are_told_against_turrutebasens_ski_trails(conn):
+    summer = routes.make(conn, candidate(conn, "bre18"), AUTHOR)
+    winter = routes.make(conn, conn.execute("SELECT id FROM source_index.winter_route WHERE label = 'bre8v'").fetchone()[0], AUTHOR)
+    # Made ours and left alone, a winter route asks for nothing: staked for the season (SM) is marked.
+    told = corrections.corrections(conn, "bre", season="winter")
+    assert [c for c in told if c["change"] not in ("route name",)] == []
+    assert not [c for c in corrections.corrections(conn, "bre") if "bre8v" in c["rutenummer"]]
+
+    legs = conn.execute("""
+        SELECT e.id::text, sr.external_id, ST_X(m.p), ST_Y(m.p), ST_X(m.q), ST_Y(m.q)
+        FROM core.route_leg l JOIN core.edge e ON e.id = l.edge_id
+        JOIN core.edge_revision r ON r.id = e.current_revision_id
+        JOIN core.source_reference sr ON sr.subject_type = 'edge' AND sr.subject_id = e.id
+             AND sr.source_key = 'turrutebasen' AND sr.ref_type = 'adopted_from',
+             LATERAL (SELECT ST_Transform(ST_LineInterpolatePoint(r.geom, 0.5), 4326) AS p,
+                             ST_Transform(ST_Translate(ST_LineInterpolatePoint(r.geom, 0.5), 30, 30), 4326) AS q) m
+        WHERE l.route_id = %s ORDER BY ST_Length(r.geom) DESC""", (winter,)).fetchall()
+    (edge, lokalid, glon, glat, dlon, dlat), *_ = legs
+    assert conn.execute("SELECT 1 FROM source_index.winter_segment WHERE id = %s", (lokalid,)).fetchone()
+    routes.bend(conn, edge, AUTHOR, (glon, glat), (dlon, dlat))
+    found = {c["change"]: c for c in corrections.corrections(conn, "bre", season="winter") if c["lokalid"] == lokalid}
+    assert set(found) == {"geometry"} and found["geometry"]["layer"] == "skiloype"
+    assert found["geometry"]["rutenummer"] == ["bre8v"] and 10 < found["geometry"]["offset_m"] < 45
+    # Said not to be staked: merking NEI. Staked where Turrutebasen has NEI, SM is asked for; JA is marked too.
+    routes.set_stretch(conn, edge, AUTHOR, marked=False)
+    changed = next(c for c in corrections.corrections(conn, "bre", season="winter")
+                   if c["change"] == "attributes" and c["lokalid"] == lokalid)
+    assert changed["now"] == {"merking": "NEI"} and changed["was"]["merking"] in ("SM", "JA")
+    marks = seasons.CANDIDATES["winter"].marks
+    assert corrections._merking(True, marks) == "SM" and corrections._merking(True, seasons.CANDIDATES["summer"].marks) == "JA"
+    assert corrections._marked_as_said(True, "JA", marks) and not corrections._marked_as_said(True, "NEI", marks)
+
+    # The ski trails keep no grading: none is asked for, set or worked out.
+    routes.update(conn, winter, routes.detail(conn, winter)["version"], AUTHOR, grading="R")
+    routes.review(conn, winter, routes.detail(conn, winter)["version"], AUTHOR)
+    assert not [c for c in corrections.corrections(conn, "bre", season="winter") if "gradering" in c["now"]]
+    # And the summer's corrections know nothing of it, nor the winter's of the summer's.
+    assert not [c for c in corrections.corrections(conn, "bre") if lokalid == c["lokalid"] or "bre8v" in c["rutenummer"]]
+    assert not [c for c in corrections.corrections(conn, "bre", season="winter") if "bre18" in c["rutenummer"]]
+    assert summer
+
+    # As a file, of the ski trails.
+    winters = corrections.corrections(conn, "bre", season="winter")
+    file = corrections.as_geojson(winters, layer="skiloype")
+    assert file["name"].endswith("skiloype") and {f["properties"]["layer"] for f in file["features"]} == {"skiloype"}
+    assert corrections.as_text(winters, layer="skiloype").startswith(f"{len(winters)} corrections to Turrutebasen (skiloype)")

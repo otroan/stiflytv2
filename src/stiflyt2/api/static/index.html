@@ -902,11 +902,13 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
     }).catch(err => { odd.replaceChildren(el("div", { class: "error" }, `Could not look for odd things: ${err.message}`)); });
     // What differs from Turrutebasen, to hand to Kartverket. Worked out after the rest is shown.
     const kartverket = el("li", {});
-    get("corrections", { area }).then(found => {
-      const file = srid => new URL(`corrections.geojson?area=${area}&srid=${srid}`, API).href;
+    // The winter's routes are told against Turrutebasen's ski trails, the summer's against its foot routes.
+    get("corrections", { area, season }).then(found => {
+      const file = srid => new URL(`corrections.geojson?area=${area}&srid=${srid}&season=${season}`, API).href;
+      const layer = season === "winter" ? "ski trails (skiloype)" : "foot routes (fotrute)";
       kartverket.replaceChildren(el("details", {},
         el("summary", {}, `For Kartverket (${found.length})`),
-        el("div", { class: "sub" }, found.length ? "What your changes mean for Turrutebasen, by its own segment ids. As a file: " : "Nothing of yours differs from Turrutebasen yet.",
+        el("div", { class: "sub" }, found.length ? `What your changes mean for Turrutebasen's ${layer}, by its own segment ids. As a file: ` : `Nothing of yours differs from Turrutebasen's ${layer} yet.`,
           found.length ? el("a", { href: file(4326), download: "" }, "GeoJSON") : "", found.length ? " or " : "",
           found.length ? el("a", { href: file(25833), download: "" }, "GeoJSON in UTM 33") : "", found.length ? "." : ""),
         el("ul", {}, ...found.map(c => el("li", { class: "hit", tabindex: 0, title: `${c.lokalid || ""} ${c.text}`,
@@ -922,7 +924,8 @@ async function loadArea(quiet, again) {      // again: what was fetched last is 
         anchors.length ? el("details", {}, el("summary", { style: "font-weight:500" }, `Huts and parking in Turrutebasen (${anchors.length})`, apart ? el("span", { class: "sub" }, `  ${apart} with routes ending apart`) : ""),
           el("ul", {}, ...anchors.map(anchorRow))) : "")),
       kartverket,
-      el("li", {}, el("details", {}, el("summary", {}, "For UT.no"),
+      // What UT.no is given is the summer's routes (ADR-006): among the winter's it is not offered.
+      season !== "summer" ? "" : el("li", {}, el("details", {}, el("summary", {}, "For UT.no"),
         el("div", { class: "sub" }, "Your routes of the area as they are now: one line per route with its name, who maintains it and what has changed from Turrutebasen. As a file: ",
           el("a", { href: new URL(`routes.geojson?area=${area}`, API).href, download: "" }, "all routes"), " or ",
           el("a", { href: new URL(`routes.geojson?area=${area}&changed=true`, API).href, download: "" }, "only what there is to act on"), ".",

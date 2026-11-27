@@ -582,7 +582,14 @@ is". It moves to a list of its own and can be brought back.
 as a file to hand over; the area section of the viewer has the same list and
 file under "For Kartverket". It is the difference between what is yours and
 the Turrutebasen that is loaded now, per segment, by Turrutebasen's own
-`lokalid` and with the segment's `versjonid`:
+`lokalid` and with the segment's `versjonid`. The summer's routes are told
+against Turrutebasen's foot routes (`fotrute`); with `--season winter` (in the
+editor: with the winter chosen; over HTTP `?season=winter`) DNT's winter
+routes are told against its ski trails (`skiloype`), where they are kept, in a
+list and a file of their own. Each correction says its `layer`. A winter
+route's line is its normal line; there `merking` SM (staked for the season)
+is marked as much as JA, SM is what is asked for where a stretch is said to be
+staked, and the ski trails keep no `gradering`:
 
 - a line that has moved more than 1 m, as proposed and as it is now;
 - `merking`, `skilting`, `rutefolger` or `vedlikeholdsansvarlig` that differ.
@@ -1026,9 +1033,10 @@ stop some metres short of the huts: made ours, an end within 200 m of a
 place's arrival point is carried on to it, along the mapped path or
 straight, so that the winter route ends where the summer's do. What lists routes takes the
 season asked for, the summer unless the winter is (`?season=winter`, an
-assistant's `season`, `stiflyt2 report jot --season winter`); what is handed to
-Kartverket and UT.no, the planner's and the trips' network, and the signs are
-the summer's. Still to come: the two seasons side by side in the pages, each
+assistant's `season`, `stiflyt2 report jot --season winter`), and so do the
+corrections for Kartverket, told against the ski trails in the winter (see
+"What to tell Kartverket"); what is handed to UT.no, the planner's and the
+trips' network, and the signs are the summer's. Still to come: the two seasons side by side in the pages, each
 winter's track from those who stake the routes, the opening period, and signs
 for the winter routes.
 

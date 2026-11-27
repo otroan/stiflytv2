@@ -733,6 +733,11 @@ if (EDIT && await js(`myFeatures.includes("tracks") && Boolean(EDITOR) && Boolea
   check("and the areas are those with winter routes in Turrutebasen", await until(`[...areaSelect.options].some(o => o.value === "bre")`, 15));
   await js(`(() => { areaSelect.value = "bre"; areaSelect.dispatchEvent(new Event("change")); })()`);
   check("an area's winter routes are listed, to be made yours", await until(`[...document.querySelectorAll("#routelist li.hit .code")].some(c => c.textContent === "bre8v")`, 30), await text("#routelist"));
+  check("what Kartverket is to be told is the winter's, against the ski trails, and UT.no is not offered the summer's",
+    await until(`[...document.querySelectorAll("#arearoutes summary")].some(s => /^For Kartverket/.test(s.textContent))
+      && /ski trails \\(skiloype\\)/.test(document.getElementById("arearoutes").textContent)
+      && [...document.querySelectorAll("#arearoutes a[download][href*=corrections]")].every(a => a.href.includes("season=winter"))
+      && ![...document.querySelectorAll("#arearoutes summary")].some(s => s.textContent === "For UT.no")`, 60), await text("#arearoutes"));
   await js(`(async () => { await chooseSeason("summer"); })()`);
   check("and back to the summer", await until(`season === "summer" && map.getLayoutProperty("trails-marked", "visibility") === "visible"`, 20));
   if (wasOpen) { await js(`openOwnedRoute(${JSON.stringify(wasOpen)})`); await until(`Boolean(openRoute) && openRoute.id === ${JSON.stringify(wasOpen)}`, 20); }

@@ -815,20 +815,25 @@ def to_turrutebasen(
     area: Annotated[str | None, typer.Argument(help="Area prefix, e.g. jot. All areas when left out")] = None,
     geojson: Annotated[Path | None, typer.Option(help="Also write the corrections to this GeoJSON file")] = None,
     srid: Annotated[int, typer.Option(help="Coordinates of the file: 4326 or 25833")] = 4326,
+    season: Annotated[str, typer.Option(help="summer (the foot routes), or winter (DNT's winter routes, among the "
+                                             "ski trails)")] = "summer",
 ) -> None:
     """What to ask Kartverket to change in Turrutebasen: what is yours against the loaded Turrutebasen.
 
-    Each change names the segment by Turrutebasen's own id (lokalid).
+    Each change names the segment by Turrutebasen's own id (lokalid), in the layer of the season: the summer's
+    routes in the foot routes (fotrute), the winter's in the ski trails (skiloype).
     """
     import json
 
+    from stiflyt2 import seasons
     from stiflyt2.domain import corrections
 
+    layer = seasons.CANDIDATES[seasons.known(season)].layer
     with psycopg.connect(settings.api_dsn) as conn:
-        found = corrections.corrections(conn, area, srid)
+        found = corrections.corrections(conn, area, srid, season=season)
     if geojson:
-        geojson.write_text(json.dumps(corrections.as_geojson(found, srid), ensure_ascii=False))
-    typer.echo(corrections.as_text(found))
+        geojson.write_text(json.dumps(corrections.as_geojson(found, srid, layer=layer), ensure_ascii=False))
+    typer.echo(corrections.as_text(found, layer=layer))
 
 
 @routes.command("export")
